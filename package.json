@@ -1,0 +1,57 @@
+{
+  "name": "shipyard-inference",
+  "version": "0.1.0",
+  "description": "The always-available inference layer for the Shipyard stack. Wraps Anthropic, OpenAI, and (soon) UsePod inference behind one LLMProvider interface, with Open Wallet Standard signing for x402-gated calls.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "shipyard",
+    "agent",
+    "llm",
+    "inference",
+    "anthropic",
+    "openai",
+    "usepod",
+    "openwallet",
+    "x402"
+  ],
+  "author": "Halsey Huth <halsey.huth@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BiscayneDev/shipyard-inference.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BiscayneDev/shipyard-inference/issues"
+  },
+  "homepage": "https://github.com/BiscayneDev/shipyard-inference#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "openai": "^6.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
