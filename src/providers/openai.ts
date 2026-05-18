@@ -9,6 +9,7 @@ import type {
 
 export interface OpenAIProviderOptions {
   apiKey?: string
+  baseURL?: string
   defaultModel?: string
   defaultMaxTokens?: number
 }
@@ -21,6 +22,7 @@ export class OpenAIProvider implements LLMProvider {
   constructor(options: OpenAIProviderOptions = {}) {
     this.client = new OpenAI({
       apiKey: options.apiKey ?? process.env.OPENAI_API_KEY,
+      baseURL: options.baseURL ?? process.env.OPENAI_BASE_URL,
     })
     this.defaultModel = options.defaultModel ?? 'gpt-4o'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096

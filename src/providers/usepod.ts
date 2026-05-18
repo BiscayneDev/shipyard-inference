@@ -1,32 +1,66 @@
-import type { LLMProvider, LLMChatParams, LLMResponse } from '../types.js'
-import type { OWSClient } from '../signers/ows.js'
+import type { LLMProvider } from '../types.js'
+import { AnthropicProvider } from './anthropic.js'
+import { OpenAIProvider } from './openai.js'
+
+export type UsePodFamily = 'anthropic' | 'openai'
 
 export interface UsePodProviderOptions {
-  endpoint?: string
-  walletId: string
-  signer: OWSClient
+  /** Per-account API token from https://usepod.ai/dashboard (the UUID embedded in the proxy URL). */
+  token?: string
+  /** Which upstream API surface to proxy. Defaults to 'anthropic'. */
+  family?: UsePodFamily
+  /** Override the proxy base. Defaults to `https://api.usepod.ai/proxy/<token>`. */
+  baseURL?: string
   defaultModel?: string
   defaultMaxTokens?: number
 }
 
-/**
- * UsePod inference provider (STUB).
- *
- * Public UsePod SDK is not yet on npm — coordinator/client SDKs live in a
- * private monorepo (see https://github.com/Sortis-AI/usepod-agent). When
- * available, this will POST to UsePod's OpenAI-compatible endpoint and
- * handle the x402 USDC-on-Solana payment via OWSClient.signTransaction.
- */
-export class UsePodProvider implements LLMProvider {
-  constructor(_options: UsePodProviderOptions) {
-    // intentionally empty until SDK lands
-  }
+const DEFAULT_PROXY_HOST = 'https://api.usepod.ai/proxy'
 
-  async chat(_params: LLMChatParams): Promise<LLMResponse> {
+function resolveBaseURL(options: UsePodProviderOptions): string {
+  if (options.baseURL) return options.baseURL.replace(/\/+$/, '')
+  const token = options.token ?? process.env.USEPOD_TOKEN
+  if (!token) {
     throw new Error(
-      '[shipyard-inference] UsePodProvider is not yet implemented. ' +
-        'Tracking https://github.com/Sortis-AI/usepod-agent for SDK release. ' +
-        'Until then, use AnthropicProvider or OpenAIProvider.'
+      '[shipyard-inference] UsePod requires `token` (or USEPOD_TOKEN env var). ' +
+        'Get one at https://usepod.ai/dashboard',
     )
   }
+  return `${DEFAULT_PROXY_HOST}/${token}`
+}
+
+/**
+ * UsePod is a wallet-funded proxy in front of Anthropic / OpenAI — no SDK,
+ * no x402 handshake at the call site. You set `ANTHROPIC_BASE_URL` (or the
+ * OpenAI equivalent) to a per-account proxy URL, and any existing client
+ * works. Funding happens in the UsePod dashboard.
+ *
+ * This factory returns the matching shipyard-inference provider already
+ * pointed at the proxy. Both the api key and base URL are pre-configured.
+ *
+ * @example
+ *   const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
+ *   const res = await provider.chat({ system, messages, tools })
+ */
+export function createUsePodProvider(
+  options: UsePodProviderOptions = {},
+): LLMProvider {
+  const baseURL = resolveBaseURL(options)
+  const family = options.family ?? 'anthropic'
+
+  if (family === 'anthropic') {
+    return new AnthropicProvider({
+      apiKey: 'UsePod',
+      baseURL,
+      defaultModel: options.defaultModel,
+      defaultMaxTokens: options.defaultMaxTokens,
+    })
+  }
+
+  return new OpenAIProvider({
+    apiKey: 'UsePod',
+    baseURL,
+    defaultModel: options.defaultModel,
+    defaultMaxTokens: options.defaultMaxTokens,
+  })
 }

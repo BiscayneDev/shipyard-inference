@@ -1,7 +1,7 @@
 {
   "name": "shipyard-inference",
-  "version": "0.1.0",
-  "description": "The always-available inference layer for the Shipyard stack. Wraps Anthropic, OpenAI, and (soon) UsePod inference behind one LLMProvider interface, with Open Wallet Standard signing for x402-gated calls.",
+  "version": "0.2.0",
+  "description": "The always-available inference layer for the Shipyard stack. Wraps Anthropic, OpenAI, and UsePod (wallet-funded proxy) behind one LLMProvider interface.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,8 +30,7 @@
     "anthropic",
     "openai",
     "usepod",
-    "openwallet",
-    "x402"
+    "proxy"
   ],
   "author": "Halsey Huth <halsey.huth@gmail.com>",
   "license": "MIT",
