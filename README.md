@@ -1,10 +1,31 @@
 # shipyard-inference
 
-The always-available inference layer for the [Shipyard](https://openshipyard.xyz) stack.
+**A smart middleman between your app and the AI models it uses.** Your app talks
+to shipyard-inference instead of to Claude, GPT, or Hermes directly — and it
+makes that cheaper, more reliable, and easier to pay for. Like a travel-booking
+site, but for AI requests: you say what you need, it finds the best option and
+handles payment, instead of you wiring up each provider yourself.
 
-`shipyard-inference` wraps Anthropic, OpenAI, and [UsePod](https://usepod.ai) behind one `LLMProvider` interface. The strategic goal: agents that don't get rate-limited mid-demo, deprecated overnight, or shut off by a policy change. UsePod is the *always-available* tier alongside frontier providers — not a replacement.
+**What it does:**
 
-As of v0.4 it ships a cost-aware **`Router`** (route each request to the cheapest *capable* model), an **x402-on-Solana payment layer** (pay per request with USDC), **streaming** with real usage/$ telemetry, and a **drop-in OpenAI-compatible gateway** — so any product in any language can point its `baseURL` at it and get routing + payments + savings with zero code changes. It also speaks to [Nous Research / Hermes](https://portal.nousresearch.com) and plugs into [Hermes Agent](https://github.com/nousresearch/hermes-agent).
+1. **Routes to the cheapest capable model.** Simple requests go to a cheap model,
+   hard ones to a premium model — same result, smaller bill.
+2. **Never leaves your app stranded.** If a provider is down, rate-limited, or
+   deprecates a model, it automatically fails over to another.
+3. **Lets the app pay per request, in crypto.** Settle each call with USDC on
+   Solana (the x402 standard) — no API-key juggling or monthly bills. Ideal for
+   autonomous agents that buy their own compute.
+4. **Shows you exactly what you spent.** Every request reports real token usage
+   and real dollar cost, so savings are measured, not guessed.
+
+**Why plug it in:** it streams (word-by-word, like any chat UI) and speaks the
+**standard OpenAI format**, so any app in any language can adopt it by changing
+**one setting — the URL** — no rewrite. That's how products like
+[Hermes Agent](https://github.com/nousresearch/hermes-agent) can use it instantly.
+
+> Built for the [Shipyard](https://openshipyard.xyz) agent stack, but framework-
+> and language-agnostic by design. Wraps Anthropic, OpenAI, [UsePod](https://usepod.ai),
+> and [Nous/Hermes](https://portal.nousresearch.com) behind one interface.
 
 ## Status
 
