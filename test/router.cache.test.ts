@@ -19,12 +19,13 @@ test('different requests produce different cache keys', () => {
   )
 })
 
-test('MemoryCacheStore stores and retrieves responses', async () => {
+test('MemoryCacheStore stores and retrieves by request', async () => {
   const store = new MemoryCacheStore()
   const response = { content: 'hi', toolCalls: [], stopReason: 'end_turn' as const }
-  await store.set('k', response)
-  assert.deepEqual(await store.get('k'), response)
-  assert.equal(await store.get('missing'), undefined)
+  const params = chatParams()
+  await store.set(params, response)
+  assert.deepEqual(await store.get(params), response)
+  assert.equal(await store.get(chatParams({ system: 'different' })), undefined)
 })
 
 test('Router returns a cached response without calling the provider twice', async () => {

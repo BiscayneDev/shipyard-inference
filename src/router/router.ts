@@ -86,7 +86,7 @@ export class Router implements LLMProvider {
 
     const key = this.opts.cache ? cacheKey(compressed) : undefined
     if (this.opts.cache && key) {
-      const hit = await this.opts.cache.get(key)
+      const hit = await this.opts.cache.get(compressed)
       if (hit) {
         this.emit({ type: 'cache_hit', key })
         return hit
@@ -120,7 +120,7 @@ export class Router implements LLMProvider {
           ...compressed,
           model: decision.model ?? compressed.model,
         })
-        if (this.opts.cache && key) await this.opts.cache.set(key, res)
+        if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
         this.emit({
           type: 'route_success',
           candidateId: decision.candidate.id,
@@ -172,7 +172,7 @@ export class Router implements LLMProvider {
 
     const key = this.opts.cache ? cacheKey(compressed) : undefined
     if (this.opts.cache && key) {
-      const hit = await this.opts.cache.get(key)
+      const hit = await this.opts.cache.get(compressed)
       if (hit) {
         this.emit({ type: 'cache_hit', key })
         yield* responseToStream(hit)
@@ -206,7 +206,7 @@ export class Router implements LLMProvider {
       try {
         for await (const event of this.streamFromDecision(decision, compressed, opts)) {
           if (event.type === 'done') {
-            if (this.opts.cache && key) await this.opts.cache.set(key, event.response)
+            if (this.opts.cache && key) await this.opts.cache.set(compressed, event.response)
             this.emit({
               type: 'route_success',
               candidateId: decision.candidate.id,

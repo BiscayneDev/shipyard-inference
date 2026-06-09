@@ -1,21 +1,44 @@
 # shipyard-inference
 
-The always-available inference layer for the [Shipyard](https://openshipyard.xyz) stack.
+**A smart middleman between your app and the AI models it uses.** Your app talks
+to shipyard-inference instead of to Claude, GPT, or Hermes directly — and it
+makes that cheaper, more reliable, and easier to pay for. Like a travel-booking
+site, but for AI requests: you say what you need, it finds the best option and
+handles payment, instead of you wiring up each provider yourself.
 
-`shipyard-inference` wraps Anthropic, OpenAI, and [UsePod](https://usepod.ai) behind one `LLMProvider` interface. The strategic goal: agents that don't get rate-limited mid-demo, deprecated overnight, or shut off by a policy change. UsePod is the *always-available* tier alongside frontier providers — not a replacement.
+**What it does:**
 
-As of v0.4 it ships a cost-aware **`Router`** (route each request to the cheapest *capable* model), an **x402-on-Solana payment layer** (pay per request with USDC), **streaming** with real usage/$ telemetry, and a **drop-in OpenAI-compatible gateway** — so any product in any language can point its `baseURL` at it and get routing + payments + savings with zero code changes. It also speaks to [Nous Research / Hermes](https://portal.nousresearch.com) and plugs into [Hermes Agent](https://github.com/nousresearch/hermes-agent).
+1. **Routes to the cheapest capable model.** Simple requests go to a cheap model,
+   hard ones to a premium model — same result, smaller bill.
+2. **Never leaves your app stranded.** If a provider is down, rate-limited, or
+   deprecates a model, it automatically fails over to another.
+3. **Lets the app pay per request, in crypto.** Settle each call with USDC on
+   Solana (the x402 standard) — no API-key juggling or monthly bills. Ideal for
+   autonomous agents that buy their own compute.
+4. **Shows you exactly what you spent.** Every request reports real token usage
+   and real dollar cost, so savings are measured, not guessed.
+
+**Why plug it in:** it streams (word-by-word, like any chat UI) and speaks the
+**standard OpenAI format**, so any app in any language can adopt it by changing
+**one setting — the URL** — no rewrite. That's how products like
+[Hermes Agent](https://github.com/nousresearch/hermes-agent) can use it instantly.
+
+> Built for the [Shipyard](https://openshipyard.xyz) agent stack, but framework-
+> and language-agnostic by design. Wraps Anthropic, OpenAI, [UsePod](https://usepod.ai),
+> and [Nous/Hermes](https://portal.nousresearch.com) behind one interface.
 
 ## Status
 
-**Alpha — v0.4.0.** Providers, cost-aware routing, x402-on-Solana payments,
-streaming + usage telemetry, and the OpenAI-compatible gateway are all ready.
+**Alpha — v0.5.0.** Providers, cost-aware routing, x402-on-Solana payments,
+streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
+compression, and OpenRouter are all ready.
 
 | Component                              | Status        |
 | -------------------------------------- | ------------- |
 | `AnthropicProvider` / `OpenAIProvider` | ✅ Ready       |
 | `createUsePodProvider()`               | ✅ Ready       |
 | `createNousProvider()` (Hermes)        | ✅ Ready       |
+| `createOpenRouterProvider()`           | ✅ Ready       |
 | `Router` / `costOptimized()`           | ✅ Ready       |
 | `withFailover()`                       | ✅ Ready       |
 | Streaming (`chatStream`)               | ✅ Ready       |
@@ -24,13 +47,46 @@ streaming + usage telemetry, and the OpenAI-compatible gateway are all ready.
 | `createSolanaPayProvider()`            | ✅ Ready       |
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
-| Semantic cache / compression           | 🔌 Seam only  |
+| `SemanticCacheStore` + compression     | ✅ Ready       |
 
-## How UsePod works (the short version)
+## Two ways to use it
 
-UsePod doesn't ship an SDK. It's a **wallet-funded proxy** in front of Anthropic and OpenAI. You fund a USDC balance in the [UsePod dashboard](https://usepod.ai/dashboard), copy a per-account proxy URL, and point any existing Anthropic/OpenAI client at it. Inference is billed against your wallet instead of an API key.
+- **Run the gateway** ([below](#the-gateway--drop-in-for-any-app)) — the drop-in
+  path. Point any OpenAI-compatible app at one URL; works from any language, no
+  code changes. Best for adding it to an existing product.
+- **Import the SDK** ([Install](#install)) — for TypeScript/Node apps that want
+  the `Router`, providers, and payment primitives directly in-process.
 
-`createUsePodProvider()` is a thin convenience that returns one of our existing providers pre-configured for that proxy.
+## The gateway — drop-in for any app
+
+Run an OpenAI-compatible HTTP server in front of the Router. Any app or framework
+that speaks OpenAI (including [Hermes Agent](./examples/hermes-agent)) points its
+`baseURL` at it and gets cost-routing + payments + telemetry — **no code changes,
+any language.**
+
+```bash
+npm i shipyard-inference hono @hono/node-server
+npx shipyard-gateway --config ./examples/hermes-agent/gateway.config.mjs
+# → POST http://localhost:8787/v1/chat/completions  (stream + non-stream)
+#   GET  http://localhost:8787/v1/models
+```
+
+Point any OpenAI client at it:
+
+```ts
+import OpenAI from 'openai'
+const client = new OpenAI({ baseURL: 'http://localhost:8787/v1', apiKey: 'your-gateway-key' })
+await client.chat.completions.create({
+  model: 'claude-sonnet-4-5',
+  messages: [{ role: 'user', content: 'Hello!' }],
+})
+```
+
+Responses carry `x-shipyard-model` / `x-shipyard-provider` / `x-shipyard-cost-usd`
+(and an `x_shipyard` trailer event on streams) so callers see exactly what ran
+and what it cost. `hono` + `@hono/node-server` are optional peers — `import { Router }`
+pulls no server code. See [`examples/hermes-agent`](./examples/hermes-agent) for
+the Hermes Agent + Nous/Hermes setup.
 
 ## Install
 
@@ -38,7 +94,7 @@ UsePod doesn't ship an SDK. It's a **wallet-funded proxy** in front of Anthropic
 npm install shipyard-inference
 ```
 
-## Quick start
+## Quick start (SDK)
 
 ### Anthropic (direct)
 
@@ -56,33 +112,6 @@ const response = await provider.chat({
 })
 
 console.log(response.content)
-```
-
-### UsePod (wallet-funded, no API key)
-
-Get a token at [usepod.ai/dashboard](https://usepod.ai/dashboard) and fund the balance.
-
-```ts
-import { createUsePodProvider } from 'shipyard-inference'
-
-const provider = createUsePodProvider({
-  token: process.env.USEPOD_TOKEN, // the UUID from your dashboard
-})
-
-const response = await provider.chat({
-  system: 'You are a helpful assistant.',
-  messages: [{ role: 'user', content: 'Hello!' }],
-  tools: [],
-})
-```
-
-OpenAI-compatible mode:
-
-```ts
-const provider = createUsePodProvider({
-  family: 'openai',
-  token: process.env.USEPOD_TOKEN,
-})
 ```
 
 ### OpenAI (direct)
@@ -103,7 +132,7 @@ const response = await provider.chat({
 
 ### Point any provider at a proxy
 
-Every provider now accepts `baseURL`, so you can route through any OpenAI/Anthropic-compatible gateway (UsePod, OpenRouter, an internal proxy, etc.):
+Every provider accepts `baseURL`, so you can route through any OpenAI/Anthropic-compatible gateway (UsePod, OpenRouter, an internal proxy, etc.):
 
 ```ts
 new AnthropicProvider({
@@ -151,11 +180,65 @@ Strategies: `costOptimized()` (cheapest capable), `failover(order?)` (availabili
 and `composite(...)` (e.g. cheapest-capable with UsePod always last). `withFailover(primary, fallback)`
 is the convenience the roadmap promised — try primary, fall back on retryable errors
 (429 / 5xx / model-deprecated). Optional `cache` (a `CacheStore`) and `compress`
-(a `CompressionTransform`) are off by default and ship as seams — bring your own.
+(a `CompressionTransform`) are off by default — see [Caching & compression](#caching--compression).
+Add hundreds more models via OpenRouter:
+
+```ts
+import { createOpenRouterProvider } from 'shipyard-inference'
+const openrouter = createOpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })
+// add as a candidate; use OpenRouter model ids like 'google/gemini-2.5-pro'
+```
 
 > Pricing in `DEFAULT_PRICING` is **advisory** and drifts; per-candidate `models[]`
 > is authoritative, with `pricingOverrides` in between. It ranks candidates, it
 > does not bill.
+
+## Caching & compression
+
+Both cut token spend and are off by default. **Caching** dedupes repeated work; a
+**`SemanticCacheStore`** matches *paraphrases* by embedding similarity (an
+exact-match `MemoryCacheStore` ships too):
+
+```ts
+import { Router, SemanticCacheStore, openAIEmbedder } from 'shipyard-inference'
+
+const router = new Router({
+  candidates: [/* … */],
+  cache: new SemanticCacheStore({
+    embedder: openAIEmbedder({ apiKey: process.env.OPENAI_API_KEY }), // or bring your own Embedder
+    threshold: 0.95, // cosine similarity for a hit
+  }),
+})
+```
+
+**Compression** shrinks long histories before dispatch — `slidingWindowCompression`
+(deterministic; keeps whole recent messages so code blocks stay intact) or
+`summarizeCompression` (summarizes older turns with a cheap model):
+
+```ts
+import { slidingWindowCompression, summarizeCompression } from 'shipyard-inference'
+
+new Router({ candidates: [/* … */], compress: slidingWindowCompression({ maxMessages: 20 }) })
+// or: summarizeCompression({ provider: cheapProvider, keepRecent: 8 })
+```
+
+## Streaming
+
+Every provider and the `Router` support streaming via `chatStream`. Events are
+incremental (`text_delta`, `tool_call_start`, `tool_call_delta`) and end in a
+single `done` carrying the assembled response with `usage`.
+
+```ts
+for await (const event of router.chatStream({ system, messages, tools })) {
+  if (event.type === 'text_delta') process.stdout.write(event.text)
+  if (event.type === 'done') console.log('\nusage:', event.response.usage)
+}
+```
+
+The Router fails over only *before* the first token; once streaming has begun it
+commits (no duplicate output). `collectStream(stream)` reduces a stream to a
+plain `LLMResponse`. A `request_completed` event (and the optional
+`MemoryUsageRecorder`) reports actual tokens, `actualCostUsd`, and latency.
 
 ## Paying for inference on Solana (x402)
 
@@ -209,53 +292,32 @@ const fetch = createPayingFetch({ paymentProvider: payment })
 > Paybox's wallet-sign path is intent-based and submits on-chain itself, so this
 > adapter targets endpoints that bill through a Paybox card credential.
 
-## Streaming
+## How UsePod works (the short version)
 
-Every provider and the `Router` support streaming via `chatStream`. Events are
-incremental (`text_delta`, `tool_call_start`, `tool_call_delta`) and end in a
-single `done` carrying the assembled response with `usage`.
+UsePod doesn't ship an SDK. It's a **wallet-funded proxy** in front of Anthropic and OpenAI. You fund a USDC balance in the [UsePod dashboard](https://usepod.ai/dashboard), copy a per-account proxy URL, and point any existing Anthropic/OpenAI client at it. Inference is billed against your wallet instead of an API key.
 
 ```ts
-for await (const event of router.chatStream({ system, messages, tools })) {
-  if (event.type === 'text_delta') process.stdout.write(event.text)
-  if (event.type === 'done') console.log('\nusage:', event.response.usage)
-}
+import { createUsePodProvider } from 'shipyard-inference'
+
+// Get a token at usepod.ai/dashboard and fund the balance.
+const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
+// OpenAI-compatible mode: createUsePodProvider({ family: 'openai', token })
 ```
 
-The Router fails over only *before* the first token; once streaming has begun it
-commits (no duplicate output). `collectStream(stream)` reduces a stream to a
-plain `LLMResponse`. A `request_completed` event (and the optional
-`MemoryUsageRecorder`) reports actual tokens, `actualCostUsd`, and latency.
-
-## Drop-in gateway (OpenAI-compatible)
-
-Run an OpenAI-compatible HTTP server in front of the Router — any app or
-framework that speaks OpenAI (including [Hermes Agent](./examples/hermes-agent))
-points its `baseURL` at it and gets routing + payments + telemetry, no code
-changes.
-
-```bash
-npm i shipyard-inference hono @hono/node-server
-npx shipyard-gateway --config ./examples/hermes-agent/gateway.config.mjs
-# → POST http://localhost:8787/v1/chat/completions  (stream + non-stream)
-#   GET  http://localhost:8787/v1/models
-```
-
-Responses carry `x-shipyard-model` / `x-shipyard-provider` / `x-shipyard-cost-usd`
-(and an `x_shipyard` trailer event on streams) so callers see exactly what ran
-and what it cost. `hono` + `@hono/node-server` are optional peers — `import { Router }`
-pulls no server code. See [`examples/hermes-agent`](./examples/hermes-agent) for
-the Hermes Agent + Nous/Hermes setup.
+`createUsePodProvider()` is a thin convenience that returns one of our existing providers pre-configured for that proxy.
 
 ## Roadmap
 
 - **v0.2** — Anthropic, OpenAI, UsePod providers; `baseURL` passthrough.
 - **v0.3** — Cost-aware `Router` (`costOptimized` / `failover` / `composite`),
   `withFailover`, and the x402-on-Solana payment layer.
-- **v0.4** (now) — Streaming + usage/$ telemetry, the OpenAI-compatible
+- **v0.4** — Streaming + usage/$ telemetry, the OpenAI-compatible
   `shipyard-gateway`, and Nous/Hermes (`createNousProvider`) + Hermes Agent compatibility.
-- **Later** — retry-with-jitter, a real semantic `CacheStore`, context
-  compression, MPP session settlement, and a Paybox `SignIntent` on-chain path.
+- **v0.5** (now) — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
+  compression (`slidingWindowCompression` / `summarizeCompression`), and OpenRouter
+  (`createOpenRouterProvider`).
+- **Later** — retry-with-jitter, MPP session settlement, and a Paybox
+  `SignIntent` on-chain path.
 
 ## Related
 
