@@ -29,14 +29,16 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.4.0.** Providers, cost-aware routing, x402-on-Solana payments,
-streaming + usage telemetry, and the OpenAI-compatible gateway are all ready.
+**Alpha — v0.5.0.** Providers, cost-aware routing, x402-on-Solana payments,
+streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
+compression, and OpenRouter are all ready.
 
 | Component                              | Status        |
 | -------------------------------------- | ------------- |
 | `AnthropicProvider` / `OpenAIProvider` | ✅ Ready       |
 | `createUsePodProvider()`               | ✅ Ready       |
 | `createNousProvider()` (Hermes)        | ✅ Ready       |
+| `createOpenRouterProvider()`           | ✅ Ready       |
 | `Router` / `costOptimized()`           | ✅ Ready       |
 | `withFailover()`                       | ✅ Ready       |
 | Streaming (`chatStream`)               | ✅ Ready       |
@@ -45,7 +47,7 @@ streaming + usage telemetry, and the OpenAI-compatible gateway are all ready.
 | `createSolanaPayProvider()`            | ✅ Ready       |
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
-| Semantic cache / compression           | 🔌 Seam only  |
+| `SemanticCacheStore` + compression     | ✅ Ready       |
 
 ## Two ways to use it
 
@@ -178,11 +180,47 @@ Strategies: `costOptimized()` (cheapest capable), `failover(order?)` (availabili
 and `composite(...)` (e.g. cheapest-capable with UsePod always last). `withFailover(primary, fallback)`
 is the convenience the roadmap promised — try primary, fall back on retryable errors
 (429 / 5xx / model-deprecated). Optional `cache` (a `CacheStore`) and `compress`
-(a `CompressionTransform`) are off by default and ship as seams — bring your own.
+(a `CompressionTransform`) are off by default — see [Caching & compression](#caching--compression).
+Add hundreds more models via OpenRouter:
+
+```ts
+import { createOpenRouterProvider } from 'shipyard-inference'
+const openrouter = createOpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })
+// add as a candidate; use OpenRouter model ids like 'google/gemini-2.5-pro'
+```
 
 > Pricing in `DEFAULT_PRICING` is **advisory** and drifts; per-candidate `models[]`
 > is authoritative, with `pricingOverrides` in between. It ranks candidates, it
 > does not bill.
+
+## Caching & compression
+
+Both cut token spend and are off by default. **Caching** dedupes repeated work; a
+**`SemanticCacheStore`** matches *paraphrases* by embedding similarity (an
+exact-match `MemoryCacheStore` ships too):
+
+```ts
+import { Router, SemanticCacheStore, openAIEmbedder } from 'shipyard-inference'
+
+const router = new Router({
+  candidates: [/* … */],
+  cache: new SemanticCacheStore({
+    embedder: openAIEmbedder({ apiKey: process.env.OPENAI_API_KEY }), // or bring your own Embedder
+    threshold: 0.95, // cosine similarity for a hit
+  }),
+})
+```
+
+**Compression** shrinks long histories before dispatch — `slidingWindowCompression`
+(deterministic; keeps whole recent messages so code blocks stay intact) or
+`summarizeCompression` (summarizes older turns with a cheap model):
+
+```ts
+import { slidingWindowCompression, summarizeCompression } from 'shipyard-inference'
+
+new Router({ candidates: [/* … */], compress: slidingWindowCompression({ maxMessages: 20 }) })
+// or: summarizeCompression({ provider: cheapProvider, keepRecent: 8 })
+```
 
 ## Streaming
 
@@ -273,10 +311,13 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
 - **v0.2** — Anthropic, OpenAI, UsePod providers; `baseURL` passthrough.
 - **v0.3** — Cost-aware `Router` (`costOptimized` / `failover` / `composite`),
   `withFailover`, and the x402-on-Solana payment layer.
-- **v0.4** (now) — Streaming + usage/$ telemetry, the OpenAI-compatible
+- **v0.4** — Streaming + usage/$ telemetry, the OpenAI-compatible
   `shipyard-gateway`, and Nous/Hermes (`createNousProvider`) + Hermes Agent compatibility.
-- **Later** — retry-with-jitter, a real semantic `CacheStore`, context
-  compression, MPP session settlement, and a Paybox `SignIntent` on-chain path.
+- **v0.5** (now) — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
+  compression (`slidingWindowCompression` / `summarizeCompression`), and OpenRouter
+  (`createOpenRouterProvider`).
+- **Later** — retry-with-jitter, MPP session settlement, and a Paybox
+  `SignIntent` on-chain path.
 
 ## Related
 
