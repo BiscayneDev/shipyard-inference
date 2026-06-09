@@ -13,6 +13,8 @@ export interface UsePodProviderOptions {
   baseURL?: string
   defaultModel?: string
   defaultMaxTokens?: number
+  /** Custom fetch (e.g. `createPayingFetch`) forwarded to the underlying provider. */
+  fetch?: typeof fetch
 }
 
 const DEFAULT_PROXY_HOST = 'https://api.usepod.ai/proxy'
@@ -54,6 +56,7 @@ export function createUsePodProvider(
       baseURL,
       defaultModel: options.defaultModel,
       defaultMaxTokens: options.defaultMaxTokens,
+      fetch: options.fetch,
     })
   }
 
@@ -62,5 +65,6 @@ export function createUsePodProvider(
     baseURL,
     defaultModel: options.defaultModel,
     defaultMaxTokens: options.defaultMaxTokens,
+    fetch: options.fetch,
   })
 }

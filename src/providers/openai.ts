@@ -12,6 +12,13 @@ export interface OpenAIProviderOptions {
   baseURL?: string
   defaultModel?: string
   defaultMaxTokens?: number
+  /**
+   * Custom fetch implementation passed straight to the OpenAI SDK. The payment
+   * layer uses this to inject `createPayingFetch`, so an HTTP 402 from the
+   * upstream is settled and retried transparently — `chat()` never learns a
+   * payment happened.
+   */
+  fetch?: typeof fetch
 }
 
 export class OpenAIProvider implements LLMProvider {
@@ -23,6 +30,7 @@ export class OpenAIProvider implements LLMProvider {
     this.client = new OpenAI({
       apiKey: options.apiKey ?? process.env.OPENAI_API_KEY,
       baseURL: options.baseURL ?? process.env.OPENAI_BASE_URL,
+      fetch: options.fetch,
     })
     this.defaultModel = options.defaultModel ?? 'gpt-4o'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096

@@ -12,6 +12,13 @@ export interface AnthropicProviderOptions {
   baseURL?: string
   defaultModel?: string
   defaultMaxTokens?: number
+  /**
+   * Custom fetch implementation passed straight to the Anthropic SDK. The
+   * payment layer uses this to inject `createPayingFetch`, so an HTTP 402 from
+   * the upstream is settled and retried transparently — `chat()` never learns
+   * a payment happened.
+   */
+  fetch?: typeof fetch
 }
 
 export class AnthropicProvider implements LLMProvider {
@@ -23,6 +30,7 @@ export class AnthropicProvider implements LLMProvider {
     this.client = new Anthropic({
       apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY,
       baseURL: options.baseURL ?? process.env.ANTHROPIC_BASE_URL,
+      fetch: options.fetch,
     })
     this.defaultModel = options.defaultModel ?? 'claude-sonnet-4-5'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096
