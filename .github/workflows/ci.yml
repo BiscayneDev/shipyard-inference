@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # `npm ci` installs devDependencies too, which include the optional
+      # Solana/Paybox peers needed to typecheck and build the payment layer.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - run: npm test

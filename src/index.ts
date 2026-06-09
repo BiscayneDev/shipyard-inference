@@ -8,3 +8,9 @@ export type {
   UsePodProviderOptions,
   UsePodFamily,
 } from './providers/usepod.js'
+
+// Cost-aware routing
+export * from './router/index.js'
+
+// x402-on-Solana payment layer
+export * from './payment/index.js'
