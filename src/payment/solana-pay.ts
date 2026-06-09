@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   type PaymentProvider,
   type PaymentRequirement,
   type PaymentResult,
+  type PaymentSession,
   type SolanaSigner,
   type SpendCap,
   MissingDependencyError,
@@ -41,6 +42,47 @@ export interface SolanaPayProviderOptions {
     signedTxBase64: string
     network: string
   }) => string
+  /** Header name for the MPP session voucher. Default `X-PAYMENT`. */
+  sessionHeaderName?: string
+  /**
+   * Encode the signed MPP voucher into the session header value. The default
+   * emits a base64 JSON voucher; override to match your facilitator's wire format.
+   */
+  encodeSession?: (args: {
+    budget: string
+    payer: string
+    network: string
+    asset: string
+    nonce: string
+    signatureBase64: string
+  }) => string
+  /**
+   * Settle the cumulative session total on-chain when the session closes. The
+   * escrow/settlement format is facilitator-specific, so this is a hook — wire
+   * it to your facilitator's close/settle call.
+   */
+  onSessionClose?: () => Promise<void>
+}
+
+function defaultEncodeSession(args: {
+  budget: string
+  payer: string
+  network: string
+  asset: string
+  nonce: string
+  signatureBase64: string
+}): string {
+  const voucher = {
+    mppVersion: 1,
+    scheme: 'mpp',
+    network: args.network,
+    asset: args.asset,
+    payer: args.payer,
+    budget: args.budget,
+    nonce: args.nonce,
+    signature: args.signatureBase64,
+  }
+  return Buffer.from(JSON.stringify(voucher)).toString('base64')
 }
 
 function defaultEncodePayment(args: {
@@ -98,6 +140,7 @@ export async function createSolanaPayProvider(
   const connection = new web3.Connection(rpcUrl, 'confirmed')
   const payer = new web3.PublicKey(options.signer.publicKey)
   const mint = new web3.PublicKey(mintAddr)
+  const encodeSession = options.encodeSession ?? defaultEncodeSession
 
   // nonce -> settled result, so repeated challenges for the same logical
   // request return the prior proof instead of paying again.
@@ -158,6 +201,41 @@ export async function createSolanaPayProvider(
 
       inflight.set(key, promise)
       return promise
+    },
+
+    async openSession(budget: string): Promise<PaymentSession> {
+      if (!options.signer.signMessage) {
+        throw new PaymentError(
+          'openSession requires a signer with `signMessage` (keypairSigner or payboxSigner)',
+        )
+      }
+      const nonce = randomBytes(16).toString('hex')
+      const voucher = {
+        mpp: 1,
+        network,
+        asset: mintAddr,
+        payer: options.signer.publicKey,
+        budget,
+        nonce,
+      }
+      const signature = await options.signer.signMessage(
+        new Uint8Array(Buffer.from(JSON.stringify(voucher), 'utf8')),
+      )
+      return {
+        header: encodeSession({
+          budget,
+          payer: options.signer.publicKey,
+          network,
+          asset: mintAddr,
+          nonce,
+          signatureBase64: Buffer.from(signature).toString('base64'),
+        }),
+        headerName: options.sessionHeaderName ?? 'X-PAYMENT',
+        budget,
+        close: async () => {
+          await options.onSessionClose?.()
+        },
+      }
     },
   }
 }

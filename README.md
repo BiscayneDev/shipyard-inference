@@ -29,9 +29,10 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.6.0.** Providers, cost-aware routing, x402-on-Solana payments (with
-the full Paybox surface), streaming + usage telemetry, the OpenAI-compatible
-gateway, semantic caching + compression, and OpenRouter are all ready.
+**Alpha — v0.7.0.** Providers, cost-aware routing, x402-on-Solana payments (with
+the full Paybox surface and MPP session settlement), streaming + usage telemetry,
+the OpenAI-compatible gateway, semantic caching + compression, and OpenRouter are
+all ready.
 
 | Component                              | Status        |
 | -------------------------------------- | ------------- |
@@ -45,6 +46,7 @@ gateway, semantic caching + compression, and OpenRouter are all ready.
 | Usage/$ telemetry + `MemoryUsageRecorder` | ✅ Ready    |
 | `createPayingFetch()` (x402)           | ✅ Ready       |
 | `createSolanaPayProvider()`            | ✅ Ready       |
+| MPP sessions (`openSession`)           | ✅ Ready       |
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
 | `payboxSigner()` / `payboxSecret()`    | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
@@ -271,6 +273,27 @@ const provider = new AnthropicProvider({ baseURL: 'https://your-x402-endpoint', 
 `network` defaults to `devnet`. Use a dedicated low-balance hot wallet and never log
 the secret.
 
+### MPP sessions (bulk settlement)
+
+For sustained inference, a per-call 402 round-trip is wasteful. An **MPP**
+(Machine Payments Protocol) session locks a budget once, then attaches a reusable
+voucher to every request so the server debits the session — settling the
+cumulative total in bulk at `close()`:
+
+```ts
+const payment = await createSolanaPayProvider({ signer, network: 'mainnet' })
+const session = await payment.openSession('5000000') // budget in atomic USDC units
+
+const fetch = createPayingFetch({ paymentProvider: payment, session })
+// …many calls reuse the session voucher (a per-call 402 still backstops via pay())…
+await session.close() // settle in bulk
+```
+
+The session voucher is signed with the signer's `signMessage` (`keypairSigner` and
+`payboxSigner` both support it). The exact voucher/escrow wire format is
+facilitator-specific — override `encodeSession` / `onSessionClose` on
+`createSolanaPayProvider` to match yours.
+
 ### Paybox
 
 [Paybox](https://paybox.sh) is a credential vault + non-custodial payment broker
@@ -333,13 +356,15 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
   `withFailover`, and the x402-on-Solana payment layer.
 - **v0.4** — Streaming + usage/$ telemetry, the OpenAI-compatible
   `shipyard-gateway`, and Nous/Hermes (`createNousProvider`) + Hermes Agent compatibility.
-- **v0.6** (now) — Full Paybox surface: on-chain `payboxSigner` (`solanaTransaction`
+- **v0.7** (now) — MPP session settlement: `openSession` / `PaymentSession`,
+  `createPayingFetch({ session })`, and `signMessage` on the Solana signers.
+- **v0.6** — Full Paybox surface: on-chain `payboxSigner` (`solanaTransaction`
   intent) and `payboxSecret` (vaulted API keys), alongside the card/merchant
   `createPayboxPaymentProvider`.
 - **v0.5** — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
   compression (`slidingWindowCompression` / `summarizeCompression`), and OpenRouter
   (`createOpenRouterProvider`).
-- **Later** — retry-with-jitter and MPP session settlement.
+- **Later** — retry-with-jitter.
 
 ## Related
 
