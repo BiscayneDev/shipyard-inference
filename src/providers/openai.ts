@@ -6,7 +6,10 @@ import type {
   ChatMessage,
   ToolCall,
   UsageInfo,
+  LLMStreamEvent,
+  LLMStreamOptions,
 } from '../types.js'
+import { parseToolArguments } from '../stream.js'
 
 export interface OpenAIProviderOptions {
   apiKey?: string
@@ -38,9 +41,73 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async chat(params: LLMChatParams): Promise<LLMResponse> {
-    const model = params.model ?? this.defaultModel
-    const maxTokens = params.maxTokens ?? this.defaultMaxTokens
+    const response = await this.client.chat.completions.create(this.buildRequest(params))
+    return this.parseResponse(response)
+  }
 
+  async *chatStream(
+    params: LLMChatParams,
+    opts?: LLMStreamOptions,
+  ): AsyncIterable<LLMStreamEvent> {
+    const stream = await this.client.chat.completions.create(
+      {
+        ...this.buildRequest(params),
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+      { signal: opts?.signal },
+    )
+
+    let content: string | null = null
+    let stopReason: LLMResponse['stopReason'] = 'end_turn'
+    let usage: UsageInfo | undefined
+    const buffers = new Map<number, { id: string; name: string; args: string }>()
+    const started = new Set<number>()
+
+    for await (const chunk of stream) {
+      const choice = chunk.choices[0]
+      if (choice) {
+        const delta = choice.delta
+        if (delta?.content) {
+          content = (content ?? '') + delta.content
+          yield { type: 'text_delta', text: delta.content }
+        }
+        for (const tc of delta?.tool_calls ?? []) {
+          const index = tc.index
+          let buf = buffers.get(index)
+          if (!buf) {
+            buf = { id: '', name: '', args: '' }
+            buffers.set(index, buf)
+          }
+          if (tc.id) buf.id = tc.id
+          if (tc.function?.name) buf.name = tc.function.name
+          if (!started.has(index) && buf.id && buf.name) {
+            started.add(index)
+            yield { type: 'tool_call_start', index, id: buf.id, name: buf.name }
+          }
+          if (tc.function?.arguments) {
+            buf.args += tc.function.arguments
+            yield { type: 'tool_call_delta', index, argsTextDelta: tc.function.arguments }
+          }
+        }
+        if (choice.finish_reason === 'tool_calls') stopReason = 'tool_use'
+        else if (choice.finish_reason === 'length') stopReason = 'max_tokens'
+      }
+      // The final usage-only chunk (choices: []) carries token counts.
+      if (chunk.usage) usage = parseOpenAIUsage(chunk.usage)
+      // Unknown / non-standard chunk shapes are tolerated and skipped.
+    }
+
+    const toolCalls: ToolCall[] = [...buffers.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, b]) => ({ id: b.id, name: b.name, input: parseToolArguments(b.name, b.args) }))
+
+    yield { type: 'done', response: { content, toolCalls, stopReason, usage } }
+  }
+
+  private buildRequest(
+    params: LLMChatParams,
+  ): OpenAI.ChatCompletionCreateParamsNonStreaming {
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: params.system },
       ...this.expandMessages(params.messages),
@@ -58,14 +125,12 @@ export class OpenAIProvider implements LLMProvider {
           }))
         : undefined
 
-    const response = await this.client.chat.completions.create({
-      model,
-      max_tokens: maxTokens,
+    return {
+      model: params.model ?? this.defaultModel,
+      max_tokens: params.maxTokens ?? this.defaultMaxTokens,
       messages,
       tools,
-    })
-
-    return this.parseResponse(response)
+    }
   }
 
   private expandMessages(

@@ -1,7 +1,15 @@
-import type { LLMChatParams, LLMResponse, LLMProvider, UsageInfo } from '../types.js'
+import type {
+  LLMChatParams,
+  LLMResponse,
+  LLMProvider,
+  UsageInfo,
+  LLMStreamEvent,
+  LLMStreamOptions,
+} from '../types.js'
 import type { ModelMetadata, ProviderCandidate } from './candidates.js'
 import type { CacheStore } from './cache.js'
 import { cacheKey } from './cache.js'
+import { responseToStream } from '../stream.js'
 import type { CompressionTransform } from './compress.js'
 import { NoCapableModelError, isRetryable } from './errors.js'
 import { computeActualCostUsd, resolveModelMetadata } from './pricing.js'
@@ -146,6 +154,112 @@ export class Router implements LLMProvider {
     }
 
     throw lastError
+  }
+
+  /**
+   * Streaming variant of {@link chat}. Reuses the same selection/failover loop,
+   * with one added rule: **fail over only before the first content event.** Once
+   * any token has been emitted to the consumer the request is committed — later
+   * errors propagate rather than retrying, since emitted tokens can't be unsent
+   * and re-running on another model would duplicate output. The cache is written
+   * only on a clean `done`.
+   */
+  async *chatStream(
+    params: LLMChatParams,
+    opts?: LLMStreamOptions,
+  ): AsyncIterable<LLMStreamEvent> {
+    const compressed = this.opts.compress ? await this.opts.compress(params) : params
+
+    const key = this.opts.cache ? cacheKey(compressed) : undefined
+    if (this.opts.cache && key) {
+      const hit = await this.opts.cache.get(key)
+      if (hit) {
+        this.emit({ type: 'cache_hit', key })
+        yield* responseToStream(hit)
+        return
+      }
+      this.emit({ type: 'cache_miss', key })
+    }
+
+    const decisions = this.plan(compressed)
+    if (decisions.length === 0) {
+      throw new NoCapableModelError(
+        '[shipyard-inference] No candidate model satisfies the routing hints',
+      )
+    }
+
+    const limit = Math.min(decisions.length, this.opts.maxRetries ?? decisions.length)
+    let lastError: unknown
+    let committed = false
+
+    for (let attempt = 0; attempt < limit; attempt++) {
+      const decision = decisions[attempt]!
+      this.emit({
+        type: 'route_selected',
+        candidateId: decision.candidate.id,
+        model: decision.model,
+        estimatedCostUsd: decision.estimatedCostUsd,
+        attempt,
+      })
+
+      const startedAt = performance.now()
+      try {
+        for await (const event of this.streamFromDecision(decision, compressed, opts)) {
+          if (event.type === 'done') {
+            if (this.opts.cache && key) await this.opts.cache.set(key, event.response)
+            this.emit({
+              type: 'route_success',
+              candidateId: decision.candidate.id,
+              model: decision.model,
+              attempt,
+            })
+            this.recordCompletion(decision, event.response.usage, performance.now() - startedAt)
+          } else {
+            committed = true
+          }
+          yield event
+        }
+        return
+      } catch (error) {
+        lastError = error
+        const hasMore = attempt < limit - 1
+        if (!committed && isRetryable(error) && hasMore) {
+          this.emit({
+            type: 'failover',
+            candidateId: decision.candidate.id,
+            model: decision.model,
+            attempt,
+            error,
+          })
+          continue
+        }
+        this.emit({
+          type: 'route_error',
+          candidateId: decision.candidate.id,
+          model: decision.model,
+          attempt,
+          error,
+        })
+        throw error
+      }
+    }
+
+    throw lastError
+  }
+
+  /** Stream from a decision, adapting non-streaming providers via `responseToStream`. */
+  private async *streamFromDecision(
+    decision: RoutingDecision,
+    params: LLMChatParams,
+    opts?: LLMStreamOptions,
+  ): AsyncIterable<LLMStreamEvent> {
+    const chatParams = { ...params, model: decision.model ?? params.model }
+    const provider = decision.candidate.provider
+    if (provider.chatStream) {
+      yield* provider.chatStream(chatParams, opts)
+    } else {
+      yield* responseToStream(await provider.chat(chatParams))
+    }
   }
 
   private plan(params: LLMChatParams): RoutingDecision[] {

@@ -80,6 +80,49 @@ export interface LLMResponse {
   usage?: UsageInfo
 }
 
+/** A streamed text fragment. */
+export interface LLMStreamTextDelta {
+  type: 'text_delta'
+  text: string
+}
+/** A tool call begins. `index` is a stable 0-based position in the final `toolCalls`. */
+export interface LLMStreamToolCallStart {
+  type: 'tool_call_start'
+  index: number
+  id: string
+  name: string
+}
+/** A fragment of a tool call's argument JSON. Raw text — NOT valid JSON on its own. */
+export interface LLMStreamToolCallDelta {
+  type: 'tool_call_delta'
+  index: number
+  argsTextDelta: string
+}
+/** Terminal event. The only authoritative source of the full response, usage, and stopReason. */
+export interface LLMStreamDone {
+  type: 'done'
+  response: LLMResponse
+}
+export type LLMStreamEvent =
+  | LLMStreamTextDelta
+  | LLMStreamToolCallStart
+  | LLMStreamToolCallDelta
+  | LLMStreamDone
+
+export interface LLMStreamOptions {
+  /** Abort the upstream request (e.g. on client disconnect) to stop token spend. */
+  signal?: AbortSignal
+}
+
 export interface LLMProvider {
   chat(params: LLMChatParams): Promise<LLMResponse>
+  /**
+   * Optional streaming variant. Yields incremental events ending in a single
+   * `done` event carrying the assembled `LLMResponse`. Optional so existing
+   * implementers remain valid; `Router` adapts non-streaming providers.
+   */
+  chatStream?(
+    params: LLMChatParams,
+    opts?: LLMStreamOptions,
+  ): AsyncIterable<LLMStreamEvent>
 }

@@ -9,6 +9,9 @@ export type {
   UsePodFamily,
 } from './providers/usepod.js'
 
+// Streaming helpers
+export { collectStream, responseToStream, parseToolArguments } from './stream.js'
+
 // Cost-aware routing
 export * from './router/index.js'
 
