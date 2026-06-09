@@ -1,7 +1,7 @@
 {
   "name": "shipyard-inference",
-  "version": "0.3.0",
-  "description": "The always-available inference layer for the Shipyard stack. Cost-aware routing and x402-on-Solana payments over Anthropic, OpenAI, and UsePod behind one LLMProvider interface.",
+  "version": "0.4.0",
+  "description": "The always-available inference layer for the Shipyard stack: streaming, cost-aware routing, x402-on-Solana payments, and a drop-in OpenAI-compatible gateway over Anthropic, OpenAI, UsePod, and Nous/Hermes.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,7 +9,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./gateway": {
+      "import": "./dist/gateway/index.js",
+      "types": "./dist/gateway/index.d.ts"
     }
+  },
+  "bin": {
+    "shipyard-gateway": "./dist/gateway/bin.js"
   },
   "files": [
     "dist",
@@ -55,20 +62,36 @@
     "openai": "^6.32.0"
   },
   "peerDependencies": {
-    "@solana/web3.js": "^1.95.0",
+    "@hono/node-server": "^1 || ^2",
+    "@paybox-sh/sdk": "^0.1.0",
     "@solana/spl-token": "^0.4.0",
-    "@paybox-sh/sdk": "^0.1.0"
+    "@solana/web3.js": "^1.95.0",
+    "hono": "^4"
   },
   "peerDependenciesMeta": {
-    "@solana/web3.js": { "optional": true },
-    "@solana/spl-token": { "optional": true },
-    "@paybox-sh/sdk": { "optional": true }
+    "@solana/web3.js": {
+      "optional": true
+    },
+    "@solana/spl-token": {
+      "optional": true
+    },
+    "@paybox-sh/sdk": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "@hono/node-server": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@hono/node-server": "^2.0.4",
     "@paybox-sh/sdk": "^0.1.0",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "@types/node": "^20",
+    "hono": "^4.12.25",
     "tsx": "^4.19.0",
     "typescript": "^5"
   }

@@ -2,8 +2,54 @@ import type {
   LLMChatParams,
   LLMResponse,
   LLMProvider,
+  LLMStreamEvent,
 } from '../src/index.js'
 import type { ModelMetadata, ProviderCandidate } from '../src/index.js'
+
+/**
+ * A provider whose `chatStream` replays a scripted event list, optionally
+ * throwing at a given position (`throwAt`). `throwAt: 0` throws before any
+ * event (pre-content); `throwAt: n` throws after yielding event n-1.
+ */
+export function streamingProvider(
+  events: LLMStreamEvent[],
+  opts: { throwAt?: number; error?: unknown } = {},
+): LLMProvider & { streamCalls: LLMChatParams[] } {
+  const streamCalls: LLMChatParams[] = []
+  return {
+    streamCalls,
+    async chat() {
+      return { content: '(nonstream)', toolCalls: [], stopReason: 'end_turn' }
+    },
+    async *chatStream(params) {
+      streamCalls.push(params)
+      for (let i = 0; i < events.length; i++) {
+        if (opts.throwAt === i) throw opts.error ?? new Error('stream error')
+        yield events[i]!
+      }
+      if (opts.throwAt === events.length) throw opts.error ?? new Error('stream error')
+    },
+  }
+}
+
+/** Build a Response carrying an SSE body, returned from an injected `fetch`. */
+export function sseFetch(sse: string): typeof fetch {
+  return (async () =>
+    new Response(sse, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as unknown as typeof fetch
+}
+
+/** Serialize Anthropic-style named SSE events. */
+export function anthropicSSE(events: Array<{ event: string; data: unknown }>): string {
+  return events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join('')
+}
+
+/** Serialize OpenAI-style `data:`-only SSE chunks, terminated by `[DONE]`. */
+export function openaiSSE(chunks: unknown[]): string {
+  return chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n'
+}
 
 /** A mock LLMProvider that records calls and runs a supplied implementation. */
 export function mockProvider(

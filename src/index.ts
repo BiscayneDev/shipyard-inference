@@ -8,6 +8,11 @@ export type {
   UsePodProviderOptions,
   UsePodFamily,
 } from './providers/usepod.js'
+export { createNousProvider } from './providers/nous.js'
+export type { NousProviderOptions } from './providers/nous.js'
+
+// Streaming helpers
+export { collectStream, responseToStream, parseToolArguments } from './stream.js'
 
 // Cost-aware routing
 export * from './router/index.js'

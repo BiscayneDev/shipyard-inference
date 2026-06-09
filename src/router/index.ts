@@ -16,7 +16,14 @@ export type {
   ModelTier,
 } from './candidates.js'
 export { TIER_RANK } from './candidates.js'
-export { DEFAULT_PRICING, resolveModelMetadata } from './pricing.js'
+export { DEFAULT_PRICING, resolveModelMetadata, computeActualCostUsd } from './pricing.js'
+export { MemoryUsageRecorder } from './usage.js'
+export type {
+  UsageRecorder,
+  UsageRecord,
+  UsageTotals,
+  UsageModelTotals,
+} from './usage.js'
 export { isCapable } from './capabilities.js'
 export { estimateInputTokens } from './estimate.js'
 export { NoCapableModelError, isRetryable } from './errors.js'

@@ -1,4 +1,5 @@
 import type { ModelMetadata, ModelTier } from './candidates.js'
+import type { UsageInfo } from '../types.js'
 
 /**
  * Advisory pricing/capability snapshot, keyed by canonical model id. This is
@@ -43,6 +44,21 @@ export const DEFAULT_PRICING: Record<string, Omit<ModelMetadata, 'model'>> = {
     contextWindow: 128_000,
     tier: 'economy',
     capabilities: ['tools', 'vision', 'json'],
+  },
+  // Nous Research / Hermes (open-weight; advisory pricing).
+  'Hermes-4-405B': {
+    inputCostPerMTok: 0.9,
+    outputCostPerMTok: 0.9,
+    contextWindow: 128_000,
+    tier: 'standard',
+    capabilities: ['tools', 'json'],
+  },
+  'Hermes-4-70B': {
+    inputCostPerMTok: 0.2,
+    outputCostPerMTok: 0.2,
+    contextWindow: 128_000,
+    tier: 'economy',
+    capabilities: ['tools', 'json'],
   },
 }
 
@@ -95,4 +111,24 @@ export function resolveModelMetadata(
     },
     priced: false,
   }
+}
+
+/**
+ * Actual USD cost from real token usage and resolved model pricing. Returns
+ * `undefined` when the model is unpriced (Infinity) or usage is unavailable, so
+ * callers can distinguish "free/unknown" from "$0". Cache-read tokens are
+ * billed at the input rate (no separate cache rate today).
+ */
+export function computeActualCostUsd(
+  meta: ModelMetadata | undefined,
+  usage: UsageInfo | undefined,
+): number | undefined {
+  if (!meta || !usage) return undefined
+  if (!isFinite(meta.inputCostPerMTok) || !isFinite(meta.outputCostPerMTok)) {
+    return undefined
+  }
+  return (
+    (usage.inputTokens / 1_000_000) * meta.inputCostPerMTok +
+    (usage.outputTokens / 1_000_000) * meta.outputCostPerMTok
+  )
 }
