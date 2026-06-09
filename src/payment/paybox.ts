@@ -3,9 +3,18 @@ import {
   type PaymentProvider,
   type PaymentRequirement,
   type PaymentResult,
+  type SolanaSigner,
   MissingDependencyError,
   PaymentError,
 } from './types.js'
+
+/** Polling knobs shared by every Paybox helper. */
+interface PollOptions {
+  /** Poll interval while a request is pending. */
+  pollIntervalMs?: number
+  /** Give up awaiting approval/signature after this long (default 120s). */
+  approvalTimeoutMs?: number
+}
 
 /**
  * Load the real `@paybox-sh/sdk` at call time (it's an optional peer, so
@@ -59,7 +68,7 @@ function defaultToCents(requirement: PaymentRequirement): number {
 async function resolveResponse(
   client: PayboxClient,
   response: AgentResponse,
-  opts: PayboxPaymentProviderOptions,
+  opts: PollOptions,
 ): Promise<AgentResponse> {
   let current = response
   if (current.status === 'pending_approval' || current.status === 'pending_signature') {
@@ -83,9 +92,9 @@ async function resolveResponse(
  * scoped, passkey-gated approval; that token is attached as the proof header on
  * retry. `pay` is idempotent per nonce so a retried request never double-charges.
  *
- * Note: Paybox's wallet-sign path is intent-based and submits on-chain itself,
- * so for *on-chain USDC* x402 use `keypairSigner` + `createSolanaPayProvider`
- * instead. This adapter is for endpoints that bill via a Paybox card credential.
+ * This adapter is for endpoints that bill via a Paybox *card* credential. For
+ * *on-chain USDC* x402, use `payboxSigner` (a non-custodial Solana signer backed
+ * by a Paybox wallet credential) with `createSolanaPayProvider`.
  */
 export async function createPayboxPaymentProvider(
   options: PayboxPaymentProviderOptions,
@@ -128,4 +137,109 @@ export async function createPayboxPaymentProvider(
       return result
     },
   }
+}
+
+export interface PayboxSignerOptions extends PollOptions {
+  /** Pre-built client. Defaults to `PayboxClient.fromConfig()`. */
+  client?: PayboxClient
+  /** Wallet-kind credential to sign with. */
+  credentialId: string
+  /** Payer base58 public key. Derived from the credential's metadata when omitted. */
+  publicKey?: string
+  /** CAIP-2 chain. Derived from `network` when omitted. */
+  chain?: string
+  /** Solana cluster used to derive `chain`. Default `mainnet`. */
+  network?: 'mainnet' | 'devnet'
+}
+
+async function resolvePayerAddress(
+  client: PayboxClient,
+  options: PayboxSignerOptions,
+): Promise<string> {
+  if (options.publicKey) return options.publicKey
+  const credentials = await client.listCredentials()
+  const match = credentials.find((c) => c.credential.id === options.credentialId)
+  const address = match?.credential.metadata?.address
+  if (typeof address === 'string' && address) return address
+  throw new PaymentError(
+    'payboxSigner could not determine the wallet address — pass `publicKey`',
+  )
+}
+
+/**
+ * A `SolanaSigner` backed by a Paybox wallet credential. `signTransaction`
+ * submits a `solanaTransaction` sign intent — Paybox signs non-custodially
+ * (private key never reaches us, the agent, or the model) behind scoped,
+ * passkey-gated approval, and returns the signed serialized transaction. Pass it
+ * as the `signer` to `createSolanaPayProvider` to settle on-chain USDC x402
+ * without a raw hot-wallet key in your environment.
+ */
+export async function payboxSigner(
+  options: PayboxSignerOptions,
+): Promise<SolanaSigner> {
+  const client = await loadPayboxClient(options.client)
+  const publicKey = await resolvePayerAddress(client, options)
+  const chain =
+    options.chain ?? (options.network === 'devnet' ? 'solana:devnet' : 'solana:mainnet-beta')
+
+  return {
+    publicKey,
+    async signTransaction(tx: Uint8Array): Promise<Uint8Array> {
+      const response = await resolveResponse(
+        client,
+        await client.requestWalletSign({
+          credentialId: options.credentialId,
+          chain,
+          intent: {
+            op: 'solanaTransaction',
+            address: publicKey,
+            transactionBase64: Buffer.from(tx).toString('base64'),
+          },
+        } as Parameters<PayboxClient['requestWalletSign']>[0]),
+        options,
+      )
+      const signed = response.output?.value
+      if (typeof signed !== 'string') {
+        throw new PaymentError(
+          `Paybox wallet sign ${response.request_id} returned no signed transaction`,
+        )
+      }
+      return new Uint8Array(Buffer.from(signed, 'base64'))
+    },
+  }
+}
+
+export interface PayboxSecretOptions extends PollOptions {
+  /** Pre-built client. Defaults to `PayboxClient.fromConfig()`. */
+  client?: PayboxClient
+  /** Secret-kind credential to reveal. */
+  credentialId: string
+  /** `true` returns plaintext; `false` (default) returns a one-time mediated token. */
+  raw?: boolean
+  /** Reason shown at approval and recorded in the audit log. */
+  purpose?: string
+}
+
+/**
+ * Reveal a secret credential (e.g. a provider API key) vaulted in Paybox, behind
+ * scoped, passkey-gated approval. Use it to source `apiKey` for a provider so
+ * keys live in the vault instead of your environment. Prefer `raw: false` so the
+ * plaintext never transits the model.
+ */
+export async function payboxSecret(options: PayboxSecretOptions): Promise<string> {
+  const client = await loadPayboxClient(options.client)
+  const response = await resolveResponse(
+    client,
+    await client.requestSecret({
+      credentialId: options.credentialId,
+      raw: options.raw,
+      purpose: options.purpose,
+    }),
+    options,
+  )
+  const value = response.output?.value
+  if (value == null) {
+    throw new PaymentError(`Paybox secret ${response.request_id} returned no value`)
+  }
+  return typeof value === 'string' ? value : JSON.stringify(value)
 }
