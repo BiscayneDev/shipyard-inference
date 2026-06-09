@@ -2,8 +2,12 @@ export { createPayingFetch } from './paying-fetch.js'
 export { createSolanaPayProvider } from './solana-pay.js'
 export type { SolanaPayProviderOptions } from './solana-pay.js'
 export { keypairSigner } from './keypair-signer.js'
-export { createPayboxPaymentProvider } from './paybox.js'
-export type { PayboxPaymentProviderOptions } from './paybox.js'
+export { createPayboxPaymentProvider, payboxSigner, payboxSecret } from './paybox.js'
+export type {
+  PayboxPaymentProviderOptions,
+  PayboxSignerOptions,
+  PayboxSecretOptions,
+} from './paybox.js'
 export {
   SpendCapError,
   PaymentError,

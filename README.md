@@ -29,9 +29,9 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.5.0.** Providers, cost-aware routing, x402-on-Solana payments,
-streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
-compression, and OpenRouter are all ready.
+**Alpha — v0.6.0.** Providers, cost-aware routing, x402-on-Solana payments (with
+the full Paybox surface), streaming + usage telemetry, the OpenAI-compatible
+gateway, semantic caching + compression, and OpenRouter are all ready.
 
 | Component                              | Status        |
 | -------------------------------------- | ------------- |
@@ -46,6 +46,7 @@ compression, and OpenRouter are all ready.
 | `createPayingFetch()` (x402)           | ✅ Ready       |
 | `createSolanaPayProvider()`            | ✅ Ready       |
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
+| `payboxSigner()` / `payboxSecret()`    | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
 | `SemanticCacheStore` + compression     | ✅ Ready       |
 
@@ -288,9 +289,28 @@ const payment = await createPayboxPaymentProvider({
 const fetch = createPayingFetch({ paymentProvider: payment })
 ```
 
-> For *on-chain USDC* x402 settlement use `keypairSigner` + `createSolanaPayProvider`.
-> Paybox's wallet-sign path is intent-based and submits on-chain itself, so this
-> adapter targets endpoints that bill through a Paybox card credential.
+For **on-chain USDC** x402, `payboxSigner` is a non-custodial `SolanaSigner` backed
+by a Paybox wallet credential — Paybox signs each transfer behind passkey approval
+(the private key never reaches you, the agent, or the model), so you get Solana
+settlement without a hot-wallet key in your environment:
+
+```ts
+import { createPayingFetch, createSolanaPayProvider, payboxSigner } from 'shipyard-inference'
+
+const signer = await payboxSigner({ credentialId: process.env.PAYBOX_WALLET_ID! })
+const payment = await createSolanaPayProvider({ signer, network: 'mainnet' })
+const fetch = createPayingFetch({ paymentProvider: payment })
+```
+
+And `payboxSecret` reveals a vaulted API key (passkey-gated) so provider keys live
+in Paybox instead of your environment:
+
+```ts
+import { AnthropicProvider, payboxSecret } from 'shipyard-inference'
+
+const apiKey = await payboxSecret({ credentialId: process.env.PAYBOX_ANTHROPIC_KEY_ID! })
+const provider = new AnthropicProvider({ apiKey })
+```
 
 ## How UsePod works (the short version)
 
@@ -313,11 +333,13 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
   `withFailover`, and the x402-on-Solana payment layer.
 - **v0.4** — Streaming + usage/$ telemetry, the OpenAI-compatible
   `shipyard-gateway`, and Nous/Hermes (`createNousProvider`) + Hermes Agent compatibility.
-- **v0.5** (now) — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
+- **v0.6** (now) — Full Paybox surface: on-chain `payboxSigner` (`solanaTransaction`
+  intent) and `payboxSecret` (vaulted API keys), alongside the card/merchant
+  `createPayboxPaymentProvider`.
+- **v0.5** — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
   compression (`slidingWindowCompression` / `summarizeCompression`), and OpenRouter
   (`createOpenRouterProvider`).
-- **Later** — retry-with-jitter, MPP session settlement, and a Paybox
-  `SignIntent` on-chain path.
+- **Later** — retry-with-jitter and MPP session settlement.
 
 ## Related
 
