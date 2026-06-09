@@ -45,6 +45,21 @@ export const DEFAULT_PRICING: Record<string, Omit<ModelMetadata, 'model'>> = {
     tier: 'economy',
     capabilities: ['tools', 'vision', 'json'],
   },
+  // Nous Research / Hermes (open-weight; advisory pricing).
+  'Hermes-4-405B': {
+    inputCostPerMTok: 0.9,
+    outputCostPerMTok: 0.9,
+    contextWindow: 128_000,
+    tier: 'standard',
+    capabilities: ['tools', 'json'],
+  },
+  'Hermes-4-70B': {
+    inputCostPerMTok: 0.2,
+    outputCostPerMTok: 0.2,
+    contextWindow: 128_000,
+    tier: 'economy',
+    capabilities: ['tools', 'json'],
+  },
 }
 
 /** Sentinel tier for a model we have no metadata for. */
