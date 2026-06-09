@@ -5,6 +5,7 @@ import type {
   LLMResponse,
   ChatMessage,
   ToolCall,
+  UsageInfo,
 } from '../types.js'
 
 export interface AnthropicProviderOptions {
@@ -124,6 +125,23 @@ export class AnthropicProvider implements LLMProvider {
       stopReason = 'max_tokens'
     }
 
-    return { content, toolCalls, stopReason }
+    return { content, toolCalls, stopReason, usage: parseAnthropicUsage(response.usage) }
   }
+}
+
+export function parseAnthropicUsage(
+  usage: Anthropic.Usage | undefined | null,
+): UsageInfo | undefined {
+  if (!usage) return undefined
+  const info: UsageInfo = {
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+  }
+  if (usage.cache_read_input_tokens != null) {
+    info.cacheReadTokens = usage.cache_read_input_tokens
+  }
+  if (usage.cache_creation_input_tokens != null) {
+    info.cacheWriteTokens = usage.cache_creation_input_tokens
+  }
+  return info
 }

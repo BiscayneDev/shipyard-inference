@@ -1,4 +1,5 @@
 import type { ModelMetadata, ModelTier } from './candidates.js'
+import type { UsageInfo } from '../types.js'
 
 /**
  * Advisory pricing/capability snapshot, keyed by canonical model id. This is
@@ -95,4 +96,24 @@ export function resolveModelMetadata(
     },
     priced: false,
   }
+}
+
+/**
+ * Actual USD cost from real token usage and resolved model pricing. Returns
+ * `undefined` when the model is unpriced (Infinity) or usage is unavailable, so
+ * callers can distinguish "free/unknown" from "$0". Cache-read tokens are
+ * billed at the input rate (no separate cache rate today).
+ */
+export function computeActualCostUsd(
+  meta: ModelMetadata | undefined,
+  usage: UsageInfo | undefined,
+): number | undefined {
+  if (!meta || !usage) return undefined
+  if (!isFinite(meta.inputCostPerMTok) || !isFinite(meta.outputCostPerMTok)) {
+    return undefined
+  }
+  return (
+    (usage.inputTokens / 1_000_000) * meta.inputCostPerMTok +
+    (usage.outputTokens / 1_000_000) * meta.outputCostPerMTok
+  )
 }

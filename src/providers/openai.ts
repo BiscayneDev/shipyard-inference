@@ -5,6 +5,7 @@ import type {
   LLMResponse,
   ChatMessage,
   ToolCall,
+  UsageInfo,
 } from '../types.js'
 
 export interface OpenAIProviderOptions {
@@ -155,6 +156,19 @@ export class OpenAIProvider implements LLMProvider {
       stopReason = 'max_tokens'
     }
 
-    return { content, toolCalls, stopReason }
+    return { content, toolCalls, stopReason, usage: parseOpenAIUsage(response.usage) }
   }
+}
+
+export function parseOpenAIUsage(
+  usage: OpenAI.CompletionUsage | undefined | null,
+): UsageInfo | undefined {
+  if (!usage) return undefined
+  const info: UsageInfo = {
+    inputTokens: usage.prompt_tokens ?? 0,
+    outputTokens: usage.completion_tokens ?? 0,
+  }
+  const cached = usage.prompt_tokens_details?.cached_tokens
+  if (cached != null) info.cacheReadTokens = cached
+  return info
 }

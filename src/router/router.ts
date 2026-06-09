@@ -1,9 +1,11 @@
-import type { LLMChatParams, LLMResponse, LLMProvider } from '../types.js'
+import type { LLMChatParams, LLMResponse, LLMProvider, UsageInfo } from '../types.js'
 import type { ModelMetadata, ProviderCandidate } from './candidates.js'
 import type { CacheStore } from './cache.js'
 import { cacheKey } from './cache.js'
 import type { CompressionTransform } from './compress.js'
 import { NoCapableModelError, isRetryable } from './errors.js'
+import { computeActualCostUsd, resolveModelMetadata } from './pricing.js'
+import type { UsageRecorder } from './usage.js'
 import {
   type RoutingDecision,
   type RoutingStrategy,
@@ -24,6 +26,14 @@ export type RouterEvent =
   | { type: 'route_success'; candidateId: string; model?: string; attempt: number }
   | { type: 'failover'; candidateId: string; model?: string; attempt: number; error: unknown }
   | { type: 'route_error'; candidateId: string; model?: string; attempt: number; error: unknown }
+  | {
+      type: 'request_completed'
+      candidateId: string
+      model?: string
+      usage?: UsageInfo
+      actualCostUsd?: number
+      latencyMs: number
+    }
 
 export interface RouterOptions {
   candidates: ProviderCandidate[]
@@ -37,6 +47,8 @@ export interface RouterOptions {
   compress?: CompressionTransform
   /** Observability hook for routing/failover events. */
   onEvent?: (event: RouterEvent) => void
+  /** Optional sink for completed-request usage/$ telemetry. Off when omitted. */
+  usageRecorder?: UsageRecorder
   /** Max number of candidates to try. Defaults to "try them all". */
   maxRetries?: number
 }
@@ -94,6 +106,7 @@ export class Router implements LLMProvider {
         attempt,
       })
 
+      const startedAt = performance.now()
       try {
         const res = await decision.candidate.provider.chat({
           ...compressed,
@@ -106,6 +119,7 @@ export class Router implements LLMProvider {
           model: decision.model,
           attempt,
         })
+        this.recordCompletion(decision, res.usage, performance.now() - startedAt)
         return res
       } catch (error) {
         lastError = error
@@ -160,6 +174,37 @@ export class Router implements LLMProvider {
 
   private emit(event: RouterEvent): void {
     this.opts.onEvent?.(event)
+  }
+
+  /** Resolve actual cost from real usage, emit `request_completed`, record telemetry. */
+  private recordCompletion(
+    decision: RoutingDecision,
+    usage: UsageInfo | undefined,
+    latencyMs: number,
+  ): void {
+    const meta =
+      decision.meta ??
+      (decision.model
+        ? resolveModelMetadata(decision.model, undefined, this.opts.pricingOverrides).meta
+        : undefined)
+    const actualCostUsd = computeActualCostUsd(meta, usage)
+
+    this.emit({
+      type: 'request_completed',
+      candidateId: decision.candidate.id,
+      model: decision.model,
+      usage,
+      actualCostUsd,
+      latencyMs,
+    })
+    this.opts.usageRecorder?.record({
+      candidateId: decision.candidate.id,
+      model: decision.model,
+      usage,
+      actualCostUsd,
+      latencyMs,
+      at: Date.now(),
+    })
   }
 }
 

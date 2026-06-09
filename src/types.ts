@@ -62,10 +62,22 @@ export interface LLMChatParams {
   routingHints?: RoutingHints
 }
 
+/** Token accounting for a single completion, when the upstream reports it. */
+export interface UsageInfo {
+  inputTokens: number
+  outputTokens: number
+  /** Prompt tokens served from the provider's cache, when reported. */
+  cacheReadTokens?: number
+  /** Prompt tokens written to the provider's cache, when reported. */
+  cacheWriteTokens?: number
+}
+
 export interface LLMResponse {
   content: string | null
   toolCalls: ToolCall[]
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens'
+  /** Token usage from the upstream, when available. Optional — some proxies strip it. */
+  usage?: UsageInfo
 }
 
 export interface LLMProvider {
