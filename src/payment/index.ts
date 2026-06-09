@@ -17,6 +17,7 @@ export type {
   PaymentProvider,
   PaymentRequirement,
   PaymentResult,
+  PaymentSession,
   PayingFetchOptions,
   SolanaSigner,
   SpendCap,

@@ -38,6 +38,17 @@ export async function keypairSigner(
       vtx.sign([keypair])
       return vtx.serialize()
     },
+    async signMessage(message: Uint8Array): Promise<Uint8Array> {
+      // Ed25519 sign via node:crypto: wrap the 32-byte seed in a PKCS8 envelope.
+      const { createPrivateKey, sign } = await import('node:crypto')
+      const seed = Buffer.from(keypair.secretKey.slice(0, 32))
+      const pkcs8 = Buffer.concat([
+        Buffer.from('302e020100300506032b657004220420', 'hex'),
+        seed,
+      ])
+      const key = createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' })
+      return new Uint8Array(sign(null, Buffer.from(message), key))
+    },
   }
 }
 

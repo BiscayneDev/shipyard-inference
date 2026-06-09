@@ -206,6 +206,28 @@ export async function payboxSigner(
       }
       return new Uint8Array(Buffer.from(signed, 'base64'))
     },
+    async signMessage(message: Uint8Array): Promise<Uint8Array> {
+      const response = await resolveResponse(
+        client,
+        await client.requestWalletSign({
+          credentialId: options.credentialId,
+          chain,
+          intent: {
+            op: 'solanaMessage',
+            address: publicKey,
+            message: Buffer.from(message).toString('utf8'),
+          },
+        } as Parameters<PayboxClient['requestWalletSign']>[0]),
+        options,
+      )
+      const signature = response.output?.value
+      if (typeof signature !== 'string') {
+        throw new PaymentError(
+          `Paybox message sign ${response.request_id} returned no signature`,
+        )
+      }
+      return new Uint8Array(Buffer.from(signature, 'base64'))
+    },
   }
 }
 

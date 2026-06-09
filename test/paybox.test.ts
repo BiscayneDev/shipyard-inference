@@ -90,6 +90,31 @@ test('payboxSigner polls through pending_signature before returning', async () =
   assert.equal(Buffer.from(signed).toString(), 'LATE_TX')
 })
 
+test('payboxSigner.signMessage signs via a solanaMessage intent', async () => {
+  const calls: Array<Record<string, unknown>> = []
+  const client = {
+    async requestWalletSign(args: Record<string, unknown>) {
+      calls.push(args)
+      return successResponse(b64('MSG_SIG'))
+    },
+    async waitForRequest() {
+      throw new Error('not expected')
+    },
+  }
+
+  const signer = await payboxSigner({
+    client: client as unknown as PayboxSignerOptions['client'],
+    credentialId: 'w1',
+    publicKey: 'P',
+  })
+  const sig = await signer.signMessage!(new TextEncoder().encode('voucher'))
+
+  const intent = calls[0]!.intent as Record<string, unknown>
+  assert.equal(intent.op, 'solanaMessage')
+  assert.equal(intent.message, 'voucher')
+  assert.equal(Buffer.from(sig).toString(), 'MSG_SIG')
+})
+
 test('payboxSecret reveals a vaulted secret and forwards the raw flag', async () => {
   const calls: Array<Record<string, unknown>> = []
   const client = {

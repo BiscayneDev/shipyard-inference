@@ -93,6 +93,19 @@ export function createPayingFetch(opts: PayingFetchOptions): typeof fetch {
     init?: RequestInit,
   ): Promise<Response> => {
     let currentInit = init
+    // MPP: attach the session voucher to every request so the server debits the
+    // session instead of 402-ing per call.
+    if (opts.session) {
+      currentInit = {
+        ...currentInit,
+        headers: mergeHeaders(
+          input,
+          currentInit,
+          opts.session.headerName ?? headerName,
+          opts.session.header,
+        ),
+      }
+    }
     let response = await underlying(input, currentInit)
     let retries = 0
 
