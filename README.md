@@ -54,6 +54,7 @@ compression, and OpenRouter are all ready.
 | MPP sessions (`openSession`)           | ✅ Ready       |
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
 | `payboxSigner()` / `payboxSecret()`    | ✅ Ready       |
+| `payboxSettle()` (USDC settlement)     | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
 | `createWalletInference()` (x402 turnkey) | ✅ Ready     |
 | UsePod register / deposit / balance    | ✅ Ready       |
@@ -466,9 +467,11 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
 - **v0.10** — UsePod prepaid funding done right (`registerUsePod` /
   `depositUsdc` / `usePodBalance`, `/v1` + `X-Pod-Max-Price-*` on the provider),
   after confirming UsePod is a prepaid token-balance proxy — not x402.
-- **v0.11** (now) — Provable savings: `baselineModel` → `savedUsd`/`baselineCostUsd`
+- **v0.11** — Provable savings: `baselineModel` → `savedUsd`/`baselineCostUsd`
   on every `request_completed` + `MemoryUsageRecorder` per-user totals, and
   default-on Anthropic prompt caching (system + tools) with cache-credited cost math.
+- **v0.12** (now) — `payboxSettle()`: the meter-then-settle billing half — charge a
+  user's accrued USDC from their (Paybox-custodied) wallet to a treasury on Solana.
 
 ## Related
 
