@@ -114,10 +114,13 @@ export function resolveModelMetadata(
 }
 
 /**
- * Actual USD cost from real token usage and resolved model pricing. Returns
+ * Actual USD cost from real token usage and resolved model pricing, crediting
+ * provider-native prompt caching: `inputTokens` is the full-rate (uncached)
+ * prompt, `cacheReadTokens` bills at the discounted cache-read rate, and
+ * `cacheWriteTokens` at the cache-write rate. (Providers normalize usage so
+ * these three are disjoint — see the provider `parse*Usage` helpers.) Returns
  * `undefined` when the model is unpriced (Infinity) or usage is unavailable, so
- * callers can distinguish "free/unknown" from "$0". Cache-read tokens are
- * billed at the input rate (no separate cache rate today).
+ * callers can distinguish "free/unknown" from "$0".
  */
 export function computeActualCostUsd(
   meta: ModelMetadata | undefined,
@@ -127,8 +130,37 @@ export function computeActualCostUsd(
   if (!isFinite(meta.inputCostPerMTok) || !isFinite(meta.outputCostPerMTok)) {
     return undefined
   }
+  const cacheReadRate = meta.cacheReadCostPerMTok ?? meta.inputCostPerMTok * 0.1
+  const cacheWriteRate = meta.cacheWriteCostPerMTok ?? meta.inputCostPerMTok * 1.25
   return (
     (usage.inputTokens / 1_000_000) * meta.inputCostPerMTok +
+    ((usage.cacheReadTokens ?? 0) / 1_000_000) * cacheReadRate +
+    ((usage.cacheWriteTokens ?? 0) / 1_000_000) * cacheWriteRate +
+    (usage.outputTokens / 1_000_000) * meta.outputCostPerMTok
+  )
+}
+
+/**
+ * Baseline USD cost: what the *same request* would cost called **direct** on
+ * `meta` (the reference model the caller would otherwise have used), with **no
+ * caching** — i.e. every prompt token (uncached + cache-read + cache-write)
+ * billed at the full input rate. Compared against {@link computeActualCostUsd}
+ * on the routed model, `baseline − actual` is the honest, mechanism-based
+ * savings (routing to a cheaper model + prompt caching). `undefined` when the
+ * reference model is unpriced or usage is unavailable.
+ */
+export function computeBaselineCostUsd(
+  meta: ModelMetadata | undefined,
+  usage: UsageInfo | undefined,
+): number | undefined {
+  if (!meta || !usage) return undefined
+  if (!isFinite(meta.inputCostPerMTok) || !isFinite(meta.outputCostPerMTok)) {
+    return undefined
+  }
+  const totalPromptTokens =
+    usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+  return (
+    (totalPromptTokens / 1_000_000) * meta.inputCostPerMTok +
     (usage.outputTokens / 1_000_000) * meta.outputCostPerMTok
   )
 }
