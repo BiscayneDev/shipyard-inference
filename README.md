@@ -29,10 +29,10 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.7.0.** Providers, cost-aware routing, x402-on-Solana payments (with
-the full Paybox surface and MPP session settlement), streaming + usage telemetry,
-the OpenAI-compatible gateway, semantic caching + compression, and OpenRouter are
-all ready.
+**Alpha — v0.8.0.** Providers, cost-aware routing (failover + retry-with-jitter),
+x402-on-Solana payments (with the full Paybox surface and MPP session settlement),
+streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
+compression, and OpenRouter are all ready.
 
 | Component                              | Status        |
 | -------------------------------------- | ------------- |
@@ -41,7 +41,7 @@ all ready.
 | `createNousProvider()` (Hermes)        | ✅ Ready       |
 | `createOpenRouterProvider()`           | ✅ Ready       |
 | `Router` / `costOptimized()`           | ✅ Ready       |
-| `withFailover()`                       | ✅ Ready       |
+| `withFailover()` / retry-with-jitter   | ✅ Ready       |
 | Streaming (`chatStream`)               | ✅ Ready       |
 | Usage/$ telemetry + `MemoryUsageRecorder` | ✅ Ready    |
 | `createPayingFetch()` (x402)           | ✅ Ready       |
@@ -182,8 +182,10 @@ await router.chat({ system: '…', messages: [/* … */], tools: [], routingHint
 Strategies: `costOptimized()` (cheapest capable), `failover(order?)` (availability-first),
 and `composite(...)` (e.g. cheapest-capable with UsePod always last). `withFailover(primary, fallback)`
 is the convenience the roadmap promised — try primary, fall back on retryable errors
-(429 / 5xx / model-deprecated). Optional `cache` (a `CacheStore`) and `compress`
-(a `CompressionTransform`) are off by default — see [Caching & compression](#caching--compression).
+(429 / 5xx / model-deprecated). A `retry` policy retries the *same* candidate with
+exponential backoff + jitter (honoring `Retry-After`) before failing over:
+`new Router({ candidates, retry: { maxRetries: 3 } })`. Optional `cache` (a `CacheStore`)
+and `compress` (a `CompressionTransform`) are off by default — see [Caching & compression](#caching--compression).
 Add hundreds more models via OpenRouter:
 
 ```ts
@@ -356,15 +358,16 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
   `withFailover`, and the x402-on-Solana payment layer.
 - **v0.4** — Streaming + usage/$ telemetry, the OpenAI-compatible
   `shipyard-gateway`, and Nous/Hermes (`createNousProvider`) + Hermes Agent compatibility.
-- **v0.7** (now) — MPP session settlement: `openSession` / `PaymentSession`,
-  `createPayingFetch({ session })`, and `signMessage` on the Solana signers.
-- **v0.6** — Full Paybox surface: on-chain `payboxSigner` (`solanaTransaction`
-  intent) and `payboxSecret` (vaulted API keys), alongside the card/merchant
-  `createPayboxPaymentProvider`.
 - **v0.5** — Semantic cache (`SemanticCacheStore` + `openAIEmbedder`), context
   compression (`slidingWindowCompression` / `summarizeCompression`), and OpenRouter
   (`createOpenRouterProvider`).
-- **Later** — retry-with-jitter.
+- **v0.6** — Full Paybox surface: on-chain `payboxSigner` (`solanaTransaction`
+  intent) and `payboxSecret` (vaulted API keys), alongside the card/merchant
+  `createPayboxPaymentProvider`.
+- **v0.7** — MPP session settlement: `openSession` / `PaymentSession`,
+  `createPayingFetch({ session })`, and `signMessage` on the Solana signers.
+- **v0.8** (now) — Retry-with-jitter: a per-candidate `retry` policy with
+  exponential backoff + full jitter, honoring `Retry-After`, before failover.
 
 ## Related
 
