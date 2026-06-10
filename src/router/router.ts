@@ -14,6 +14,7 @@ import type { CompressionTransform } from './compress.js'
 import { NoCapableModelError, isRetryable } from './errors.js'
 import { computeActualCostUsd, resolveModelMetadata } from './pricing.js'
 import type { UsageRecorder } from './usage.js'
+import { type RetryPolicy, nextRetryDelayMs, sleep } from './retry.js'
 import {
   type RoutingDecision,
   type RoutingStrategy,
@@ -33,6 +34,15 @@ export type RouterEvent =
     }
   | { type: 'route_success'; candidateId: string; model?: string; attempt: number }
   | { type: 'failover'; candidateId: string; model?: string; attempt: number; error: unknown }
+  | {
+      type: 'retry'
+      candidateId: string
+      model?: string
+      attempt: number
+      retryAttempt: number
+      delayMs: number
+      error: unknown
+    }
   | { type: 'route_error'; candidateId: string; model?: string; attempt: number; error: unknown }
   | {
       type: 'request_completed'
@@ -57,6 +67,11 @@ export interface RouterOptions {
   onEvent?: (event: RouterEvent) => void
   /** Optional sink for completed-request usage/$ telemetry. Off when omitted. */
   usageRecorder?: UsageRecorder
+  /**
+   * Per-candidate retry-with-jitter on retryable errors, before failing over to
+   * the next candidate. Off by default (`maxRetries: 0`).
+   */
+  retry?: RetryPolicy
   /** Max number of candidates to try. Defaults to "try them all". */
   maxRetries?: number
 }
@@ -114,42 +129,50 @@ export class Router implements LLMProvider {
         attempt,
       })
 
-      const startedAt = performance.now()
-      try {
-        const res = await decision.candidate.provider.chat({
-          ...compressed,
-          model: decision.model ?? compressed.model,
-        })
-        if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
-        this.emit({
-          type: 'route_success',
-          candidateId: decision.candidate.id,
-          model: decision.model,
-          attempt,
-        })
-        this.recordCompletion(decision, res.usage, performance.now() - startedAt)
-        return res
-      } catch (error) {
-        lastError = error
-        const hasMore = attempt < limit - 1
-        if (hasMore && isRetryable(error)) {
+      let retryAttempt = 0
+      for (;;) {
+        const startedAt = performance.now()
+        try {
+          const res = await decision.candidate.provider.chat({
+            ...compressed,
+            model: decision.model ?? compressed.model,
+          })
+          if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
           this.emit({
-            type: 'failover',
+            type: 'route_success',
+            candidateId: decision.candidate.id,
+            model: decision.model,
+            attempt,
+          })
+          this.recordCompletion(decision, res.usage, performance.now() - startedAt)
+          return res
+        } catch (error) {
+          lastError = error
+          if (this.shouldRetry(retryAttempt, error)) {
+            await this.delayRetry(decision, attempt, retryAttempt, error)
+            retryAttempt++
+            continue
+          }
+          const hasMore = attempt < limit - 1
+          if (hasMore && isRetryable(error)) {
+            this.emit({
+              type: 'failover',
+              candidateId: decision.candidate.id,
+              model: decision.model,
+              attempt,
+              error,
+            })
+            break
+          }
+          this.emit({
+            type: 'route_error',
             candidateId: decision.candidate.id,
             model: decision.model,
             attempt,
             error,
           })
-          continue
+          throw error
         }
-        this.emit({
-          type: 'route_error',
-          candidateId: decision.candidate.id,
-          model: decision.model,
-          attempt,
-          error,
-        })
-        throw error
       }
     }
 
@@ -202,45 +225,54 @@ export class Router implements LLMProvider {
         attempt,
       })
 
-      const startedAt = performance.now()
-      try {
-        for await (const event of this.streamFromDecision(decision, compressed, opts)) {
-          if (event.type === 'done') {
-            if (this.opts.cache && key) await this.opts.cache.set(compressed, event.response)
+      let retryAttempt = 0
+      for (;;) {
+        const startedAt = performance.now()
+        try {
+          for await (const event of this.streamFromDecision(decision, compressed, opts)) {
+            if (event.type === 'done') {
+              if (this.opts.cache && key) await this.opts.cache.set(compressed, event.response)
+              this.emit({
+                type: 'route_success',
+                candidateId: decision.candidate.id,
+                model: decision.model,
+                attempt,
+              })
+              this.recordCompletion(decision, event.response.usage, performance.now() - startedAt)
+            } else {
+              committed = true
+            }
+            yield event
+          }
+          return
+        } catch (error) {
+          lastError = error
+          // Retry the same candidate only before any token is emitted.
+          if (!committed && this.shouldRetry(retryAttempt, error)) {
+            await this.delayRetry(decision, attempt, retryAttempt, error)
+            retryAttempt++
+            continue
+          }
+          const hasMore = attempt < limit - 1
+          if (!committed && isRetryable(error) && hasMore) {
             this.emit({
-              type: 'route_success',
+              type: 'failover',
               candidateId: decision.candidate.id,
               model: decision.model,
               attempt,
+              error,
             })
-            this.recordCompletion(decision, event.response.usage, performance.now() - startedAt)
-          } else {
-            committed = true
+            break
           }
-          yield event
-        }
-        return
-      } catch (error) {
-        lastError = error
-        const hasMore = attempt < limit - 1
-        if (!committed && isRetryable(error) && hasMore) {
           this.emit({
-            type: 'failover',
+            type: 'route_error',
             candidateId: decision.candidate.id,
             model: decision.model,
             attempt,
             error,
           })
-          continue
+          throw error
         }
-        this.emit({
-          type: 'route_error',
-          candidateId: decision.candidate.id,
-          model: decision.model,
-          attempt,
-          error,
-        })
-        throw error
       }
     }
 
@@ -288,6 +320,31 @@ export class Router implements LLMProvider {
 
   private emit(event: RouterEvent): void {
     this.opts.onEvent?.(event)
+  }
+
+  /** Whether to retry the same candidate: within the budget and the error is retryable. */
+  private shouldRetry(retryAttempt: number, error: unknown): boolean {
+    return retryAttempt < (this.opts.retry?.maxRetries ?? 0) && isRetryable(error)
+  }
+
+  /** Emit a `retry` event and sleep the backoff (Retry-After-aware) before retrying. */
+  private async delayRetry(
+    decision: RoutingDecision,
+    attempt: number,
+    retryAttempt: number,
+    error: unknown,
+  ): Promise<void> {
+    const delayMs = nextRetryDelayMs(retryAttempt, this.opts.retry ?? {}, error)
+    this.emit({
+      type: 'retry',
+      candidateId: decision.candidate.id,
+      model: decision.model,
+      attempt,
+      retryAttempt,
+      delayMs,
+      error,
+    })
+    await sleep(delayMs)
   }
 
   /** Resolve actual cost from real usage, emit `request_completed`, record telemetry. */

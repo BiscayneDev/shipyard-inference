@@ -23,6 +23,8 @@ export interface AnthropicProviderOptions {
    * a payment happened.
    */
   fetch?: typeof fetch
+  /** Default headers sent on every request (e.g. UsePod's `X-Pod-Max-Price-*`). */
+  defaultHeaders?: Record<string, string>
 }
 
 export class AnthropicProvider implements LLMProvider {
@@ -35,6 +37,7 @@ export class AnthropicProvider implements LLMProvider {
       apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY,
       baseURL: options.baseURL ?? process.env.ANTHROPIC_BASE_URL,
       fetch: options.fetch,
+      defaultHeaders: options.defaultHeaders,
     })
     this.defaultModel = options.defaultModel ?? 'claude-sonnet-4-5'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096
