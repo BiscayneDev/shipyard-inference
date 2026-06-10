@@ -1,6 +1,8 @@
 export { createPayingFetch } from './paying-fetch.js'
 export { createSolanaPayProvider } from './solana-pay.js'
 export type { SolanaPayProviderOptions } from './solana-pay.js'
+export { payboxSettle } from './settle.js'
+export type { PayboxSettleOptions, PayboxSettleResult } from './settle.js'
 export { keypairSigner } from './keypair-signer.js'
 export { createPayboxPaymentProvider, payboxSigner, payboxSecret } from './paybox.js'
 export type {
