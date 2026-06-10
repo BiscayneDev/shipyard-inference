@@ -28,8 +28,10 @@ export interface WalletInferenceOptions {
    */
   signer: SolanaSigner
   /**
-   * The x402-on-Solana inference endpoint to pay (e.g. UsePod's current wallet
-   * endpoint). Must speak x402: respond 402, accept the on-chain USDC proof, serve.
+   * A *true* x402-on-Solana inference endpoint to pay per request (e.g. pay.sh
+   * skills, RelAI, the x402 bazaar). Must speak x402: respond 402, accept the
+   * on-chain USDC proof, serve. NOTE: UsePod is NOT x402 — it's a prepaid
+   * token-balance proxy; use `createUsePodProvider` + `depositUsdc` for that.
    */
   baseURL: string
   /** Solana cluster. Default `mainnet`. */
@@ -69,10 +71,13 @@ export interface WalletInference {
 }
 
 /**
- * Turnkey wallet-funded inference: fund a Solana wallet, get cost-routed,
- * well-priced inference paid per request via x402 — with optional MPP session
- * bulk settlement. One call composes signer → Solana payment → paying-fetch →
- * the x402 endpoint → a `costOptimized` Router.
+ * Turnkey wallet-funded inference for *true x402* endpoints: fund a Solana
+ * wallet, get cost-routed inference paid per request via x402 — with optional
+ * MPP session bulk settlement. One call composes signer → Solana payment →
+ * paying-fetch → the x402 endpoint → a `costOptimized` Router.
+ *
+ * For UsePod (a prepaid token-balance proxy, not x402) use `createUsePodProvider`
+ * with `registerUsePod` / `depositUsdc` instead.
  *
  * Requires the optional peers `@solana/web3.js` + `@solana/spl-token`.
  *

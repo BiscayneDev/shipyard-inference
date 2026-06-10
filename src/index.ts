@@ -8,6 +8,9 @@ export type {
   UsePodProviderOptions,
   UsePodFamily,
 } from './providers/usepod.js'
+// UsePod account + on-chain funding helpers
+export * from './usepod/index.js'
+
 export { createNousProvider } from './providers/nous.js'
 export type { NousProviderOptions } from './providers/nous.js'
 export { createOpenRouterProvider } from './providers/openrouter.js'
