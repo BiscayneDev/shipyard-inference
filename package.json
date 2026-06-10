@@ -1,6 +1,6 @@
 {
   "name": "shipyard-inference",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "The always-available inference layer for the Shipyard stack: streaming, cost-aware routing, x402-on-Solana payments, and a drop-in OpenAI-compatible gateway over Anthropic, OpenAI, UsePod, and Nous/Hermes.",
   "type": "module",
   "main": "./dist/index.js",

@@ -29,7 +29,8 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.8.0.** Providers, cost-aware routing (failover + retry-with-jitter),
+**Alpha — v0.9.0.** Turnkey wallet-funded inference (`createWalletInference`),
+providers, cost-aware routing (failover + retry-with-jitter),
 x402-on-Solana payments (with the full Paybox surface and MPP session settlement),
 streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
 compression, and OpenRouter are all ready.
@@ -50,6 +51,7 @@ compression, and OpenRouter are all ready.
 | `createPayboxPaymentProvider()`        | ✅ Ready       |
 | `payboxSigner()` / `payboxSecret()`    | ✅ Ready       |
 | `shipyard-gateway` (OpenAI-compatible) | ✅ Ready       |
+| `createWalletInference()` (turnkey)    | ✅ Ready       |
 | `SemanticCacheStore` + compression     | ✅ Ready       |
 
 ## Two ways to use it
@@ -90,6 +92,37 @@ Responses carry `x-shipyard-model` / `x-shipyard-provider` / `x-shipyard-cost-us
 and what it cost. `hono` + `@hono/node-server` are optional peers — `import { Router }`
 pulls no server code. See [`examples/hermes-agent`](./examples/hermes-agent) for
 the Hermes Agent + Nous/Hermes setup.
+
+## Turnkey: fund a wallet → cheap inference
+
+`createWalletInference` is the one-call path to the whole story: fund a Solana
+wallet with USDC, and get **cost-routed, well-priced inference paid per request**
+via x402 — with optional MPP session bulk settlement. It composes the signer →
+Solana payment → paying-fetch → an x402 endpoint (e.g. [UsePod](https://usepod.ai),
+which is wallet-funded x402-native) → a `costOptimized` Router.
+
+```ts
+import { createWalletInference, payboxSigner } from 'shipyard-inference'
+
+const { router, close } = await createWalletInference({
+  signer: await payboxSigner({ credentialId: process.env.PAYBOX_WALLET_ID! }), // or keypairSigner(...)
+  baseURL: process.env.USEPOD_X402_URL!,   // the endpoint's current x402 URL
+  sessionBudget: '5000000',                // optional: open an MPP session (atomic USDC)
+  spendCap: { perRequest: '50000' },
+})
+
+const res = await router.chat({ system: 'You are helpful.', messages: [{ role: 'user', content: 'Hi' }], tools: [] })
+await close() // settle the MPP session
+```
+
+The wallet (a `payboxSigner` from Paybox custody, or a raw `keypairSigner`) pays
+each call on-chain; the Router picks the cheapest capable model across the
+endpoint's models plus any `extraCandidates` you add. Requires the optional peers
+`@solana/web3.js` + `@solana/spl-token`.
+
+> Point `baseURL` at the inference endpoint's **current x402 URL**. The payment
+> wire/settlement is exercised in tests with mocks; verify a real round-trip on
+> devnet before mainnet.
 
 ## Install
 
@@ -366,8 +399,11 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
   `createPayboxPaymentProvider`.
 - **v0.7** — MPP session settlement: `openSession` / `PaymentSession`,
   `createPayingFetch({ session })`, and `signMessage` on the Solana signers.
-- **v0.8** (now) — Retry-with-jitter: a per-candidate `retry` policy with
-  exponential backoff + full jitter, honoring `Retry-After`, before failover.
+- **v0.8** — Retry-with-jitter: a per-candidate `retry` policy with exponential
+  backoff + full jitter, honoring `Retry-After`, before failover.
+- **v0.9** (now) — `createWalletInference`: the turnkey "fund a wallet → cost-routed,
+  wallet-paid inference" preset, composing the signer, x402 payment (+ MPP session),
+  endpoint, and `costOptimized` Router into one call.
 
 ## Related
 
