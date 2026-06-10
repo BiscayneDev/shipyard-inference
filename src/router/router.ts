@@ -12,7 +12,7 @@ import { cacheKey } from './cache.js'
 import { responseToStream } from '../stream.js'
 import type { CompressionTransform } from './compress.js'
 import { NoCapableModelError, isRetryable } from './errors.js'
-import { computeActualCostUsd, resolveModelMetadata } from './pricing.js'
+import { computeActualCostUsd, computeBaselineCostUsd, resolveModelMetadata } from './pricing.js'
 import type { UsageRecorder } from './usage.js'
 import { type RetryPolicy, nextRetryDelayMs, sleep } from './retry.js'
 import {
@@ -50,6 +50,11 @@ export type RouterEvent =
       model?: string
       usage?: UsageInfo
       actualCostUsd?: number
+      /** Cost the same request would have incurred on `baselineModel`, direct/uncached. */
+      baselineCostUsd?: number
+      /** `baselineCostUsd − actualCostUsd` when both are known (≥ 0 in practice). */
+      savedUsd?: number
+      userId?: string
       latencyMs: number
     }
 
@@ -67,6 +72,13 @@ export interface RouterOptions {
   onEvent?: (event: RouterEvent) => void
   /** Optional sink for completed-request usage/$ telemetry. Off when omitted. */
   usageRecorder?: UsageRecorder
+  /**
+   * Reference model for the savings baseline — the model the caller would
+   * otherwise have called direct (e.g. the premium model). When set, every
+   * `request_completed` carries `baselineCostUsd`/`savedUsd` measuring how much
+   * cheaper routing + prompt caching made the request. Off when omitted (no claim).
+   */
+  baselineModel?: string
   /**
    * Per-candidate retry-with-jitter on retryable errors, before failing over to
    * the next candidate. Off by default (`maxRetries: 0`).
@@ -144,7 +156,12 @@ export class Router implements LLMProvider {
             model: decision.model,
             attempt,
           })
-          this.recordCompletion(decision, res.usage, performance.now() - startedAt)
+          this.recordCompletion(
+            decision,
+            res.usage,
+            performance.now() - startedAt,
+            compressed.metadata?.userId,
+          )
           return res
         } catch (error) {
           lastError = error
@@ -238,7 +255,12 @@ export class Router implements LLMProvider {
                 model: decision.model,
                 attempt,
               })
-              this.recordCompletion(decision, event.response.usage, performance.now() - startedAt)
+              this.recordCompletion(
+                decision,
+                event.response.usage,
+                performance.now() - startedAt,
+                compressed.metadata?.userId,
+              )
             } else {
               committed = true
             }
@@ -347,11 +369,12 @@ export class Router implements LLMProvider {
     await sleep(delayMs)
   }
 
-  /** Resolve actual cost from real usage, emit `request_completed`, record telemetry. */
+  /** Resolve actual + baseline cost from real usage, emit `request_completed`, record telemetry. */
   private recordCompletion(
     decision: RoutingDecision,
     usage: UsageInfo | undefined,
     latencyMs: number,
+    userId?: string,
   ): void {
     const meta =
       decision.meta ??
@@ -360,12 +383,24 @@ export class Router implements LLMProvider {
         : undefined)
     const actualCostUsd = computeActualCostUsd(meta, usage)
 
+    const baselineMeta = this.opts.baselineModel
+      ? resolveModelMetadata(this.opts.baselineModel, undefined, this.opts.pricingOverrides).meta
+      : undefined
+    const baselineCostUsd = computeBaselineCostUsd(baselineMeta, usage)
+    const savedUsd =
+      baselineCostUsd !== undefined && actualCostUsd !== undefined
+        ? baselineCostUsd - actualCostUsd
+        : undefined
+
     this.emit({
       type: 'request_completed',
       candidateId: decision.candidate.id,
       model: decision.model,
       usage,
       actualCostUsd,
+      baselineCostUsd,
+      savedUsd,
+      userId,
       latencyMs,
     })
     this.opts.usageRecorder?.record({
@@ -373,6 +408,9 @@ export class Router implements LLMProvider {
       model: decision.model,
       usage,
       actualCostUsd,
+      baselineCostUsd,
+      savedUsd,
+      userId,
       latencyMs,
       at: Date.now(),
     })

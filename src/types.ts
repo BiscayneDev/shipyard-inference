@@ -60,6 +60,12 @@ export interface LLMChatParams {
   maxTokens?: number
   /** Optional routing hints — read only by `Router`, ignored by leaf providers. */
   routingHints?: RoutingHints
+  /**
+   * Free-form per-request metadata for telemetry tagging (e.g. `{ userId }` to
+   * attribute cost/savings per end user). Read only by `Router`'s usage
+   * recorder; ignored by leaf providers.
+   */
+  metadata?: { userId?: string } & Record<string, unknown>
 }
 
 /** Token accounting for a single completion, when the upstream reports it. */

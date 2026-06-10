@@ -10,6 +10,14 @@ export interface ModelMetadata {
   inputCostPerMTok: number
   /** USD per 1M output tokens. */
   outputCostPerMTok: number
+  /**
+   * USD per 1M cache-read tokens (prompt served from the provider's cache).
+   * Defaults to 0.1× input (Anthropic ephemeral); set explicitly per provider
+   * (e.g. OpenAI cached reads are ~0.5× input).
+   */
+  cacheReadCostPerMTok?: number
+  /** USD per 1M cache-write tokens (Anthropic cache creation). Defaults to 1.25× input. */
+  cacheWriteCostPerMTok?: number
   /** Maximum context window in tokens. */
   contextWindow: number
   tier: ModelTier

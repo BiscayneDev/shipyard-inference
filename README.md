@@ -29,9 +29,10 @@ handles payment, instead of you wiring up each provider yourself.
 
 ## Status
 
-**Alpha — v0.10.0.** Wallet-funded inference (UsePod prepaid funding +
-`createWalletInference` for x402 endpoints), providers, cost-aware routing
-(failover + retry-with-jitter),
+**Alpha — v0.11.0.** Provable savings (baseline-vs-actual cost + per-user
+attribution) and provider-native prompt caching, wallet-funded inference (UsePod
+prepaid + `createWalletInference` for x402 endpoints), providers, cost-aware
+routing (failover + retry-with-jitter),
 x402-on-Solana payments (with the full Paybox surface and MPP session settlement),
 streaming + usage telemetry, the OpenAI-compatible gateway, semantic caching +
 compression, and OpenRouter are all ready.
@@ -46,6 +47,8 @@ compression, and OpenRouter are all ready.
 | `withFailover()` / retry-with-jitter   | ✅ Ready       |
 | Streaming (`chatStream`)               | ✅ Ready       |
 | Usage/$ telemetry + `MemoryUsageRecorder` | ✅ Ready    |
+| Savings engine (`baselineModel` → saved $/%) | ✅ Ready |
+| Prompt caching (Anthropic `cache_control`) | ✅ Ready    |
 | `createPayingFetch()` (x402)           | ✅ Ready       |
 | `createSolanaPayProvider()`            | ✅ Ready       |
 | MPP sessions (`openSession`)           | ✅ Ready       |
@@ -201,6 +204,37 @@ new AnthropicProvider({
   baseURL: 'https://api.usepod.ai/proxy/<your-token>',
 })
 ```
+
+## Proven savings (not guessed)
+
+Set a `baselineModel` — the model you'd otherwise have called direct — and every
+completed request reports **what it actually cost vs what the baseline would
+have**, so the savings are measured, not claimed. The win is mechanism-based:
+routing to the cheapest *capable* model **+** provider-native prompt caching (on
+by default for Anthropic — the stable system + tools prefix bills at the ~0.1×
+cache-read rate on reuse). Attribute per end-user with `metadata.userId`.
+
+```ts
+import { Router, MemoryUsageRecorder, costOptimized } from 'shipyard-inference'
+
+const usage = new MemoryUsageRecorder()
+const router = new Router({
+  candidates: [/* … */],
+  strategy: costOptimized(),
+  baselineModel: 'claude-opus-4-5', // "cheaper than calling Opus direct"
+  usageRecorder: usage,
+})
+
+await router.chat({ system, messages, tools, metadata: { userId: 'alice' } })
+
+const t = usage.totals()
+console.log(`saved $${t.savedUsd.toFixed(4)} (${(100 * t.savedUsd / t.baselineCostUsd).toFixed(0)}%)`)
+console.log(t.perUser['alice']) // per-user requests / tokens / cost / baseline / saved
+```
+
+Each `request_completed` event also carries `actualCostUsd` / `baselineCostUsd` /
+`savedUsd` / `userId` for live dashboards. The baseline is honest — *the same
+request on `baselineModel`, called direct, uncached.*
 
 ## Cost-aware routing
 
@@ -429,9 +463,12 @@ const provider = createUsePodProvider({ token: process.env.USEPOD_TOKEN })
 - **v0.9** — `createWalletInference`: turnkey "fund a wallet → cost-routed,
   wallet-paid inference" for *true x402* endpoints (signer + payment + MPP session
   + Router in one call).
-- **v0.10** (now) — UsePod prepaid funding done right (`registerUsePod` /
+- **v0.10** — UsePod prepaid funding done right (`registerUsePod` /
   `depositUsdc` / `usePodBalance`, `/v1` + `X-Pod-Max-Price-*` on the provider),
   after confirming UsePod is a prepaid token-balance proxy — not x402.
+- **v0.11** (now) — Provable savings: `baselineModel` → `savedUsd`/`baselineCostUsd`
+  on every `request_completed` + `MemoryUsageRecorder` per-user totals, and
+  default-on Anthropic prompt caching (system + tools) with cache-credited cost math.
 
 ## Related
 

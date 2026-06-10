@@ -232,11 +232,14 @@ export function parseOpenAIUsage(
   usage: OpenAI.CompletionUsage | undefined | null,
 ): UsageInfo | undefined {
   if (!usage) return undefined
+  // OpenAI's `prompt_tokens` INCLUDES cached tokens; Anthropic's `input_tokens`
+  // excludes them. Normalize to Anthropic's disjoint convention so cost math is
+  // uniform: `inputTokens` = full-rate (uncached) prompt only.
+  const cached = usage.prompt_tokens_details?.cached_tokens ?? 0
   const info: UsageInfo = {
-    inputTokens: usage.prompt_tokens ?? 0,
+    inputTokens: Math.max(0, (usage.prompt_tokens ?? 0) - cached),
     outputTokens: usage.completion_tokens ?? 0,
   }
-  const cached = usage.prompt_tokens_details?.cached_tokens
-  if (cached != null) info.cacheReadTokens = cached
+  if (usage.prompt_tokens_details?.cached_tokens != null) info.cacheReadTokens = cached
   return info
 }

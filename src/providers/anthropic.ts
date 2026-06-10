@@ -25,12 +25,21 @@ export interface AnthropicProviderOptions {
   fetch?: typeof fetch
   /** Default headers sent on every request (e.g. UsePod's `X-Pod-Max-Price-*`). */
   defaultHeaders?: Record<string, string>
+  /**
+   * Enable provider-native prompt caching (default `true`): mark the stable
+   * system prompt + tools with `cache_control: ephemeral` so repeated requests
+   * within the cache TTL bill those tokens at the ~0.1× cache-read rate. A
+   * reliable cost win for assistants with a large stable system/tool prefix;
+   * the savings telemetry reflects the *actual* cache tokens the upstream reports.
+   */
+  promptCaching?: boolean
 }
 
 export class AnthropicProvider implements LLMProvider {
   private client: Anthropic
   private defaultModel: string
   private defaultMaxTokens: number
+  private promptCaching: boolean
 
   constructor(options: AnthropicProviderOptions = {}) {
     this.client = new Anthropic({
@@ -41,6 +50,7 @@ export class AnthropicProvider implements LLMProvider {
     })
     this.defaultModel = options.defaultModel ?? 'claude-sonnet-4-5'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096
+    this.promptCaching = options.promptCaching ?? true
   }
 
   async chat(params: LLMChatParams): Promise<LLMResponse> {
@@ -120,16 +130,29 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   private buildRequest(params: LLMChatParams): Anthropic.MessageCreateParamsNonStreaming {
-    const tools = params.tools.map((tool) => ({
+    const tools: Anthropic.Tool[] = params.tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema as Anthropic.Tool['input_schema'],
     }))
 
+    // Cache the stable system + tools prefix. The breakpoint goes on the LAST
+    // tool (and the system block) so the whole prefix is cached; on too-short
+    // prefixes Anthropic simply ignores the breakpoint (no error). Reused across
+    // requests within the cache TTL → those tokens bill at the cache-read rate.
+    const ephemeral = { type: 'ephemeral' as const }
+    if (this.promptCaching && tools.length > 0) {
+      tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: ephemeral }
+    }
+    const system: Anthropic.MessageCreateParams['system'] =
+      this.promptCaching && params.system
+        ? [{ type: 'text', text: params.system, cache_control: ephemeral }]
+        : params.system
+
     return {
       model: params.model ?? this.defaultModel,
       max_tokens: params.maxTokens ?? this.defaultMaxTokens,
-      system: params.system,
+      system,
       messages: params.messages.map((msg) => this.toAnthropicMessage(msg)),
       tools: tools.length > 0 ? tools : undefined,
     }

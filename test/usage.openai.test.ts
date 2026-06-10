@@ -2,15 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseOpenAIUsage } from '../src/providers/openai.js'
 
-test('maps OpenAI usage including cached prompt tokens', () => {
+test('normalizes OpenAI usage so inputTokens excludes cached prompt tokens', () => {
   const usage = parseOpenAIUsage({
-    prompt_tokens: 100,
+    prompt_tokens: 100, // OpenAI counts cached within prompt_tokens…
     completion_tokens: 40,
     total_tokens: 140,
     prompt_tokens_details: { cached_tokens: 12 },
   } as never)
+  // …we split them so inputTokens (full-rate) and cacheReadTokens are disjoint.
   assert.deepEqual(usage, {
-    inputTokens: 100,
+    inputTokens: 88,
     outputTokens: 40,
     cacheReadTokens: 12,
   })
