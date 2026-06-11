@@ -8,6 +8,22 @@ export type {
   UsePodProviderOptions,
   UsePodFamily,
 } from './providers/usepod.js'
+// UsePod model catalog: discover /v1/models + curated best-per-tier selection,
+// so the Router can cost-rank and auto-tier UsePod's marketplace models.
+export {
+  createUsePodCandidate,
+  fetchUsePodModels,
+  selectUsePodModels,
+  classifyUsePodModel,
+  usePodFallbackCatalog,
+  USEPOD_PREFERRED,
+} from './providers/usepod-catalog.js'
+export type {
+  UsePodCandidateOptions,
+  FetchUsePodModelsOptions,
+  SelectUsePodOptions,
+  UsePodModelClass,
+} from './providers/usepod-catalog.js'
 // UsePod account + on-chain funding helpers
 export * from './usepod/index.js'
 
