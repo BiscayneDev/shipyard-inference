@@ -396,7 +396,12 @@ app.get('*', async (c) => {
   }
 })
 
+const MODE_NOTE = {
+  demo: 'built-in mock — no real inference',
+  usepod: 'wallet-funded · UsePod prepaid USDC',
+  x402: 'wallet-funded · per-request x402 USDC',
+}
 serve({ fetch: app.fetch, port: PORT })
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
-console.log(`  inference: ${inference.mode}  (wallet-funded — no provider key)`)
+console.log(`  inference: ${inference.mode}  (${MODE_NOTE[inference.mode] ?? ''})`)
 console.log(`  baseline:  ${BASELINE_MODEL} · margin: ${(MARGIN * 100).toFixed(0)}%`)
