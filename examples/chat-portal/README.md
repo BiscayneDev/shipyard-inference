@@ -79,6 +79,14 @@ USDC deposit into the token (the `deposit_code` rides in the instruction data; a
 transfer wouldn't credit). The receipt links to the deposit tx, and the balance refreshes
 from UsePod. ⚠️ **UsePod's deposit program is mainnet — Top up spends real USDC.**
 
+**Test the deposit in isolation first** — one small amount, prints the tx + balance delta:
+
+```bash
+PAYBOX_CREDENTIAL_ID=<wallet-cred> node examples/chat-portal/fund-usepod.mjs 0.5
+# registers a token, deposits $0.50 from Paybox, polls until the balance credits.
+# Reuse the printed USEPOD_TOKEN/USEPOD_DEPOSIT_CODE to top the same token up again.
+```
+
 ### Go live (the real path Dock uses — no x402 endpoint, no Buoy)
 
 Inference through Shipyard on a wallet-funded provider (UsePod), spend metered, then
