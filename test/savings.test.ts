@@ -104,7 +104,30 @@ test('savings = baseline (premium, uncached) − actual (routed + cached); recor
   assert.ok(Math.abs(totals.perUser['alice']!.savedUsd - 47.9) < 1e-9)
 })
 
-test('no baselineModel → no savings claim (baseline/saved undefined)', async () => {
+test('with no fixed baselineModel, the request’s own params.model is the baseline', async () => {
+  const cheap = candidate('cheap', providerWithUsage(), [
+    model('cheap', { inputCostPerMTok: 1, outputCostPerMTok: 1 }),
+  ])
+  const events: RouterEvent[] = []
+  const router = new Router({
+    candidates: [cheap],
+    strategy: costOptimized(),
+    pricingOverrides: { premium: { inputCostPerMTok: 10, outputCostPerMTok: 30 } },
+    onEvent: (e) => events.push(e),
+  })
+
+  await router.chat({ ...chatParams(), model: 'premium' })
+
+  const done = events.find((e) => e.type === 'request_completed') as
+    | Extract<RouterEvent, { type: 'request_completed' }>
+    | undefined
+  assert.ok(done)
+  // baseline = premium (the requested model), actual = cheap → real savings
+  assert.equal(done.baselineCostUsd, 50)
+  assert.ok((done.savedUsd ?? 0) > 0)
+})
+
+test('no baselineModel and no requested model → no savings claim', async () => {
   const cheap = candidate('cheap', providerWithUsage(), [
     model('cheap', { inputCostPerMTok: 1, outputCostPerMTok: 1 }),
   ])

@@ -73,10 +73,12 @@ export interface RouterOptions {
   /** Optional sink for completed-request usage/$ telemetry. Off when omitted. */
   usageRecorder?: UsageRecorder
   /**
-   * Reference model for the savings baseline — the model the caller would
-   * otherwise have called direct (e.g. the premium model). When set, every
-   * `request_completed` carries `baselineCostUsd`/`savedUsd` measuring how much
-   * cheaper routing + prompt caching made the request. Off when omitted (no claim).
+   * Fixed reference model for the savings baseline — the model the caller would
+   * otherwise have called direct. When omitted, the baseline falls back to each
+   * request's own `params.model` (the model it asked for), so savings are
+   * measured against the intended model per call. `baselineCostUsd`/`savedUsd`
+   * land on every `request_completed`; if neither a fixed baseline nor a
+   * requested model is available, no savings are claimed.
    */
   baselineModel?: string
   /**
@@ -161,6 +163,7 @@ export class Router implements LLMProvider {
             res.usage,
             performance.now() - startedAt,
             compressed.metadata?.userId,
+            compressed.model,
           )
           return res
         } catch (error) {
@@ -260,6 +263,7 @@ export class Router implements LLMProvider {
                 event.response.usage,
                 performance.now() - startedAt,
                 compressed.metadata?.userId,
+                compressed.model,
               )
             } else {
               committed = true
@@ -375,6 +379,7 @@ export class Router implements LLMProvider {
     usage: UsageInfo | undefined,
     latencyMs: number,
     userId?: string,
+    requestedModel?: string,
   ): void {
     const meta =
       decision.meta ??
@@ -383,8 +388,11 @@ export class Router implements LLMProvider {
         : undefined)
     const actualCostUsd = computeActualCostUsd(meta, usage)
 
-    const baselineMeta = this.opts.baselineModel
-      ? resolveModelMetadata(this.opts.baselineModel, undefined, this.opts.pricingOverrides).meta
+    // Baseline = the model the caller would otherwise have used: an explicit
+    // `baselineModel` wins, else the model the request asked for (`params.model`).
+    const baselineModelId = this.opts.baselineModel ?? requestedModel
+    const baselineMeta = baselineModelId
+      ? resolveModelMetadata(baselineModelId, undefined, this.opts.pricingOverrides).meta
       : undefined
     const baselineCostUsd = computeBaselineCostUsd(baselineMeta, usage)
     const savedUsd =

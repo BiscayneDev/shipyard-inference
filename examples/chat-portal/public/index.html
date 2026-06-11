@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shipyard · Chat Portal</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo">⚓</span>
+          <div>
+            <div class="brand-name">Shipyard</div>
+            <div class="brand-sub">inference portal</div>
+          </div>
+        </div>
+
+        <section class="wallet" id="wallet">
+          <button class="btn primary" id="connect">Connect wallet</button>
+          <div class="wallet-card hidden" id="wallet-card">
+            <div class="wallet-row">
+              <span class="muted">Wallet</span>
+              <span class="mono addr" id="addr" title=""></span>
+            </div>
+            <div class="wallet-row">
+              <span class="muted">Balance</span>
+              <span class="mono" id="balance">—</span>
+            </div>
+            <div class="wallet-row">
+              <span class="muted">Pending</span>
+              <span class="mono" id="pending">—</span>
+            </div>
+            <span class="pill" id="mode-pill">demo</span>
+          </div>
+        </section>
+
+        <section class="savings">
+          <div class="savings-title">Session savings</div>
+          <div class="savings-big" id="saved-total">$0.000000</div>
+          <div class="savings-meta">
+            <span><span id="saved-pct">0</span>% saved vs <span class="mono" id="baseline-name">baseline</span></span>
+          </div>
+          <div class="savings-grid">
+            <div><div class="muted">Spent</div><div class="mono" id="spent-total">$0.00</div></div>
+            <div><div class="muted">Baseline</div><div class="mono" id="baseline-total">$0.00</div></div>
+            <div><div class="muted">Messages</div><div class="mono" id="msg-total">0</div></div>
+          </div>
+        </section>
+
+        <div class="sidebar-foot muted">
+          Routes to the cheapest capable model and meters real token cost.
+          <a href="https://github.com/BiscayneDev/shipyard-inference" target="_blank" rel="noreferrer">Learn more →</a>
+        </div>
+      </aside>
+
+      <main class="chat">
+        <header class="topbar">
+          <label class="model-pick">
+            <span class="muted">Model</span>
+            <select id="model"></select>
+          </label>
+          <button class="btn ghost" id="new-chat">New chat</button>
+        </header>
+
+        <div class="thread" id="thread">
+          <div class="empty" id="empty">
+            <div class="empty-logo">⚓</div>
+            <h1>Pay-per-prompt inference</h1>
+            <p>Pick a model (or let Shipyard route to the cheapest capable one), then chat.
+               Every reply shows exactly what it cost and what you saved.</p>
+          </div>
+        </div>
+
+        <form class="composer" id="composer">
+          <textarea id="input" rows="1" placeholder="Message Shipyard…" autocomplete="off"></textarea>
+          <button class="btn primary send" id="send" type="submit" aria-label="Send">↑</button>
+        </form>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
