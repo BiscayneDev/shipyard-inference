@@ -39,6 +39,9 @@ export { collectStream, responseToStream, parseToolArguments } from './stream.js
 export { createWalletInference } from './wallet.js'
 export type { WalletInferenceOptions, WalletInference } from './wallet.js'
 
+// Tender — idle-attention monetization (sponsored placements on the wait state)
+export * from './tender/index.js'
+
 // Cost-aware routing
 export * from './router/index.js'
 
