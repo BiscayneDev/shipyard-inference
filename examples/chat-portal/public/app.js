@@ -161,11 +161,35 @@ function closeModelMenu() {
 // ---------------------------------------------------------------------------
 // Wallet
 // ---------------------------------------------------------------------------
+function connectError(msg) {
+  const note = $('connect-note')
+  note.textContent = msg
+  note.classList.add('error')
+}
+
 async function connectWallet(wallet = 'paybox') {
+  $('connect-note').classList.remove('error')
+
+  // Bring-your-own non-custodial wallet: get the real on-chain address from the
+  // browser wallet, so the server provisions/funds a UsePod token for it.
+  let address
+  if (wallet === 'phantom') {
+    if (!window.ShipyardWallet?.hasPhantom()) {
+      return connectError('Phantom not detected — install the Phantom wallet extension, then retry.')
+    }
+    try {
+      address = await window.ShipyardWallet.connectPhantom()
+    } catch (err) {
+      return connectError(err?.message || 'Phantom connection was rejected.')
+    }
+  } else if (wallet === 'metamask') {
+    return connectError('MetaMask is EVM — this rail settles USDC on Solana. Use Phantom or Paybox.')
+  }
+
   const res = await fetch('/api/wallet/connect', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: state.sessionId, wallet }),
+    body: JSON.stringify({ sessionId: state.sessionId, wallet, address }),
   })
   const w = await res.json()
   state.sessionId = w.sessionId
@@ -181,29 +205,40 @@ async function refreshWallet() {
   } catch { /* offline-ok */ }
 }
 
+const postJSON = (url, body) =>
+  fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json())
+
 async function topUp(amountUsd) {
   if (!state.sessionId) return
   const toggle = $('topup-toggle')
   const label = toggle.textContent
-  toggle.textContent = 'depositing…'
+  const fail = (msg) => {
+    toggle.textContent = 'deposit failed'
+    toggle.title = msg || ''
+    setTimeout(() => { toggle.textContent = label; toggle.title = '' }, 2800)
+  }
   toggle.disabled = true
   try {
-    const r = await (await fetch('/api/wallet/topup', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: state.sessionId, amountUsd }),
-    })).json()
-    if (r.wallet) applyWallet(r.wallet)
-    if (r.error) {
-      toggle.textContent = 'deposit failed'
-      toggle.title = r.error
-      setTimeout(() => { toggle.textContent = label; toggle.title = '' }, 2500)
+    let r
+    if (state.wallet === 'phantom' && state.usepodToken) {
+      // Real on-chain deposit: server builds → Phantom signs in-browser → server submits.
+      toggle.textContent = 'building…'
+      const built = await postJSON('/api/wallet/deposit/build', { sessionId: state.sessionId, amountUsd })
+      if (built.error) return fail(built.error)
+      toggle.textContent = 'approve in Phantom…'
+      const signedTransactionBase64 = await window.ShipyardWallet.signTransactionBase64(built.transactionBase64)
+      toggle.textContent = 'submitting…'
+      r = await postJSON('/api/wallet/deposit/submit', { sessionId: state.sessionId, signedTransactionBase64 })
     } else {
-      $('topup').classList.add('hidden')
-      toggle.textContent = label
+      toggle.textContent = 'depositing…'
+      r = await postJSON('/api/wallet/topup', { sessionId: state.sessionId, amountUsd })
     }
-  } catch {
+    if (r.wallet) applyWallet(r.wallet)
+    if (r.error) return fail(r.error)
+    $('topup').classList.add('hidden')
     toggle.textContent = label
+  } catch (err) {
+    fail(err?.message)
   } finally {
     toggle.disabled = false
   }
@@ -216,6 +251,8 @@ const WALLET_LABEL = {
 }
 
 function applyWallet(w) {
+  state.wallet = w.wallet
+  state.usepodToken = w.usepodToken
   $('connect-panel').classList.add('hidden')
   $('wallet-card').classList.remove('hidden')
   $('wallet-label').textContent = WALLET_LABEL[w.wallet] ?? 'Wallet'

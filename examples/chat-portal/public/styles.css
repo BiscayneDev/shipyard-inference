@@ -83,6 +83,9 @@ button { font-family: inherit; }
 .wallet-choice { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .wc-icon { font-size: 15px; line-height: 1; }
 .connect-sub { font-size: 12px; line-height: 1.5; color: var(--faint); text-align: center; }
+.connect-status { font-size: 12px; line-height: 1.45; text-align: center; color: var(--faint); }
+.connect-status:empty { display: none; }
+.connect-status.error { color: var(--danger); }
 .connect-or {
   display: flex; align-items: center; gap: 10px;
   font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .5px;

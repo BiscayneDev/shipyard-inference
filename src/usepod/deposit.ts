@@ -109,55 +109,142 @@ export interface UsePodSignerDepositOptions {
  *
  * @returns the transaction signature.
  */
-export async function depositUsdcWithSigner(
-  options: UsePodSignerDepositOptions,
-): Promise<string> {
-  if (!(options.amountUsdc > 0)) {
-    throw new Error('[shipyard-inference] depositUsdcWithSigner requires amountUsdc > 0')
-  }
-  if (!/^[0-9a-fA-F]{16}$/.test(options.depositCode)) {
-    throw new Error('[shipyard-inference] depositUsdcWithSigner depositCode must be 16 hex chars (8 bytes)')
-  }
+const rpcFor = (network: 'mainnet' | 'devnet', rpcUrl?: string): string =>
+  rpcUrl ?? (network === 'devnet' ? 'https://api.devnet.solana.com' : 'https://api.mainnet-beta.solana.com')
 
+function validateDeposit(amountUsdc: number, depositCode: string): void {
+  if (!(amountUsdc > 0)) {
+    throw new Error('[shipyard-inference] UsePod deposit requires amountUsdc > 0')
+  }
+  if (!/^[0-9a-fA-F]{16}$/.test(depositCode)) {
+    throw new Error('[shipyard-inference] UsePod deposit depositCode must be 16 hex chars (8 bytes)')
+  }
+}
+
+export interface UsePodDepositTxOptions {
+  /** Base58 public key that pays + is debited (the connected wallet). */
+  payer: string
+  /** The `deposit_code` from `registerUsePod()` (16-hex / 8 bytes). */
+  depositCode: string
+  /** Amount of USDC to deposit, in whole USDC (e.g. `5` = $5). */
+  amountUsdc: number
+  network?: 'mainnet' | 'devnet'
+  rpcUrl?: string
+  programId?: string
+  usdcMint?: string
+}
+
+export interface UsePodDepositTx {
+  /** Base64 of the UNSIGNED legacy transaction — hand to the wallet to sign. */
+  transactionBase64: string
+  /** Recent blockhash baked into the tx. */
+  blockhash: string
+  /** Last block height the blockhash is valid for. */
+  lastValidBlockHeight: number
+}
+
+/**
+ * Build the UNSIGNED UsePod deposit transaction for an external signer (e.g. a
+ * browser wallet like Phantom). The server builds it — reusing the deposit
+ * program's on-chain IDL via Anchor so the account layout is never guessed — and
+ * returns base64; the wallet signs it; `submitSolanaTransaction` broadcasts it.
+ * A LEGACY tx, fee payer = `payer`, with a fresh blockhash.
+ *
+ * Requires the optional peers `@coral-xyz/anchor` + `@solana/web3.js`.
+ */
+export async function buildUsePodDepositTx(
+  options: UsePodDepositTxOptions,
+): Promise<UsePodDepositTx> {
+  validateDeposit(options.amountUsdc, options.depositCode)
   const anchor = await loadAnchor()
   const web3 = await import('@solana/web3.js')
   const network = options.network ?? 'mainnet'
-  const rpcUrl =
-    options.rpcUrl ??
-    (network === 'devnet' ? 'https://api.devnet.solana.com' : 'https://api.mainnet-beta.solana.com')
-  const connection = new web3.Connection(rpcUrl, 'confirmed')
+  const connection = new web3.Connection(rpcFor(network, options.rpcUrl), 'confirmed')
+  const payer = new web3.PublicKey(options.payer)
 
-  // An Anchor wallet backed by the non-custodial signer. AnchorProvider sets the
-  // fee payer + blockhash before calling signTransaction, then sends the signed
-  // legacy tx — the signer never sees a raw key.
-  const payer = new web3.PublicKey(options.signer.publicKey)
-  const signTransaction = async (tx: { serialize(opts: unknown): Buffer }) => {
-    const signed = await options.signer.signTransaction(
-      new Uint8Array(tx.serialize({ requireAllSignatures: false, verifySignatures: false })),
-    )
-    return web3.Transaction.from(signed)
-  }
-  const wallet = {
-    publicKey: payer,
-    signTransaction,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    signAllTransactions: async (txs: any[]) => {
-      const out = []
-      for (const tx of txs) out.push(await signTransaction(tx))
-      return out
-    },
-  }
-
+  // A read-only Anchor wallet — we only BUILD here, the external wallet signs.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const a = anchor as any
+  const wallet = {
+    publicKey: payer,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    signTransaction: async (t: any) => t,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    signAllTransactions: async (t: any[]) => t,
+  }
   const provider = new a.AnchorProvider(connection, wallet, { commitment: 'confirmed' })
   const program = await a.Program.at(options.programId ?? USEPOD_DEPOSIT_PROGRAM_ID, provider)
 
   const code = Array.from(Buffer.from(options.depositCode, 'hex'))
   const amount = new a.BN(Math.round(options.amountUsdc * 1_000_000))
 
-  return (await program.methods
+  const tx = await program.methods
     .depositUsdc(code, amount)
     .accounts({ mint: new web3.PublicKey(options.usdcMint ?? USDC_MINT_MAINNET) })
-    .rpc()) as string
+    .transaction()
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+  tx.feePayer = payer
+  tx.recentBlockhash = blockhash
+  const transactionBase64 = tx
+    .serialize({ requireAllSignatures: false, verifySignatures: false })
+    .toString('base64')
+  return { transactionBase64, blockhash, lastValidBlockHeight }
+}
+
+export interface SubmitTxOptions {
+  /** Base64 of a fully-signed transaction. */
+  signedTransactionBase64: string
+  network?: 'mainnet' | 'devnet'
+  rpcUrl?: string
+}
+
+/** Broadcast a signed Solana transaction and confirm it. Returns the signature. */
+export async function submitSolanaTransaction(options: SubmitTxOptions): Promise<string> {
+  const web3 = await import('@solana/web3.js')
+  const network = options.network ?? 'mainnet'
+  const connection = new web3.Connection(rpcFor(network, options.rpcUrl), 'confirmed')
+  const raw = Buffer.from(options.signedTransactionBase64, 'base64')
+  const signature = await connection.sendRawTransaction(raw, { skipPreflight: false })
+  await connection.confirmTransaction(signature, 'confirmed')
+  return signature
+}
+
+/**
+ * Fund a UsePod token from a non-custodial wallet (Paybox / any `SolanaSigner`),
+ * with **no raw secret key**. Same on-chain effect as `depositUsdc` (calls the
+ * deposit program's `depositUsdc(code, amount)` so the code rides in instruction
+ * data — a plain transfer is NOT credited) but signed via `signer.signTransaction`.
+ * Composes `buildUsePodDepositTx` (server builds) → sign → `submitSolanaTransaction`,
+ * so it shares one code path with the browser-wallet flow.
+ *
+ * Builds a LEGACY tx (Paybox round-trips via `Transaction.from()`), reusing the
+ * program's on-chain IDL. Requires `@coral-xyz/anchor` + `@solana/web3.js`.
+ *
+ * ⚠️ UNVERIFIED on-chain path (UsePod runs on mainnet — there is no devnet program).
+ * Verify a small real deposit credits the balance before relying on it.
+ *
+ * @returns the transaction signature.
+ */
+export async function depositUsdcWithSigner(
+  options: UsePodSignerDepositOptions,
+): Promise<string> {
+  validateDeposit(options.amountUsdc, options.depositCode)
+  const built = await buildUsePodDepositTx({
+    payer: options.signer.publicKey,
+    depositCode: options.depositCode,
+    amountUsdc: options.amountUsdc,
+    network: options.network,
+    rpcUrl: options.rpcUrl,
+    programId: options.programId,
+    usdcMint: options.usdcMint,
+  })
+  const signed = await options.signer.signTransaction(
+    new Uint8Array(Buffer.from(built.transactionBase64, 'base64')),
+  )
+  return submitSolanaTransaction({
+    signedTransactionBase64: Buffer.from(signed).toString('base64'),
+    network: options.network,
+    rpcUrl: options.rpcUrl,
+  })
 }

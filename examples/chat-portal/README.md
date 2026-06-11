@@ -60,6 +60,24 @@ only the optional pay-per-request mode below.
 `PAYBOX_CREDENTIAL_ID` and every `/api/settle` runs a real on-chain `payboxSettle()`
 (metered USDC → treasury). Without a treasury it's simulated, so the demo stays runnable.
 
+### Two on-ramps to Shipyard Inference
+
+A user pays for inference one of two ways — both fund a UsePod balance the Router draws down:
+
+1. **Paybox** — a Paybox wallet funds the balance (server-signed: `depositUsdcWithSigner` /
+   `PAYBOX_FUND_USEPOD`, below).
+2. **Bring your own wallet (Phantom)** — click **Phantom**; the browser hands the server its
+   real address, the server provisions a per-user UsePod token, and **Top up** runs the real
+   on-chain deposit *signed by the user's own wallet*: the server builds the unsigned
+   `depositUsdc` tx (`buildUsePodDepositTx`, correct accounts from the program's on-chain IDL),
+   **Phantom signs it in-browser**, the server broadcasts (`submitSolanaTransaction`) and reads
+   the live balance. The key never leaves the wallet. MetaMask is EVM, so it's declined on this
+   Solana rail.
+
+The Phantom path needs a small browser bundle (`@solana/web3.js`) — rebuild it after editing
+`public/src/wallet.js` with `npm run build:portal-wallet` (the committed `public/wallet-bundle.js`
+lets the example run as-is).
+
 ### Paybox → UsePod funding
 
 A funded Paybox account can provision *and* top up the UsePod balance — no token to

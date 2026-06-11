@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { registerUsePod, usePodBalance, createUsePodProvider, depositUsdcWithSigner } from '../src/index.js'
+import { registerUsePod, usePodBalance, createUsePodProvider, depositUsdcWithSigner, buildUsePodDepositTx } from '../src/index.js'
 import { chatParams } from './helpers.js'
 
 const fakeSigner = {
@@ -105,6 +105,17 @@ test('depositUsdcWithSigner rejects a non-positive amount before touching the ch
 test('depositUsdcWithSigner rejects a malformed deposit code', async () => {
   await assert.rejects(
     () => depositUsdcWithSigner({ signer: fakeSigner, depositCode: 'nothex', amountUsdc: 5 }),
+    /16 hex chars/,
+  )
+})
+
+test('buildUsePodDepositTx validates amount + deposit code before any chain access', async () => {
+  await assert.rejects(
+    () => buildUsePodDepositTx({ payer: fakeSigner.publicKey, depositCode: 'deadbeefdeadbeef', amountUsdc: -1 }),
+    /amountUsdc > 0/,
+  )
+  await assert.rejects(
+    () => buildUsePodDepositTx({ payer: fakeSigner.publicKey, depositCode: 'zzz', amountUsdc: 5 }),
     /16 hex chars/,
   )
 })
