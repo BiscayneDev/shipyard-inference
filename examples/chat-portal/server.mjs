@@ -216,11 +216,16 @@ const router = new Router({
 // ---------------------------------------------------------------------------
 const sessions = new Map()
 
-function newAddress() {
+// Address shaped to the chosen wallet: MetaMask is EVM (0x-hex), Paybox and
+// Phantom are Solana (base58). Demo sessions mint a throwaway one.
+function newAddress(wallet) {
+  if (wallet === 'metamask') {
+    return '0x' + randomBytes(20).toString('hex')
+  }
   const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
   let s = ''
   for (const byte of randomBytes(32)) s += b58[byte % b58.length]
-  return (inference.mode === 'demo' ? 'Demo' : '') + s.slice(0, 40)
+  return s.slice(0, 44)
 }
 
 const round6 = (n) => Math.round((n + Number.EPSILON) * 1e6) / 1e6
@@ -244,6 +249,7 @@ function walletSnapshot(session) {
   return {
     sessionId: session.id,
     address: session.address,
+    wallet: session.wallet,
     mode: session.mode,
     balanceUsd: round6(session.balanceUsd),
     pendingUsd: round6(session.pendingUsd),
@@ -267,9 +273,11 @@ app.post('/api/wallet/connect', async (c) => {
   let session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (!session) {
     const id = randomBytes(12).toString('hex')
+    const wallet = ['paybox', 'phantom', 'metamask'].includes(body.wallet) ? body.wallet : 'paybox'
     session = {
       id,
-      address: newAddress(),
+      address: newAddress(wallet),
+      wallet,
       mode: inference.mode,
       balanceUsd: DEMO_BALANCE,
       pendingUsd: 0,

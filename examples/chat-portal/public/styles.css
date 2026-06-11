@@ -79,7 +79,18 @@ button { font-family: inherit; }
 
 /* wallet */
 .btn.block { width: 100%; }
-.connect-note { font-size: 12px; line-height: 1.5; color: var(--faint); margin-top: 10px; text-align: center; }
+.connect { display: flex; flex-direction: column; gap: 10px; }
+.wallet-choice { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.wc-icon { font-size: 15px; line-height: 1; }
+.connect-sub { font-size: 12px; line-height: 1.5; color: var(--faint); text-align: center; }
+.connect-or {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .5px;
+  margin: 2px 0;
+}
+.connect-or::before, .connect-or::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+.wallet-options { display: flex; gap: 8px; }
+.wallet-options .wallet-choice { flex: 1; }
 
 .wallet-card {
   margin-top: 4px;

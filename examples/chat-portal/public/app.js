@@ -25,7 +25,9 @@ async function init() {
   await loadModels()
   if (state.sessionId) await refreshWallet()
 
-  $('connect').addEventListener('click', connectWallet)
+  for (const b of document.querySelectorAll('.wallet-choice')) {
+    b.addEventListener('click', () => connectWallet(b.dataset.wallet))
+  }
   $('composer').addEventListener('submit', onSubmit)
   $('new-chat').addEventListener('click', resetChat)
   $('model-trigger').addEventListener('click', toggleModelMenu)
@@ -159,11 +161,11 @@ function closeModelMenu() {
 // ---------------------------------------------------------------------------
 // Wallet
 // ---------------------------------------------------------------------------
-async function connectWallet() {
+async function connectWallet(wallet = 'paybox') {
   const res = await fetch('/api/wallet/connect', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: state.sessionId }),
+    body: JSON.stringify({ sessionId: state.sessionId, wallet }),
   })
   const w = await res.json()
   state.sessionId = w.sessionId
@@ -192,10 +194,16 @@ async function topUp(amountUsd) {
   } catch { /* ignore */ }
 }
 
+const WALLET_LABEL = {
+  paybox: 'Paybox · smart account',
+  phantom: 'Phantom wallet',
+  metamask: 'MetaMask wallet',
+}
+
 function applyWallet(w) {
-  $('connect').classList.add('hidden')
-  $('connect-note').classList.add('hidden')
+  $('connect-panel').classList.add('hidden')
   $('wallet-card').classList.remove('hidden')
+  $('wallet-label').textContent = WALLET_LABEL[w.wallet] ?? 'Wallet'
   $('addr').textContent = w.address
   $('addr').title = w.address
   $('balance').textContent = fmt(w.balanceUsd)

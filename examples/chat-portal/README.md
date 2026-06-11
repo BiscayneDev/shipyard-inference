@@ -70,8 +70,8 @@ The active mode is shown as a badge in the top bar (amber **demo** vs. green
 2. **Pin a model** — open the picker: each model shows its live **price**
    (`$in · $out / Mtok`), a tier badge, and a **savings-vs-baseline** preview, so
    you can see the cheaper option before you pick it. Pin one to force it.
-3. **Connect a smart account** — click *Create smart account* (gasless — no seed
-   phrase, no popups). Each turn meters `chargedUsd`
+3. **Connect a wallet** — use *Connect Paybox* (Shipyard's USDC smart account)
+   or bring an existing wallet (*Phantom* / *MetaMask*). Each turn meters `chargedUsd`
    (= `min(actual × (1 + margin), baseline)`) as **pending**, then settles it from
    the balance; the **session savings** card accumulates total spent / saved / %.
 4. **Read the receipt** — every settled turn appends a **`settled $… · <tx> ↗`**

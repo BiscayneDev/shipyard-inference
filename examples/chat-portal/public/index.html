@@ -20,13 +20,20 @@
         </div>
 
         <section class="wallet" id="wallet">
-          <button class="btn primary block" id="connect">Create smart account</button>
-          <div class="connect-note" id="connect-note">
-            Gasless USDC account — no seed phrase, no popups, no gas.
+          <div class="connect" id="connect-panel">
+            <button class="btn primary block wallet-choice" data-wallet="paybox">
+              <span class="wc-icon">◈</span> Connect Paybox
+            </button>
+            <div class="connect-sub">Shipyard's USDC smart account — funds inference per request, no provider API key.</div>
+            <div class="connect-or"><span>or connect an existing wallet</span></div>
+            <div class="wallet-options">
+              <button class="btn ghost wallet-choice" data-wallet="phantom"><span class="wc-icon">👻</span> Phantom</button>
+              <button class="btn ghost wallet-choice" data-wallet="metamask"><span class="wc-icon">🦊</span> MetaMask</button>
+            </div>
           </div>
           <div class="wallet-card hidden" id="wallet-card">
             <div class="wallet-head">
-              <span class="wallet-label">Smart account</span>
+              <span class="wallet-label" id="wallet-label">Paybox · smart account</span>
               <span class="pill" id="mode-pill">demo</span>
             </div>
             <div class="wallet-addr mono addr" id="addr" title=""></div>
