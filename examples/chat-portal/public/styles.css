@@ -101,7 +101,10 @@ button { font-family: inherit; }
   border-radius: 16px; padding: 14px;
   display: flex; flex-direction: column; gap: 10px;
 }
-.wallet-head { display: flex; align-items: center; justify-content: space-between; }
+.wallet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wallet-head-right { display: flex; align-items: center; gap: 8px; }
+#disconnect { color: var(--muted); }
+#disconnect:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 .wallet-label { font-size: 12px; color: var(--faint); text-transform: uppercase; letter-spacing: .6px; }
 .wallet-addr { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wallet-balance { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }

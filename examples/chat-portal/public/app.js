@@ -36,6 +36,7 @@ async function init() {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
     if (amt) topUp(Number(amt))
   })
+  $('disconnect').addEventListener('click', disconnectWallet)
   $('examples')?.addEventListener('click', (e) => {
     const prompt = e.target.closest('.example')?.dataset.prompt
     if (!prompt || state.sending) return
@@ -195,6 +196,15 @@ async function connectWallet(wallet = 'paybox') {
   state.sessionId = w.sessionId
   localStorage.setItem('portal.session', w.sessionId)
   applyWallet(w)
+}
+
+// Disconnect: drop the local session (and the browser wallet, if non-custodial)
+// and return to the connect panel. The thread resets with the reload.
+async function disconnectWallet() {
+  try { await window.phantom?.solana?.disconnect?.() } catch { /* ignore */ }
+  localStorage.removeItem('portal.session')
+  state.sessionId = null
+  location.reload()
 }
 
 async function refreshWallet() {
