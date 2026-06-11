@@ -66,6 +66,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   const router = new Router({
     candidates: config.candidates,
     strategy: config.strategy,
+    baselineModel: config.baselineModel,
     pricingOverrides: config.pricingOverrides,
     cache: config.cache,
     usageRecorder: config.usageRecorder,

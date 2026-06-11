@@ -21,6 +21,12 @@ export {
 } from './store.js'
 export type { TelemetryStore } from './store.js'
 
+export {
+  SupabaseTelemetryStore,
+  SUPABASE_TELEMETRY_SCHEMA,
+} from './supabase-store.js'
+export type { SupabaseTelemetryStoreOptions } from './supabase-store.js'
+
 export { readTreasuryBalance, readTreasuryBalances } from './treasury.js'
 export type { TreasuryConfig } from './treasury.js'
 

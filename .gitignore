@@ -1,5 +1,7 @@
 node_modules/
 dist/
+public/dashboard/
+.vercel/
 *.log
 .env
 .env.*

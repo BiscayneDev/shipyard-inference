@@ -15,6 +15,12 @@ export interface GatewayConfig {
   candidates: ProviderCandidate[]
   /** Routing strategy. Defaults to the Router default (`costOptimized`). */
   strategy?: RoutingStrategy
+  /**
+   * Model the savings baseline is priced against — what the caller would have
+   * used directly. When set, every `request_completed` event carries
+   * `baselineCostUsd`/`savedUsd`, so the operator can show provable savings.
+   */
+  baselineModel?: string
   pricingOverrides?: Record<string, Partial<ModelMetadata>>
   cache?: CacheStore
   usageRecorder?: UsageRecorder
