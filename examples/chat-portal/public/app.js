@@ -183,6 +183,10 @@ async function refreshWallet() {
 
 async function topUp(amountUsd) {
   if (!state.sessionId) return
+  const toggle = $('topup-toggle')
+  const label = toggle.textContent
+  toggle.textContent = 'depositing…'
+  toggle.disabled = true
   try {
     const r = await (await fetch('/api/wallet/topup', {
       method: 'POST',
@@ -190,8 +194,19 @@ async function topUp(amountUsd) {
       body: JSON.stringify({ sessionId: state.sessionId, amountUsd }),
     })).json()
     if (r.wallet) applyWallet(r.wallet)
-    $('topup').classList.add('hidden')
-  } catch { /* ignore */ }
+    if (r.error) {
+      toggle.textContent = 'deposit failed'
+      toggle.title = r.error
+      setTimeout(() => { toggle.textContent = label; toggle.title = '' }, 2500)
+    } else {
+      $('topup').classList.add('hidden')
+      toggle.textContent = label
+    }
+  } catch {
+    toggle.textContent = label
+  } finally {
+    toggle.disabled = false
+  }
 }
 
 const WALLET_LABEL = {

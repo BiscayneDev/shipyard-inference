@@ -52,12 +52,32 @@ only the optional pay-per-request mode below.
 **Inference mode** | Trigger | What runs the model
 :-- | :-- | :--
 **usepod** (recommended) | `USEPOD_TOKEN` | Prepaid USDC balance proxy — auth is the funded token, **no API key, no endpoint to stand up**. Routes to the cheapest provider.
+**paybox→usepod** | `PAYBOX_CREDENTIAL_ID` + `PAYBOX_FUND_USEPOD=1` | A funded **Paybox** wallet provisions a UsePod token and **Top up** deposits real USDC into it on-chain (`depositUsdcWithSigner` — no raw key). Inference runs off that balance, shown live from UsePod. "A funded Paybox account powers the UsePod side."
 **paybox x402** (advanced) | `SHIPYARD_X402_URL` (or `USEPOD_X402_URL`) + `PAYBOX_CREDENTIAL_ID` | Pays the model *per request* over x402 from a Paybox wallet. Needs a true x402 inference endpoint — most setups don't use this.
 **demo** (default) | _no env_ | Built-in mock model. Nothing is billed.
 
 **Settlement** layers on *any* inference mode: set `SHIPYARD_TREASURY_WALLET` +
 `PAYBOX_CREDENTIAL_ID` and every `/api/settle` runs a real on-chain `payboxSettle()`
 (metered USDC → treasury). Without a treasury it's simulated, so the demo stays runnable.
+
+### Paybox → UsePod funding
+
+A funded Paybox account can provision *and* top up the UsePod balance — no token to
+paste, no x402 endpoint:
+
+```bash
+paybox login                                  # or PAYBOX_API_KEY + PAYBOX_SIGNING_KEY=pbxk1...
+export PAYBOX_CREDENTIAL_ID=<wallet-credential-id>
+export PAYBOX_FUND_USEPOD=1
+# export USEPOD_RPC_URL=https://...           # optional custom Solana RPC
+node examples/chat-portal/server.mjs
+```
+
+At boot the server registers a UsePod token; the wallet card shows its **live** balance.
+Each **Top up** ($5/$10/$25) calls `depositUsdcWithSigner()` — Paybox signs an on-chain
+USDC deposit into the token (the `deposit_code` rides in the instruction data; a plain
+transfer wouldn't credit). The receipt links to the deposit tx, and the balance refreshes
+from UsePod. ⚠️ **UsePod's deposit program is mainnet — Top up spends real USDC.**
 
 ### Go live (the real path Dock uses — no x402 endpoint, no Buoy)
 

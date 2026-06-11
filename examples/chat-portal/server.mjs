@@ -31,6 +31,9 @@ import {
   createTelemetryReporter,
   payboxSigner,
   payboxSettle,
+  registerUsePod,
+  depositUsdcWithSigner,
+  usePodBalance,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -110,6 +113,32 @@ async function buildInference() {
       payer: signer.publicKey,
       network,
       close: wi.close,
+    }
+  }
+
+  // Mode — Paybox-funded UsePod: a funded, non-custodial Paybox wallet provisions
+  // a UsePod token and tops it up on-chain (depositUsdcWithSigner — no raw key,
+  // no x402 endpoint). Inference then runs off that prepaid USDC balance. This is
+  // the "a funded Paybox account powers the UsePod side" path. Opt in with
+  // PAYBOX_FUND_USEPOD=1. UsePod's deposit program is mainnet — real USDC.
+  if (process.env.PAYBOX_CREDENTIAL_ID && process.env.PAYBOX_FUND_USEPOD && !process.env.USEPOD_TOKEN) {
+    const network = process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet'
+    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network })
+    const account = await registerUsePod() // { token, depositCode } — funds via Paybox on Top up
+    const models = [
+      { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
+      { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
+    ]
+    const provider = createUsePodProvider({ token: account.token, family: 'anthropic' })
+    return {
+      mode: 'usepod',
+      candidates: [{ id: 'usepod', provider, models }],
+      baselineModel: 'claude-sonnet-4-5',
+      payer: signer.publicKey,
+      network,
+      // Funding handle: Top up deposits real USDC from Paybox → this UsePod token.
+      funding: { signer, token: account.token, depositCode: account.depositCode, network },
+      close: async () => {},
     }
   }
 
@@ -315,6 +344,13 @@ app.post('/api/wallet/connect', async (c) => {
       messages: 0,
       settlements: [],
     }
+    // In Paybox-funded UsePod mode the balance is the real remaining UsePod
+    // balance (0 until the first Top up), not a demo figure.
+    if (inference.funding) {
+      try {
+        session.balanceUsd = (await usePodBalance(inference.funding.token)).usdc
+      } catch { /* keep demo balance if the balance API is unreachable */ }
+    }
     sessions.set(id, session)
   }
   return c.json(walletSnapshot(session))
@@ -390,15 +426,39 @@ app.post('/api/settle', async (c) => {
   })
 })
 
-// Deposit USDC into the connected smart account. In demo mode this just credits
-// the in-memory balance; in usepod/x402 mode it mirrors funding the wallet that
-// backs inference. Gasless — no popup, no seed phrase (account abstraction).
+// Top up the inference balance. In Paybox-funded UsePod mode this is a REAL
+// on-chain deposit: depositUsdcWithSigner moves USDC from the Paybox wallet into
+// the UsePod token, then we read the live balance back. Otherwise (demo) it just
+// credits the in-memory balance.
 app.post('/api/wallet/topup', async (c) => {
   const { sessionId, amountUsd } = await c.req.json().catch(() => ({}))
   const session = sessions.get(sessionId)
   if (!session) return c.json({ error: 'unknown session' }, 404)
   const amount = round6(Math.max(0, Math.min(Number(amountUsd) || 0, 1000)))
   if (amount <= 0) return c.json({ error: 'amount must be > 0' }, 400)
+
+  if (inference.funding) {
+    try {
+      const signature = await depositUsdcWithSigner({
+        signer: inference.funding.signer,
+        depositCode: inference.funding.depositCode,
+        amountUsdc: amount,
+        network: inference.funding.network,
+        rpcUrl: process.env.USEPOD_RPC_URL,
+        usdcMint: process.env.USEPOD_USDC_MINT,
+      })
+      session.balanceUsd = (await usePodBalance(inference.funding.token)).usdc
+      return c.json({
+        deposited: amount,
+        signature,
+        explorerUrl: explorerUrl(signature, inference.funding.network),
+        wallet: walletSnapshot(session),
+      })
+    } catch (err) {
+      return c.json({ error: `deposit failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) }, 502)
+    }
+  }
+
   session.balanceUsd += amount
   return c.json({ deposited: amount, wallet: walletSnapshot(session) })
 })
