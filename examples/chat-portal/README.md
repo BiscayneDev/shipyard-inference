@@ -67,10 +67,21 @@ The active mode is shown as a badge in the top bar (amber **demo** vs. green
 1. **Auto routing** — leave the picker on *Auto — cheapest capable* and send a
    prompt. The reply chip shows the economy model ran and a green **saved** chip
    versus the standard-tier baseline.
-2. **Pin a model** — pick a specific model to force it; the cost/saved chips update.
-3. **Connect wallet** — click *Connect wallet*. Each turn meters `chargedUsd`
+2. **Pin a model** — open the picker: each model shows its live **price**
+   (`$in · $out / Mtok`), a tier badge, and a **savings-vs-baseline** preview, so
+   you can see the cheaper option before you pick it. Pin one to force it.
+3. **Connect a smart account** — click *Create smart account* (gasless — no seed
+   phrase, no popups). Each turn meters `chargedUsd`
    (= `min(actual × (1 + margin), baseline)`) as **pending**, then settles it from
    the balance; the **session savings** card accumulates total spent / saved / %.
+4. **Read the receipt** — every settled turn appends a **`settled $… · <tx> ↗`**
+   chip linking to the Solana explorer, with the settlement latency in ms. In
+   **x402** mode that's the real on-chain signature; in demo/usepod it's a
+   realistic stand-in.
+5. **Top up** — use *Top up* in the wallet card to deposit USDC into the account.
+6. **Rich replies** — answers render as markdown: headings, lists, links, and
+   syntax-styled **code blocks** with a per-block copy button. Each reply also has
+   **Copy** and **Regenerate** actions.
 
 ## Configuration
 

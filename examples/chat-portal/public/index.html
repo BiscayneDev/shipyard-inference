@@ -18,10 +18,13 @@
         </div>
 
         <section class="wallet" id="wallet">
-          <button class="btn primary" id="connect">Connect wallet</button>
+          <button class="btn primary" id="connect">Create smart account</button>
+          <div class="connect-note muted" id="connect-note">
+            Gasless USDC account — no seed phrase, no popups, no gas.
+          </div>
           <div class="wallet-card hidden" id="wallet-card">
             <div class="wallet-row">
-              <span class="muted">Wallet</span>
+              <span class="muted">Smart account</span>
               <span class="mono addr" id="addr" title=""></span>
             </div>
             <div class="wallet-row">
@@ -32,7 +35,15 @@
               <span class="muted">Pending</span>
               <span class="mono" id="pending">—</span>
             </div>
-            <span class="pill" id="mode-pill">demo</span>
+            <div class="wallet-foot">
+              <span class="pill" id="mode-pill">demo</span>
+              <button class="btn ghost tiny" id="topup-toggle">Top up</button>
+            </div>
+            <div class="topup hidden" id="topup">
+              <button class="btn ghost tiny topup-amt" data-amt="5">+$5</button>
+              <button class="btn ghost tiny topup-amt" data-amt="10">+$10</button>
+              <button class="btn ghost tiny topup-amt" data-amt="25">+$25</button>
+            </div>
           </div>
         </section>
 
@@ -57,10 +68,13 @@
 
       <main class="chat">
         <header class="topbar">
-          <label class="model-pick">
-            <span class="muted">Model</span>
-            <select id="model"></select>
-          </label>
+          <div class="model-pick" id="model-pick">
+            <button class="model-trigger" id="model-trigger" aria-haspopup="listbox" aria-expanded="false">
+              <span class="model-trigger-label" id="model-trigger-label">Auto — cheapest capable</span>
+              <span class="caret">▾</span>
+            </button>
+            <div class="model-menu hidden" id="model-menu" role="listbox"></div>
+          </div>
           <span class="mode-badge" id="mode-badge" title=""></span>
           <button class="btn ghost" id="new-chat">New chat</button>
         </header>

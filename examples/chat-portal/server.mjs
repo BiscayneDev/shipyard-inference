@@ -225,6 +225,21 @@ function newAddress() {
 
 const round6 = (n) => Math.round((n + Number.EPSILON) * 1e6) / 1e6
 
+const SETTLE_NETWORK = process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet'
+
+// A base58 string shaped like a Solana tx signature (~88 chars). In x402 mode a
+// real settlement returns the on-chain signature; in demo/usepod we mint a
+// realistic stand-in so the receipt UI has a tx hash + explorer link to show.
+function mockSignature() {
+  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  let s = ''
+  for (const byte of randomBytes(64)) s += b58[byte % b58.length]
+  return s.slice(0, 88)
+}
+
+const explorerUrl = (sig, network) =>
+  `https://explorer.solana.com/tx/${sig}${network === 'mainnet' ? '' : `?cluster=${network}`}`
+
 function walletSnapshot(session) {
   return {
     sessionId: session.id,
@@ -288,17 +303,41 @@ app.post('/api/settle', async (c) => {
   session.balanceUsd = Math.max(0, session.balanceUsd - amount)
   session.spentUsd += amount
   session.pendingUsd = 0
-  session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode })
+  const signature = mockSignature()
+  const simulated = session.mode === 'demo'
+  session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode, signature })
 
   // Report the settlement to the operator command center (real USDC collected).
   reporter?.recordSettlement({
     userId: session.id,
     amountUsd: amount,
     status: 'settled',
-    network: process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet',
+    network: SETTLE_NETWORK,
   })
 
-  return c.json({ settled: amount, wallet: walletSnapshot(session) })
+  // The receipt: a USDC micropayment on Solana. In x402 mode `signature` is the
+  // real on-chain tx; in demo/usepod it's a realistic stand-in (`simulated`).
+  return c.json({
+    settled: amount,
+    signature,
+    network: SETTLE_NETWORK,
+    explorerUrl: explorerUrl(signature, SETTLE_NETWORK),
+    simulated,
+    wallet: walletSnapshot(session),
+  })
+})
+
+// Deposit USDC into the connected smart account. In demo mode this just credits
+// the in-memory balance; in usepod/x402 mode it mirrors funding the wallet that
+// backs inference. Gasless — no popup, no seed phrase (account abstraction).
+app.post('/api/wallet/topup', async (c) => {
+  const { sessionId, amountUsd } = await c.req.json().catch(() => ({}))
+  const session = sessions.get(sessionId)
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  const amount = round6(Math.max(0, Math.min(Number(amountUsd) || 0, 1000)))
+  if (amount <= 0) return c.json({ error: 'amount must be > 0' }, 400)
+  session.balanceUsd += amount
+  return c.json({ deposited: amount, wallet: walletSnapshot(session) })
 })
 
 app.post('/api/chat', async (c) => {
