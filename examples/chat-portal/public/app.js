@@ -397,6 +397,8 @@ async function runTurn() {
         // Tender side channel: render the sponsored line in chrome, OUTSIDE the
         // message bubble — never appended to `acc` / the model output.
         renderPlacement(JSON.parse(data))
+      } else if (evt === 'attestation') {
+        renderAttestation(JSON.parse(data))
       } else if (evt === 'placement_clear') {
         clearPlacement()
       } else if (evt === 'error') {
@@ -659,10 +661,29 @@ function renderPlacement(p) {
   const bar = $('placement-bar')
   if (!bar || !p || !p.line) return
   $('placement-line').textContent = p.line
+  const attest = $('placement-attest')
+  if (attest) { attest.textContent = ''; attest.className = 'placement-attest' } // reset; set on attestation
   const cta = $('placement-cta')
   cta.href = p.endpointUrl || '#'
   cta.dataset.placementId = p.placementId || ''
   bar.classList.remove('hidden')
+}
+
+// Proof-of-impression badge: the gateway-signed attestation result. Valid means
+// a real, billed request produced this impression (the moat). In Demo mode it's
+// unverified — no real inference was billed.
+function renderAttestation(d) {
+  const el = $('placement-attest')
+  if (!el) return
+  if (d && d.valid) {
+    el.textContent = '✓ attested'
+    el.className = 'placement-attest ok'
+    el.title = `Gateway-signed proof-of-impression · ${d.attestation?.measuredWaitMs ?? 0}ms billed wait`
+  } else {
+    el.textContent = '⚠ unverified'
+    el.className = 'placement-attest bad'
+    el.title = d?.reason || 'no valid attestation'
+  }
 }
 
 function clearPlacement() {

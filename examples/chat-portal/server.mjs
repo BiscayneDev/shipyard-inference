@@ -38,6 +38,10 @@ import {
   usePodBalance,
   observeWaitWindow,
   Auction,
+  AuctionLog,
+  loadAttestationKey,
+  signAttestation,
+  assertValidAttestation,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -613,6 +617,10 @@ const tenderAuction = new Auction([
   },
 ])
 const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
+// The gateway's dedicated attestation key + the auction log the release gate
+// cross-checks. Set TENDER_SIGNING_KEY (32-byte hex) for a stable, verifiable key.
+const tenderKey = loadAttestationKey()
+const auctionLog = new AuctionLog()
 
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
@@ -635,6 +643,8 @@ app.post('/api/chat', async (c) => {
     const controller = new AbortController()
     stream.onAbort(() => controller.abort())
     const ctx = {}
+    let servedPlacement // the placement shown for this request, if any
+    let measuredWaitMs // the real wait (ms) the placement was metered against
 
     // Tender — a thin portal surface. It paints a won placement into UI chrome
     // via a side-channel SSE event; it is NEVER spliced into the `delta` stream
@@ -665,7 +675,14 @@ app.post('/api/chat', async (c) => {
           {
             onWaitWindow: async () => {
               const placement = tenderAuction.select(tenderCtx)
-              if (placement) await surface.render(placement, tenderCtx)
+              if (!placement) return
+              servedPlacement = placement
+              auctionLog.record(placement, Date.now()) // for the gate's served cross-check
+              await surface.render(placement, tenderCtx)
+            },
+            // meter() — the gateway's measured wait the payout scales to.
+            onFirstToken: (ms) => {
+              measuredWaitMs = ms
             },
           },
           { minWaitMs: TENDER_MIN_WAIT_MS },
@@ -708,6 +725,37 @@ app.post('/api/chat', async (c) => {
           wallet: session ? walletSnapshot(session) : undefined,
         }),
       })
+
+      // Tender attestation (the moat): for a request that showed a placement, the
+      // gateway signs that a REAL, BILLED inference request produced the
+      // impression. Emitted on the side channel; this signed object is the unit
+      // settlement (step 4) releases against. In Demo mode billedCostUsd is 0, so
+      // the gate rejects it — you can't farm impressions without real inference.
+      if (servedPlacement) {
+        const attestation = signAttestation(
+          {
+            requestId,
+            model: ctx.model ?? rt.mode,
+            billedCostUsd: actual ?? 0,
+            measuredWaitMs: measuredWaitMs ?? 0,
+            surfaceId: surface.id,
+            userWallet: session?.address ?? '',
+            placementId: servedPlacement.placementId,
+            issuedAt: Date.now(),
+          },
+          tenderKey,
+        )
+        const gate = assertValidAttestation(attestation, {
+          publicKeyHex: tenderKey.publicKeyHex,
+          minWaitMs: TENDER_MIN_WAIT_MS,
+          wasServed: (rid, pid) => auctionLog.wasServed(rid, pid),
+        })
+        await stream.writeSSE({
+          event: 'attestation',
+          data: JSON.stringify({ attestation, valid: gate.ok, reason: gate.reason }),
+        })
+      }
+
       await stream.writeSSE({ event: 'done', data: '[DONE]' })
     } catch (err) {
       await stream.writeSSE({
@@ -788,3 +836,7 @@ if (prodInference?.mode === 'paybox') {
   console.log(`  paybox:    ${prodInference.payer} · ${prodInference.network}`)
 }
 console.log(`  baseline:  ${demoRT.baselineModel} (demo) · margin: ${(MARGIN * 100).toFixed(0)}%`)
+console.log(
+  `  tender:    attest key ${tenderKey.publicKeyHex.slice(0, 16)}…` +
+    (tenderKey.ephemeral ? '  ⚠ ephemeral — set TENDER_SIGNING_KEY for a stable key' : ''),
+)
