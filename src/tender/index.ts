@@ -6,3 +6,18 @@ export { observeWaitWindow } from './wait.js'
 export type { WaitObserverHooks, WaitObserverOptions } from './wait.js'
 export { Auction, matchesTargeting } from './auction.js'
 export type { AuctionOptions } from './auction.js'
+export { AuctionLog } from './log.js'
+export type { ServedRecord } from './log.js'
+export {
+  loadAttestationKey,
+  generateAttestationSeedHex,
+  attestationDigest,
+  signAttestation,
+  verifyAttestation,
+  assertValidAttestation,
+} from './attestation.js'
+export type {
+  TenderAttestationKey,
+  AttestationGateOptions,
+  GateResult,
+} from './attestation.js'

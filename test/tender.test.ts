@@ -2,11 +2,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   Auction,
+  AuctionLog,
   observeWaitWindow,
   matchesTargeting,
   impressionFloorUsdc,
+  loadAttestationKey,
+  generateAttestationSeedHex,
+  signAttestation,
+  verifyAttestation,
+  assertValidAttestation,
   type Campaign,
+  type Placement,
   type TenderRequestContext,
+  type UsageAttestation,
 } from '../src/index.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -106,4 +114,69 @@ test('observeWaitWindow: a real wait opens the window and meters it', async () =
   assert.equal(opened, 1, 'idle past minWaitMs opens exactly one window')
   assert.ok(metered >= 10, `measured wait ${metered}ms should be >= minWaitMs`)
   assert.deepEqual(out, ['text_delta', 'done'])
+})
+
+// --- attestation (the moat) ------------------------------------------------
+
+const KEY = loadAttestationKey({ seedHex: generateAttestationSeedHex() })
+const unsigned = (over: Partial<UsageAttestation> = {}): Omit<UsageAttestation, 'sig'> => ({
+  requestId: 'r1',
+  model: 'claude-haiku-4-5',
+  billedCostUsd: 0.0001,
+  measuredWaitMs: 1000,
+  surfaceId: 'portal-ide',
+  userWallet: 'Wallet1',
+  placementId: 'p1',
+  issuedAt: 1_700_000_000_000,
+  ...over,
+})
+const served = (rid: string, pid: string) => rid === 'r1' && pid === 'p1'
+
+test('attestation: sign → verify roundtrip; tamper breaks it', () => {
+  const att = signAttestation(unsigned(), KEY)
+  assert.equal(att.sig.length, 128, 'ed25519 sig is 64 bytes / 128 hex')
+  assert.equal(verifyAttestation(att, KEY.publicKeyHex), true)
+  assert.equal(verifyAttestation({ ...att, billedCostUsd: 9.99 }, KEY.publicKeyHex), false)
+  const other = loadAttestationKey({ seedHex: generateAttestationSeedHex() })
+  assert.equal(verifyAttestation(att, other.publicKeyHex), false, 'wrong key must not verify')
+})
+
+test('attestation: a 32-byte seed is deterministic', () => {
+  const seed = generateAttestationSeedHex()
+  assert.equal(loadAttestationKey({ seedHex: seed }).publicKeyHex, loadAttestationKey({ seedHex: seed }).publicKeyHex)
+})
+
+test('gate: passes only a signed, billed, waited, served attestation', () => {
+  const att = signAttestation(unsigned(), KEY)
+  assert.deepEqual(assertValidAttestation(att, { publicKeyHex: KEY.publicKeyHex, wasServed: served }), { ok: true })
+})
+
+test('gate: rejects $0 inference (the anti-fraud bind)', () => {
+  const att = signAttestation(unsigned({ billedCostUsd: 0 }), KEY)
+  const r = assertValidAttestation(att, { publicKeyHex: KEY.publicKeyHex, wasServed: served })
+  assert.equal(r.ok, false)
+  assert.match(r.reason ?? '', /billedCostUsd/)
+})
+
+test('gate: rejects sub-threshold wait, not-served, and forged sig', () => {
+  const short = signAttestation(unsigned({ measuredWaitMs: 100 }), KEY)
+  assert.equal(assertValidAttestation(short, { publicKeyHex: KEY.publicKeyHex, minWaitMs: 800 }).ok, false)
+
+  const att = signAttestation(unsigned(), KEY)
+  assert.equal(assertValidAttestation(att, { publicKeyHex: KEY.publicKeyHex, wasServed: () => false }).ok, false)
+
+  const forged: UsageAttestation = { ...unsigned(), sig: 'deadbeef'.repeat(16) }
+  assert.equal(assertValidAttestation(forged, { publicKeyHex: KEY.publicKeyHex }).ok, false)
+})
+
+test('auction log: records served placement for the gate cross-check', () => {
+  const log = new AuctionLog()
+  const p: Placement = {
+    placementId: 'p1', requestId: 'r1', line: 'x', endpointUrl: 'https://x',
+    advertiserWallet: 'Ad', usdcPerImpression: 0.005,
+  }
+  log.record(p, 1_700_000_000_000)
+  assert.equal(log.wasServed('r1', 'p1'), true)
+  assert.equal(log.wasServed('r1', 'pX'), false)
+  assert.equal(log.wasServed('rX', 'p1'), false)
 })
