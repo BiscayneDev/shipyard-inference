@@ -10,3 +10,4 @@ public/dashboard/
 .vscode/
 .idea/
 *.tgz
+examples/chat-portal/.usepod-fund.json
