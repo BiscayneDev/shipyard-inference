@@ -45,44 +45,53 @@ Every mode routes through the Shipyard `Router`, so cost-routing, caching, and
 savings work the same regardless of how inference is paid for. **Real inference
 is always wallet-funded — there is no provider-API-key path.**
 
-| Mode | Trigger (first match wins) | What pays |
-| --- | --- | --- |
-| **paybox** (first-class) | `PAYBOX_CREDENTIAL_ID` (+ an x402 endpoint) | **Real inference, mainnet by default.** A funded, non-custodial **Paybox** wallet pays per-request USDC over x402 (`payboxSigner` → `createWalletInference`). The key never leaves Paybox (passkey-gated). The endpoint defaults to UsePod's x402 URL — so a funded Paybox account "powers the UsePod side". |
-| **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. |
-| **demo** (default) | _no env_ | Built-in mock model. Nothing is billed. |
+Inference (how a reply is *produced*) and settlement (how it's *paid for*) are
+separate. You do **not** need an x402 inference endpoint for real billing — that's
+only the optional pay-per-request mode below.
 
-### Go live (Paybox-funded inference + real settlement)
+**Inference mode** | Trigger | What runs the model
+:-- | :-- | :--
+**usepod** (recommended) | `USEPOD_TOKEN` | Prepaid USDC balance proxy — auth is the funded token, **no API key, no endpoint to stand up**. Routes to the cheapest provider.
+**paybox x402** (advanced) | `SHIPYARD_X402_URL` (or `USEPOD_X402_URL`) + `PAYBOX_CREDENTIAL_ID` | Pays the model *per request* over x402 from a Paybox wallet. Needs a true x402 inference endpoint — most setups don't use this.
+**demo** (default) | _no env_ | Built-in mock model. Nothing is billed.
 
-This is the same path proven in [Dock](https://github.com/BiscayneDev/dock): inference
-runs through Shipyard, spend is metered, then **`payboxSettle()` moves the metered
-USDC on-chain from the Paybox wallet to a treasury** — the receipt chip links to the
-real tx.
+**Settlement** layers on *any* inference mode: set `SHIPYARD_TREASURY_WALLET` +
+`PAYBOX_CREDENTIAL_ID` and every `/api/settle` runs a real on-chain `payboxSettle()`
+(metered USDC → treasury). Without a treasury it's simulated, so the demo stays runnable.
+
+### Go live (the real path Dock uses — no x402 endpoint, no Buoy)
+
+Inference through Shipyard on a wallet-funded provider (UsePod), spend metered, then
+**`payboxSettle()` moves the metered USDC on-chain from the Paybox wallet to a
+treasury** — the receipt chip links to the real tx. This is exactly
+[Dock](https://github.com/BiscayneDev/dock)'s model.
 
 ```bash
 # 1. Authenticate Paybox (once). The scoped `pbxk1` signing key enables hands-off,
 #    in-process signing (autonomous grant) — no per-settlement passkey tap.
 paybox login                                  # or: export PAYBOX_API_KEY=... PAYBOX_SIGNING_KEY=pbxk1...
 
-# 2. Wallet-funded inference over x402 (endpoint defaults to UsePod's x402 URL):
-export PAYBOX_CREDENTIAL_ID=<wallet-credential-id>
-export SHIPYARD_X402_URL=https://<true-x402-inference-endpoint>   # or USEPOD_X402_URL
+# 2. Wallet-funded inference — UsePod prepaid USDC (no endpoint, no API key):
+export USEPOD_TOKEN=<funded-usepod-token>
 
-# 3. Turn on REAL settlement — metered USDC → your treasury, on-chain:
+# 3. Real settlement — metered USDC → your treasury, on-chain:
+export PAYBOX_CREDENTIAL_ID=<wallet-credential-id>
 export SHIPYARD_TREASURY_WALLET=<solana-treasury-address>
 export SHIPYARD_SETTLE_NETWORK=devnet         # rehearse on devnet first (test USDC)
 export SHIPYARD_SETTLE_USDC_MINT=<mint>       # e.g. Nebula devUSDC on devnet
 # export SHIPYARD_SETTLE_RPC_URL=https://...  # optional custom RPC
 
 node examples/chat-portal/server.mjs
-# boot log:  inference: paybox · <payer> · devnet
+# boot log:  inference: usepod
 #            settle:    REAL · <payer> → <treasury> (devnet)
 ```
 
-Without `SHIPYARD_TREASURY_WALLET`, settlement is **simulated** (a stand-in receipt) so
-the demo stays runnable. With it, every settle is a real on-chain USDC transfer; a
-failure leaves the spend pending and retries next turn (never double-charges).
-`SHIPYARD_X402_FAMILY=openai` if the endpoint speaks the OpenAI surface (default `anthropic`).
+A settle failure leaves the spend pending and retries next turn (never double-charges).
 **Prove it on devnet before mainnet** — the on-chain path spends real USDC.
+
+> **Buoy?** No. [Buoy](https://openshipyard.xyz/buoy) wraps *your own* API behind x402 to
+> *sell* it on the marketplace — it's the provider side. You'd only use it to *create* an
+> x402 endpoint for the advanced pay-per-request mode, which this path doesn't need.
 
 The active mode shows as a badge in the top bar (amber **demo** vs. green
 **usepod** / **paybox · live**), so it's always clear when real inference is on.

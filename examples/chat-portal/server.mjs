@@ -86,19 +86,15 @@ function mockProvider() {
 // priced against) — but never a raw provider key. Wallet-funded, end to end.
 // ---------------------------------------------------------------------------
 async function buildInference() {
-  // Mode — Paybox (first-class): a funded, non-custodial Paybox wallet pays for
-  // real inference per request over x402. The endpoint defaults to UsePod's x402
-  // URL — so a funded Paybox account literally "powers the UsePod side" — but any
-  // true x402 inference endpoint works. Mainnet by default: this is real USDC.
-  // The private key never leaves Paybox (passkey-gated signing).
-  if (process.env.PAYBOX_CREDENTIAL_ID) {
-    const baseURL = process.env.SHIPYARD_X402_URL ?? process.env.USEPOD_X402_URL
-    if (!baseURL) {
-      throw new Error(
-        'PAYBOX_CREDENTIAL_ID is set but no x402 inference endpoint. ' +
-          'Set SHIPYARD_X402_URL (or USEPOD_X402_URL) to a true x402 endpoint.',
-      )
-    }
+  // Mode — Paybox x402 (advanced): pay for inference *per request* over x402,
+  // from a non-custodial Paybox wallet, against a true x402 inference endpoint.
+  // This is the ONLY mode that needs an x402 endpoint — most setups don't. The
+  // far simpler real path is UsePod inference + Paybox *settlement* (below), which
+  // is how Dock runs and needs no endpoint at all. Only entered when an endpoint
+  // is actually configured; otherwise Paybox is used purely for settlement.
+  const x402Url = process.env.SHIPYARD_X402_URL ?? process.env.USEPOD_X402_URL
+  if (x402Url && process.env.PAYBOX_CREDENTIAL_ID) {
+    const baseURL = x402Url
     const network = process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet'
     const family = process.env.SHIPYARD_X402_FAMILY === 'openai' ? 'openai' : 'anthropic'
     const models = [
