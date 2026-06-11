@@ -85,25 +85,33 @@ function mockProvider() {
 // priced against) — but never a raw provider key. Wallet-funded, end to end.
 // ---------------------------------------------------------------------------
 async function buildInference() {
-  // Mode C — x402: pay per request from a Solana wallet against a true x402
-  // inference endpoint. The connected wallet (Paybox/keypair) IS the funding.
-  if (process.env.SHIPYARD_X402_URL && process.env.PAYBOX_CREDENTIAL_ID) {
+  // Mode — Paybox (first-class): a funded, non-custodial Paybox wallet pays for
+  // real inference per request over x402. The endpoint defaults to UsePod's x402
+  // URL — so a funded Paybox account literally "powers the UsePod side" — but any
+  // true x402 inference endpoint works. Mainnet by default: this is real USDC.
+  // The private key never leaves Paybox (passkey-gated signing).
+  if (process.env.PAYBOX_CREDENTIAL_ID) {
+    const baseURL = process.env.SHIPYARD_X402_URL ?? process.env.USEPOD_X402_URL
+    if (!baseURL) {
+      throw new Error(
+        'PAYBOX_CREDENTIAL_ID is set but no x402 inference endpoint. ' +
+          'Set SHIPYARD_X402_URL (or USEPOD_X402_URL) to a true x402 endpoint.',
+      )
+    }
+    const network = process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet'
+    const family = process.env.SHIPYARD_X402_FAMILY === 'openai' ? 'openai' : 'anthropic'
     const models = [
-      { model: 'shipyard-economy', inputCostPerMTok: 0.6, outputCostPerMTok: 1.2, contextWindow: 128000, tier: 'economy', capabilities: ['tools'] },
-      { model: 'shipyard-standard', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
+      { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
+      { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
     ]
-    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID })
-    const wi = await createWalletInference({
-      signer,
-      baseURL: process.env.SHIPYARD_X402_URL,
-      network: process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet',
-      family: process.env.SHIPYARD_X402_FAMILY === 'anthropic' ? 'anthropic' : 'openai',
-      models,
-    })
+    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network })
+    const wi = await createWalletInference({ signer, baseURL, network, family, models })
     return {
-      mode: 'x402',
-      candidates: [{ id: 'x402', provider: wi.provider, models }],
-      baselineModel: 'shipyard-standard',
+      mode: 'paybox',
+      candidates: [{ id: 'paybox', provider: wi.provider, models }],
+      baselineModel: 'claude-sonnet-4-5',
+      payer: signer.publicKey,
+      network,
       close: wi.close,
     }
   }
@@ -265,7 +273,13 @@ const app = new Hono()
 app.use('/api/*', cors())
 
 app.get('/api/models', (c) =>
-  c.json({ models: modelCatalog, baselineModel: BASELINE_MODEL, mode: inference.mode }),
+  c.json({
+    models: modelCatalog,
+    baselineModel: BASELINE_MODEL,
+    mode: inference.mode,
+    network: inference.network,
+    payer: inference.payer,
+  }),
 )
 
 app.post('/api/wallet/connect', async (c) => {
@@ -467,9 +481,12 @@ app.get('*', async (c) => {
 const MODE_NOTE = {
   demo: 'built-in mock — no real inference',
   usepod: 'wallet-funded · UsePod prepaid USDC',
-  x402: 'wallet-funded · per-request x402 USDC',
+  paybox: 'REAL inference · Paybox wallet pays per-request USDC over x402',
 }
 serve({ fetch: app.fetch, port: PORT })
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
 console.log(`  inference: ${inference.mode}  (${MODE_NOTE[inference.mode] ?? ''})`)
+if (inference.mode === 'paybox') {
+  console.log(`  paybox:    ${inference.payer} · ${inference.network}`)
+}
 console.log(`  baseline:  ${BASELINE_MODEL} · margin: ${(MARGIN * 100).toFixed(0)}%`)

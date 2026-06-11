@@ -206,7 +206,7 @@ button { font-family: inherit; }
   border-radius: 999px; padding: 4px 11px; border: 1px solid var(--hair);
   color: var(--muted); cursor: default; white-space: nowrap;
 }
-.mode-badge.usepod, .mode-badge.x402 {
+.mode-badge.usepod, .mode-badge.paybox {
   color: var(--accent-2);
   border-color: color-mix(in srgb, var(--accent-2) 40%, transparent);
   background: color-mix(in srgb, var(--accent-2) 12%, transparent);

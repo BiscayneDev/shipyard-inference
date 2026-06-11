@@ -47,20 +47,29 @@ is always wallet-funded — there is no provider-API-key path.**
 
 | Mode | Trigger (first match wins) | What pays |
 | --- | --- | --- |
-| **x402** | `SHIPYARD_X402_URL` + `PAYBOX_CREDENTIAL_ID` | Per-request USDC on Solana, paid from your Paybox wallet against a true x402 endpoint (`createWalletInference`). |
-| **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. The simplest way to turn on real inference. |
+| **paybox** (first-class) | `PAYBOX_CREDENTIAL_ID` (+ an x402 endpoint) | **Real inference, mainnet by default.** A funded, non-custodial **Paybox** wallet pays per-request USDC over x402 (`payboxSigner` → `createWalletInference`). The key never leaves Paybox (passkey-gated). The endpoint defaults to UsePod's x402 URL — so a funded Paybox account "powers the UsePod side". |
+| **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. |
 | **demo** (default) | _no env_ | Built-in mock model. Nothing is billed. |
 
-```bash
-# Turn on real inference, wallet-funded via UsePod (prepaid USDC, no API key):
-USEPOD_TOKEN=... node examples/chat-portal/server.mjs
+### Go live (mainnet, Paybox-funded)
 
-# Per-request x402/Paybox USDC:
-SHIPYARD_X402_URL=https://... PAYBOX_CREDENTIAL_ID=... node examples/chat-portal/server.mjs
+```bash
+# 1. Authenticate Paybox (once) — funds & signing live in your Paybox account:
+paybox login                       # or export PAYBOX_API_KEY=...
+
+# 2. Point at a true x402 inference endpoint and your Paybox wallet credential.
+#    Mainnet is the default; real USDC is spent per request.
+export PAYBOX_CREDENTIAL_ID=<wallet-credential-id>
+export SHIPYARD_X402_URL=https://<true-x402-inference-endpoint>   # or USEPOD_X402_URL
+node examples/chat-portal/server.mjs
+# boot log prints:  inference: paybox  ·  paybox: <payer-pubkey> · mainnet
 ```
 
-The active mode is shown as a badge in the top bar (amber **demo** vs. green
-**usepod / x402**), so it's always clear whether real inference is on.
+Set `SHIPYARD_SETTLE_NETWORK=devnet` to rehearse on devnet first (test USDC).
+`SHIPYARD_X402_FAMILY=openai` if the endpoint speaks the OpenAI surface (default `anthropic`).
+
+The active mode shows as a badge in the top bar (amber **demo** vs. green
+**usepod** / **paybox · live**), so it's always clear when real inference is on.
 
 ## What to try
 

@@ -72,11 +72,11 @@ async function loadModels() {
 function setModeBadge(mode) {
   const el = $('mode-badge')
   if (!el || !mode) return
-  const label = { demo: 'demo', usepod: 'usepod', x402: 'x402' }[mode] ?? mode
+  const label = { demo: 'demo', usepod: 'usepod', paybox: 'paybox · live' }[mode] ?? mode
   const tip = {
     demo: 'Built-in mock model — no real inference is billed.',
     usepod: 'Wallet-funded inference — prepaid USDC via UsePod, no API key.',
-    x402: 'Wallet-funded inference — per-request USDC via x402/Paybox, no API key.',
+    paybox: 'REAL inference — your funded Paybox wallet pays per-request USDC over x402.',
   }[mode] ?? ''
   el.textContent = label
   el.title = tip
