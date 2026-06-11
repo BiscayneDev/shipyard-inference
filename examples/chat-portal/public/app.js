@@ -271,6 +271,9 @@ function applyWallet(w) {
   $('balance').textContent = fmt(w.balanceUsd)
   $('pending').textContent = fmt(w.pendingUsd)
   $('mode-pill').textContent = w.mode
+  // A real (wallet-provisioned) session leaves demo — reflect it in the top badge,
+  // not just the sidebar pill, so it's clear real inference is on for this session.
+  if (w.realInference) setModeBadge(w.mode)
   $('msg-total').textContent = w.messages
   // baselineTotal is tracked client-side (spent + saved ≈ what direct would cost).
   const baseline = (w.spentUsd || 0) + (w.savedUsd || 0)
