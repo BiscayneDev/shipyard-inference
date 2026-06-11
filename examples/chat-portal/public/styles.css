@@ -82,10 +82,27 @@ a { color: var(--accent); text-decoration: none; }
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 12px;
   padding: 14px 22px; border-bottom: 1px solid var(--border);
 }
+.topbar #new-chat { margin-left: auto; }
 .model-pick { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+
+.mode-badge {
+  font-size: 11px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+  border-radius: 999px; padding: 3px 9px; border: 1px solid var(--border);
+  color: var(--muted); cursor: default; white-space: nowrap;
+}
+.mode-badge.usepod, .mode-badge.x402 {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+}
+.mode-badge.demo {
+  color: #e0b341;
+  border-color: color-mix(in srgb, #e0b341 40%, transparent);
+  background: color-mix(in srgb, #e0b341 12%, transparent);
+}
 select {
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px;

@@ -6,10 +6,11 @@ with streaming replies — every answer shows exactly what it **cost**, what the
 prompt would have **cost direct** (the baseline), and what you **saved**.
 
 Crucially, **there is no provider API key here.** Inference is paid *through*
-Shipyard from the connected wallet — a UsePod prepaid USDC balance or per-request
-x402/Paybox USDC. This is the reference front-end for the gateway: how a product
-(like [Dock](https://github.com/BiscayneDev/dock)) lets end users reach frontier
-models through their own wallet, **cheaper than going direct**, with provable savings.
+Shipyard from a wallet — a UsePod prepaid USDC balance or per-request x402/Paybox
+USDC — and a keyless **demo** mock lets you explore the UX offline. This is the
+reference front-end for the gateway: how a product (like
+[Dock](https://github.com/BiscayneDev/dock)) lets end users reach frontier models
+through their own wallet, **cheaper than going direct**, with provable savings.
 
 ```
 browser ──/api/chat (SSE)──▶ portal server ──▶ Router (costOptimized, baseline)
@@ -39,19 +40,27 @@ below — the model picker, pricing, and savings all switch automatically.
 
 ## Inference modes (auto-detected)
 
-| Mode | Trigger | What pays |
+The server picks a mode at boot from the environment, in this priority order.
+Every mode routes through the Shipyard `Router`, so cost-routing, caching, and
+savings work the same regardless of how inference is paid for. **Real inference
+is always wallet-funded — there is no provider-API-key path.**
+
+| Mode | Trigger (first match wins) | What pays |
 | --- | --- | --- |
-| **demo** (default) | _no env_ | Built-in mock model. Nothing is billed. |
-| **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. |
 | **x402** | `SHIPYARD_X402_URL` + `PAYBOX_CREDENTIAL_ID` | Per-request USDC on Solana, paid from your Paybox wallet against a true x402 endpoint (`createWalletInference`). |
+| **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. The simplest way to turn on real inference. |
+| **demo** (default) | _no env_ | Built-in mock model. Nothing is billed. |
 
 ```bash
-# Wallet-funded via UsePod (prepaid USDC, no provider key):
+# Turn on real inference, wallet-funded via UsePod (prepaid USDC, no API key):
 USEPOD_TOKEN=... node examples/chat-portal/server.mjs
 
 # Per-request x402/Paybox USDC:
 SHIPYARD_X402_URL=https://... PAYBOX_CREDENTIAL_ID=... node examples/chat-portal/server.mjs
 ```
+
+The active mode is shown as a badge in the top bar (amber **demo** vs. green
+**usepod / x402**), so it's always clear whether real inference is on.
 
 ## What to try
 
@@ -67,7 +76,7 @@ SHIPYARD_X402_URL=https://... PAYBOX_CREDENTIAL_ID=... node examples/chat-portal
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `USEPOD_TOKEN` | — | Use UsePod wallet-funded inference (prepaid USDC). |
+| `USEPOD_TOKEN` | — | Turn on real inference, wallet-funded via UsePod (prepaid USDC, no API key). |
 | `SHIPYARD_X402_URL` | — | A true x402 inference endpoint (with `PAYBOX_CREDENTIAL_ID`). |
 | `PAYBOX_CREDENTIAL_ID` | — | Paybox wallet that pays per-request x402 USDC. |
 | `SHIPYARD_X402_FAMILY` | `openai` | API surface of the x402 endpoint (`openai`/`anthropic`). |

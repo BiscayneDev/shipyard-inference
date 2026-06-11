@@ -31,9 +31,10 @@ async function init() {
 
 async function loadModels() {
   try {
-    const { models, baselineModel } = await (await fetch('/api/models')).json()
+    const { models, baselineModel, mode } = await (await fetch('/api/models')).json()
     state.baselineModel = baselineModel
     $('baseline-name').textContent = baselineModel
+    setModeBadge(mode)
     const sel = $('model')
     sel.innerHTML = ''
     for (const m of models) {
@@ -45,6 +46,20 @@ async function loadModels() {
   } catch {
     $('model').innerHTML = '<option value="auto">Auto — cheapest capable</option>'
   }
+}
+
+function setModeBadge(mode) {
+  const el = $('mode-badge')
+  if (!el || !mode) return
+  const label = { demo: 'demo', usepod: 'usepod', x402: 'x402' }[mode] ?? mode
+  const tip = {
+    demo: 'Built-in mock model — no real inference is billed.',
+    usepod: 'Wallet-funded inference — prepaid USDC via UsePod, no API key.',
+    x402: 'Wallet-funded inference — per-request USDC via x402/Paybox, no API key.',
+  }[mode] ?? ''
+  el.textContent = label
+  el.title = tip
+  el.className = `mode-badge ${mode}`
 }
 
 // ---------------------------------------------------------------------------
