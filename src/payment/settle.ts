@@ -131,14 +131,17 @@ export async function payboxSettle(
   )
 
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  const message = new web3.TransactionMessage({
-    payerKey: payer,
-    recentBlockhash: blockhash,
-    instructions,
-  }).compileToV0Message()
+  // Build a LEGACY transaction (not versioned): the Paybox in-process signer
+  // deserializes the payload with `Transaction.from()`, which throws on a v0
+  // `VersionedTransaction`. The signer fills the fee-payer signature, so we
+  // serialize the message with an empty signature slot.
+  const tx = new web3.Transaction()
+  tx.feePayer = payer
+  tx.recentBlockhash = blockhash
+  tx.add(...instructions)
 
-  const tx = new web3.VersionedTransaction(message)
-  const signed = await options.signer.signTransaction(tx.serialize())
+  const unsigned = tx.serialize({ requireAllSignatures: false, verifySignatures: false })
+  const signed = await options.signer.signTransaction(unsigned)
 
   const signature: string = await connection.sendRawTransaction(signed, {
     skipPreflight: false,

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shipyard Inference · Operator</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- token gate -->
+    <div id="gate" class="gate hidden">
+      <form id="gate-form" class="gate-card">
+        <div class="brand">
+          <span class="logo">⚓</span>
+          <div>
+            <div class="brand-name">Shipyard Inference</div>
+            <div class="brand-sub">Operator command center</div>
+          </div>
+        </div>
+        <label class="gate-label" for="token">Operator token</label>
+        <input id="token" class="gate-input mono" type="password" placeholder="SHIPYARD_OPERATOR_TOKEN" autocomplete="off" />
+        <button class="btn" type="submit">Unlock</button>
+        <div id="gate-error" class="gate-error hidden"></div>
+      </form>
+    </div>
+
+    <!-- app -->
+    <div id="app" class="app hidden">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">⚓</span>
+          <div>
+            <div class="brand-name">Shipyard Inference <span class="brand-tag">OPERATOR</span></div>
+            <div class="brand-sub" id="sub">every request, every deployment</div>
+          </div>
+        </div>
+        <div class="controls">
+          <select id="source" class="select" title="Deployment source"></select>
+          <div class="seg" id="window-seg"></div>
+          <span class="dot" id="live-dot" title="auto-refresh"></span>
+          <button class="btn-ghost" id="lock">Lock</button>
+        </div>
+      </header>
+
+      <main class="main">
+        <!-- SLO chips -->
+        <section id="chips" class="chips"></section>
+
+        <!-- KPI cards -->
+        <section id="kpis" class="kpis"></section>
+
+        <!-- charts -->
+        <section class="cards-2">
+          <div class="card">
+            <div class="card-head"><h3>Requests / min</h3><span class="card-sub" id="rpm-sub"></span></div>
+            <div id="chart-requests" class="chart"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Cost vs. saved</h3><span class="card-sub" id="cost-sub"></span></div>
+            <div id="chart-cost" class="chart"></div>
+          </div>
+        </section>
+
+        <!-- breakdowns -->
+        <section class="card">
+          <div class="card-head">
+            <h3>Breakdown</h3>
+            <div class="seg" id="dim-seg"></div>
+          </div>
+          <div id="breakdown" class="table-wrap"></div>
+        </section>
+
+        <!-- routing + billing -->
+        <section class="cards-2">
+          <div class="card">
+            <div class="card-head"><h3>Routing health</h3></div>
+            <div id="routing"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Billing &amp; settlement</h3><span class="card-sub" id="billing-sub"></span></div>
+            <div id="billing"></div>
+          </div>
+        </section>
+
+        <!-- feed + errors -->
+        <section class="cards-2">
+          <div class="card">
+            <div class="card-head"><h3>Live requests</h3><span class="card-sub" id="feed-sub"></span></div>
+            <div id="feed" class="table-wrap tall"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Errors</h3></div>
+            <div id="errors" class="table-wrap tall"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

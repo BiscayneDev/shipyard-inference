@@ -6,7 +6,8 @@ import type {
   LLMStreamEvent,
   LLMStreamOptions,
 } from '../types.js'
-import type { ModelMetadata, ProviderCandidate } from './candidates.js'
+import type { ModelMetadata, ModelTier, ProviderCandidate } from './candidates.js'
+import { inferTier } from './auto-tier.js'
 import type { CacheStore } from './cache.js'
 import { cacheKey } from './cache.js'
 import { responseToStream } from '../stream.js'
@@ -56,6 +57,8 @@ export type RouterEvent =
       savedUsd?: number
       userId?: string
       latencyMs: number
+      /** True when the caller pinned a specific provider/model via `routingHints.pin`. */
+      pinned?: boolean
     }
 
 export interface RouterOptions {
@@ -88,6 +91,14 @@ export interface RouterOptions {
   retry?: RetryPolicy
   /** Max number of candidates to try. Defaults to "try them all". */
   maxRetries?: number
+  /**
+   * Per-request quality floor. When `true`, the router infers a tier from each
+   * request (prompt size, tools, output budget — see `inferTier`) and applies it
+   * as `routingHints.tier`, so selection picks the cheapest model that's *good
+   * enough* rather than the globally cheapest. Pass a function for custom logic.
+   * An explicit `params.routingHints.tier` always overrides this.
+   */
+  autoTier?: boolean | ((params: LLMChatParams) => ModelTier)
 }
 
 /**
@@ -164,6 +175,7 @@ export class Router implements LLMProvider {
             performance.now() - startedAt,
             compressed.metadata?.userId,
             compressed.model,
+            this.isPinned(compressed),
           )
           return res
         } catch (error) {
@@ -264,6 +276,7 @@ export class Router implements LLMProvider {
                 performance.now() - startedAt,
                 compressed.metadata?.userId,
                 compressed.model,
+                this.isPinned(compressed),
               )
             } else {
               committed = true
@@ -336,12 +349,24 @@ export class Router implements LLMProvider {
     }
 
     return this.strategy.select({
-      params,
+      params: this.applyAutoTier(params),
       candidates: this.opts.candidates,
       attempt: 0,
       previousErrors: [],
       pricingOverrides: this.opts.pricingOverrides,
     })
+  }
+
+  /**
+   * Apply the per-request quality floor when `autoTier` is on and the caller
+   * hasn't pinned a tier. Returns params unchanged otherwise.
+   */
+  private applyAutoTier(params: LLMChatParams): LLMChatParams {
+    if (!this.opts.autoTier) return params
+    if (params.routingHints?.tier) return params // explicit tier wins
+    const tier =
+      typeof this.opts.autoTier === 'function' ? this.opts.autoTier(params) : inferTier(params)
+    return { ...params, routingHints: { ...params.routingHints, tier } }
   }
 
   private emit(event: RouterEvent): void {
@@ -373,6 +398,12 @@ export class Router implements LLMProvider {
     await sleep(delayMs)
   }
 
+  /** True when the request pinned a specific provider/model (vs. letting the router pick). */
+  private isPinned(params: LLMChatParams): boolean {
+    const pin = params.routingHints?.pin
+    return Boolean(pin && (pin.model || pin.provider))
+  }
+
   /** Resolve actual + baseline cost from real usage, emit `request_completed`, record telemetry. */
   private recordCompletion(
     decision: RoutingDecision,
@@ -380,6 +411,7 @@ export class Router implements LLMProvider {
     latencyMs: number,
     userId?: string,
     requestedModel?: string,
+    pinned?: boolean,
   ): void {
     const meta =
       decision.meta ??
@@ -410,6 +442,7 @@ export class Router implements LLMProvider {
       savedUsd,
       userId,
       latencyMs,
+      pinned,
     })
     this.opts.usageRecorder?.record({
       candidateId: decision.candidate.id,

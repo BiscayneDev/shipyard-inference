@@ -28,6 +28,7 @@ import {
   costOptimized,
   createUsePodProvider,
   createWalletInference,
+  createTelemetryReporter,
   payboxSigner,
 } from 'shipyard-inference'
 
@@ -173,12 +174,24 @@ const pricingOverrides = Object.fromEntries(
 // race — mirrors the gateway's AsyncLocalStorage approach.
 const als = new AsyncLocalStorage()
 
+// Optional: report every request to a Shipyard Operator command center. Set
+// OPERATOR_URL (+ OPERATOR_TOKEN) and this portal shows up as a `chat-portal`
+// source in the operator dashboard — the one-line drop-in any integration uses.
+const reporter = process.env.OPERATOR_URL
+  ? createTelemetryReporter({
+      url: process.env.OPERATOR_URL,
+      token: process.env.OPERATOR_TOKEN,
+      source: process.env.OPERATOR_SOURCE ?? 'chat-portal',
+    })
+  : undefined
+
 const router = new Router({
   candidates: inference.candidates,
   strategy: costOptimized(),
   baselineModel: BASELINE_MODEL,
   pricingOverrides,
   onEvent: (event) => {
+    reporter?.onEvent(event)
     const ctx = als.getStore()
     if (!ctx) return
     if (event.type === 'route_selected' || event.type === 'route_success') {
@@ -276,6 +289,14 @@ app.post('/api/settle', async (c) => {
   session.spentUsd += amount
   session.pendingUsd = 0
   session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode })
+
+  // Report the settlement to the operator command center (real USDC collected).
+  reporter?.recordSettlement({
+    userId: session.id,
+    amountUsd: amount,
+    status: 'settled',
+    network: process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet',
+  })
 
   return c.json({ settled: amount, wallet: walletSnapshot(session) })
 })

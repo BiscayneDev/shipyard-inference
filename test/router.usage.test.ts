@@ -57,6 +57,25 @@ test('MemoryUsageRecorder aggregates totals and per-model breakdown', async () =
   assert.equal(totals.perModel['m']?.requests, 2)
 })
 
+test('request_completed flags whether the request was pinned', async () => {
+  const events: RouterEvent[] = []
+  const router = new Router({
+    candidates: [
+      candidate('c', usageProvider({ inputTokens: 100, outputTokens: 100 }), [
+        model('m', { inputCostPerMTok: 1, outputCostPerMTok: 1 }),
+      ]),
+    ],
+    onEvent: (e) => events.push(e),
+  })
+
+  await router.chat(chatParams())
+  await router.chat(chatParams({ routingHints: { pin: { model: 'm' } } }))
+
+  const done = events.filter((e) => e.type === 'request_completed') as Completed[]
+  assert.equal(done[0].pinned, false) // auto-routed
+  assert.equal(done[1].pinned, true) // explicitly pinned
+})
+
 test('actualCostUsd is undefined for an unpriced model', async () => {
   const events: RouterEvent[] = []
   const router = new Router({

@@ -13,13 +13,20 @@ function jsonFetch(body: unknown, capture?: (url: string, init?: RequestInit) =>
   }) as unknown as typeof fetch
 }
 
-test('registerUsePod returns the token and deposit code', async () => {
+test('registerUsePod returns the token and deposit code (live `api_token` shape)', async () => {
   const calls: string[] = []
   const account = await registerUsePod({
-    fetch: jsonFetch({ token: 'tok-123', deposit_code: 'deadbeefdeadbeef' }, (u) => calls.push(u)),
+    fetch: jsonFetch({ api_token: 'tok-123', deposit_code: 'deadbeefdeadbeef' }, (u) => calls.push(u)),
   })
   assert.deepEqual(account, { token: 'tok-123', depositCode: 'deadbeefdeadbeef' })
   assert.ok(calls[0]?.endsWith('/v1/register'))
+})
+
+test('registerUsePod also accepts a bare `token` field', async () => {
+  const account = await registerUsePod({
+    fetch: jsonFetch({ token: 'tok-legacy', deposit_code: 'deadbeefdeadbeef' }),
+  })
+  assert.deepEqual(account, { token: 'tok-legacy', depositCode: 'deadbeefdeadbeef' })
 })
 
 test('usePodBalance converts microunits to USDC', async () => {

@@ -21,9 +21,16 @@ export async function registerUsePod(
   if (!res.ok) {
     throw new Error(`[shipyard-inference] UsePod register failed: ${res.status}`)
   }
-  const body = (await res.json()) as { token?: string; deposit_code?: string }
-  if (!body.token || !body.deposit_code) {
+  // The live API returns the token as `api_token`; accept `token` too in case the
+  // surface ever shortens it. Same for the deposit code (`deposit_code`).
+  const body = (await res.json()) as {
+    api_token?: string
+    token?: string
+    deposit_code?: string
+  }
+  const token = body.api_token ?? body.token
+  if (!token || !body.deposit_code) {
     throw new Error('[shipyard-inference] UsePod register returned no token/deposit_code')
   }
-  return { token: body.token, depositCode: body.deposit_code }
+  return { token, depositCode: body.deposit_code }
 }
