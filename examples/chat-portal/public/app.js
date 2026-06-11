@@ -34,6 +34,12 @@ async function init() {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
     if (amt) topUp(Number(amt))
   })
+  $('examples')?.addEventListener('click', (e) => {
+    const prompt = e.target.closest('.example')?.dataset.prompt
+    if (!prompt || state.sending) return
+    $('input').value = prompt
+    onSubmit(new Event('submit'))
+  })
   document.addEventListener('click', (e) => {
     if (!$('model-pick').contains(e.target)) closeModelMenu()
   })
