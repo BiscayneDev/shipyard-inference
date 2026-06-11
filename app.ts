@@ -33,6 +33,8 @@ import {
   createInProcessReporter,
   createOperatorConsole,
 } from './dist/operator/index.js'
+// Landing page HTML, generated from public/index.html by scripts/build-web.mjs.
+import { LANDING_HTML } from './landing.generated.js'
 
 // ---------------------------------------------------------------------------
 // Config from the environment (set in the Vercel project).
@@ -209,6 +211,11 @@ function keepAlive(p: Promise<unknown>): void {
 const app = new Hono()
 app.use('*', cors({ origin: '*' }))
 app.get('/healthz', (c) => c.json({ status: 'ok', source: SOURCE, candidates: candidates.map((c) => c.id), persistent: Boolean(store) }))
+
+// Landing page at `/`. Registered before the operator mount so it wins over the
+// operator's static catch-all (which otherwise serves the dashboard SPA here).
+// The dashboard SPA itself is served from /dashboard/ as static CDN assets.
+app.get('/', (c) => c.html(LANDING_HTML))
 
 // Gateway — flush this request's telemetry to Supabase before the function
 // freezes. (The reporter also auto-flushes on its 2s timer during streaming.)

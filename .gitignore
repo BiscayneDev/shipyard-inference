@@ -11,3 +11,5 @@ public/dashboard/
 .idea/
 *.tgz
 examples/chat-portal/.usepod-fund.json
+.vercel
+landing.generated.ts
