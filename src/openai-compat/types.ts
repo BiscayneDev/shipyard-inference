@@ -31,6 +31,8 @@ export interface OpenAIChatRequest {
   max_completion_tokens?: number
   stream?: boolean
   stream_options?: { include_usage?: boolean }
+  /** Opaque end-user id (OpenAI-standard). Mapped to `metadata.userId` for per-user attribution. */
+  user?: string
 }
 
 export interface OpenAIUsage {

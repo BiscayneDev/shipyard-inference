@@ -72,6 +72,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     onEvent: (event) => {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)
+      // Fire-and-forget: the reporter's bounded queue never throws or blocks.
+      config.telemetry?.onEvent(event)
       config.onEvent?.(event)
     },
   })

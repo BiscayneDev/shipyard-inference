@@ -76,6 +76,9 @@ export function openAIRequestToChatParams(body: OpenAIChatRequest): LLMChatParam
     tools,
     model: body.model,
     maxTokens: body.max_tokens ?? body.max_completion_tokens,
+    // The OpenAI-standard `user` field is the per-end-user attribution key the
+    // operator hub breaks cost/savings down by. Only set metadata when present.
+    ...(body.user ? { metadata: { userId: body.user } } : {}),
   }
 }
 

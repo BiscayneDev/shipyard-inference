@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { startGateway } from './serve.js'
 import type { GatewayConfig } from './config.js'
+import { createTelemetryReporter, type TelemetryReporter } from '../operator/reporter.js'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name)
@@ -32,13 +33,36 @@ async function main(): Promise<void> {
   const portArg = arg('--port')
   if (portArg) config.port = Number(portArg)
 
+  // Auto-wire operator telemetry from the environment, so every app and user
+  // hitting this gateway is captured centrally — no per-app code. A config that
+  // already sets `telemetry` wins; otherwise an operator URL turns it on.
+  let reporter: TelemetryReporter | undefined
+  const operatorUrl = process.env.SHIPYARD_OPERATOR_URL
+  if (operatorUrl && !config.telemetry) {
+    reporter = createTelemetryReporter({
+      url: operatorUrl,
+      token: process.env.SHIPYARD_TELEMETRY_TOKEN,
+      source: process.env.SHIPYARD_GATEWAY_SOURCE ?? 'gateway',
+      onError: (err) => console.warn('[shipyard-gateway] telemetry delivery failed:', err),
+    })
+    config.telemetry = reporter
+  }
+
   const { port, close } = startGateway(config)
   console.log(`shipyard-gateway listening on http://localhost:${port}`)
   console.log(`  candidates: ${config.candidates.map((c) => c.id).join(', ')}`)
+  if (reporter) {
+    console.log(
+      `  telemetry → ${operatorUrl} (source: ${process.env.SHIPYARD_GATEWAY_SOURCE ?? 'gateway'})`,
+    )
+  }
 
   const shutdown = (signal: string) => {
     console.log(`\n${signal} received — shutting down`)
-    void close().then(() => process.exit(0))
+    // Flush queued telemetry before the process exits so the tail isn't lost.
+    void Promise.resolve(reporter?.close())
+      .then(() => close())
+      .then(() => process.exit(0))
   }
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))

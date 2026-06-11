@@ -129,6 +129,22 @@ It's fire-and-forget — a bounded queue and best-effort delivery, so it can nev
 throw into, or slow the inference hot path. For an in-process gateway, skip the HTTP with
 `createInProcessReporter(hub, 'gateway')`.
 
+**Capture every app automatically (no per-app wiring).** Most apps reach Shipyard through
+the OpenAI-compatible gateway, so the gateway captures all of it centrally — just point it
+at the hub with env vars and every request through it is reported:
+
+```bash
+SHIPYARD_OPERATOR_URL=http://localhost:8799 \
+SHIPYARD_TELEMETRY_TOKEN=ingest \
+SHIPYARD_GATEWAY_SOURCE=gateway-prod \
+npx shipyard-gateway --config ./gateway.config.mjs
+```
+
+Per-end-user attribution comes for free: the standard OpenAI `user` field on a request is
+mapped to `userId`, so the hub breaks cost/savings down per person across every app. To wire
+telemetry programmatically instead, pass a reporter on the gateway config:
+`createGatewayApp({ candidates, telemetry: createTelemetryReporter({ url, source }) })`.
+
 **Run the hub** (its own home — `shipyard-inference/operator` keeps the root import
 server-free):
 

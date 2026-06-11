@@ -3,6 +3,7 @@ import type { RoutingStrategy } from '../router/strategy.js'
 import type { RouterEvent } from '../router/router.js'
 import type { CacheStore } from '../router/cache.js'
 import type { UsageRecorder } from '../router/usage.js'
+import type { TelemetryReporter } from '../operator/reporter.js'
 
 export interface GatewayModel {
   id: string
@@ -19,6 +20,14 @@ export interface GatewayConfig {
   usageRecorder?: UsageRecorder
   /** Additional observability hook, composed with the gateway's own capture. */
   onEvent?: (event: RouterEvent) => void
+  /**
+   * Operator telemetry reporter. When set, every routing decision, completion,
+   * failover, retry, error, and cache event flows to the operator hub — so all
+   * traffic through this gateway is captured centrally without per-app wiring.
+   * Build one with `createTelemetryReporter({ url, source })`; the gateway owns
+   * its `onEvent` but the caller owns its lifecycle (`flush`/`close`).
+   */
+  telemetry?: TelemetryReporter
   /** Static bearer keys. Empty/omitted ⇒ auth disabled (dev only; logs a warning). */
   apiKeys?: string[]
   cors?: { origins: string[] | '*' }
