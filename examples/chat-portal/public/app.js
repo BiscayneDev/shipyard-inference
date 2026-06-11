@@ -10,6 +10,8 @@ const state = {
   catalog: [],
   baselineModel: 'baseline',
   sending: false,
+  inferenceMode: 'demo', // 'demo' (mock) | 'production' (real wallet-funded)
+  productionAvailable: false,
 }
 
 // A representative chat blend (input-heavy context, output-heavy answer) so the
@@ -31,6 +33,9 @@ async function init() {
   $('composer').addEventListener('submit', onSubmit)
   $('new-chat').addEventListener('click', resetChat)
   $('model-trigger').addEventListener('click', toggleModelMenu)
+  for (const b of document.querySelectorAll('.infmode-opt')) {
+    b.addEventListener('click', () => setInferenceMode(b.dataset.infmode))
+  }
   $('topup-toggle').addEventListener('click', () => $('topup').classList.toggle('hidden'))
   $('topup').addEventListener('click', (e) => {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
@@ -57,17 +62,46 @@ async function init() {
 
 async function loadModels() {
   try {
-    const { models, baselineModel, mode } = await (await fetch('/api/models')).json()
+    const res = await fetch(`/api/models?mode=${state.inferenceMode}`)
+    const { models, baselineModel, backend, productionAvailable } = await res.json()
     state.catalog = models
     state.baselineModel = baselineModel
+    state.productionAvailable = !!productionAvailable
     $('baseline-name').textContent = baselineModel
-    setModeBadge(mode)
+    setModeBadge(backend)
+    applyInferenceModeUI()
     renderModelMenu()
     selectModel(state.model, { silent: true })
   } catch {
     state.catalog = [{ id: 'auto', label: 'Auto — cheapest capable', tier: 'auto' }]
     renderModelMenu()
   }
+}
+
+// Reflect the inference-mode toggle: highlight the active option and disable
+// Production when the server has no production backend configured.
+function applyInferenceModeUI() {
+  const prodBtn = $('infmode-prod')
+  if (prodBtn) {
+    prodBtn.disabled = !state.productionAvailable
+    prodBtn.title = state.productionAvailable
+      ? 'Real wallet-funded inference'
+      : 'Set USEPOD_TOKEN (or a Paybox/x402 backend) to enable production'
+  }
+  for (const b of document.querySelectorAll('.infmode-opt')) {
+    b.classList.toggle('active', b.dataset.infmode === state.inferenceMode)
+  }
+}
+
+// Switch demo ⇄ production: reload that backend's model catalog + baseline and
+// reset to Auto (model ids differ per backend).
+async function setInferenceMode(mode) {
+  if (mode === 'production' && !state.productionAvailable) return
+  if (mode === state.inferenceMode) return
+  state.inferenceMode = mode
+  state.model = 'auto'
+  applyInferenceModeUI()
+  await loadModels()
 }
 
 function setModeBadge(mode) {
@@ -327,6 +361,7 @@ async function runTurn() {
 
   state.sending = true
   setSending(true)
+  clearPlacement() // drop any stale sponsored line before this turn's wait
 
   let acc = ''
   try {
@@ -337,6 +372,7 @@ async function runTurn() {
         messages: state.messages,
         model: state.model,
         sessionId: state.sessionId,
+        mode: state.inferenceMode,
       }),
     })
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
@@ -357,6 +393,12 @@ async function runTurn() {
         renderActions(assistant)
         if (meta.wallet) applyWallet(meta.wallet)
         await settle(assistant)
+      } else if (evt === 'placement') {
+        // Tender side channel: render the sponsored line in chrome, OUTSIDE the
+        // message bubble — never appended to `acc` / the model output.
+        renderPlacement(JSON.parse(data))
+      } else if (evt === 'placement_clear') {
+        clearPlacement()
       } else if (evt === 'error') {
         contentEl.innerHTML = renderMarkdown(acc)
         renderError(assistant, JSON.parse(data).message)
@@ -605,4 +647,24 @@ async function readSSE(stream, onEvent) {
       await onEvent(event, data)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tender — render a won placement in surface chrome (a slim bar above the
+// composer), structurally separate from the message thread. The sponsored line
+// is NEVER part of the assistant message content; it arrives on its own SSE
+// event and lives in its own DOM region. A "click" = opening endpointUrl.
+// ---------------------------------------------------------------------------
+function renderPlacement(p) {
+  const bar = $('placement-bar')
+  if (!bar || !p || !p.line) return
+  $('placement-line').textContent = p.line
+  const cta = $('placement-cta')
+  cta.href = p.endpointUrl || '#'
+  cta.dataset.placementId = p.placementId || ''
+  bar.classList.remove('hidden')
+}
+
+function clearPlacement() {
+  $('placement-bar')?.classList.add('hidden')
 }

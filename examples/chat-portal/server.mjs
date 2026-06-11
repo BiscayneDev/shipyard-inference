@@ -36,6 +36,8 @@ import {
   buildUsePodDepositTx,
   submitSolanaTransaction,
   usePodBalance,
+  observeWaitWindow,
+  Auction,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -90,7 +92,7 @@ function mockProvider() {
 // pricing metadata (what `costOptimized` ranks on and the savings baseline is
 // priced against) — but never a raw provider key. Wallet-funded, end to end.
 // ---------------------------------------------------------------------------
-async function buildInference() {
+async function buildProductionInference() {
   // Mode — Paybox x402 (advanced): pay for inference *per request* over x402,
   // from a non-custodial Paybox wallet, against a true x402 inference endpoint.
   // This is the ONLY mode that needs an x402 endpoint — most setups don't. The
@@ -161,8 +163,16 @@ async function buildInference() {
     }
   }
 
-  // Mode A — demo (default): mock provider, two tiers so routing + savings have
-  // something to show. Recognizably a stub; bills nothing.
+  // No production backend configured (no x402 endpoint, no Paybox-funded UsePod,
+  // no USEPOD_TOKEN). The portal still runs — Demo mode is always available.
+  return null
+}
+
+// Mode A — demo: a built-in mock provider, two tiers so routing + savings have
+// something to show. Recognizably a stub; bills nothing. ALWAYS available, so the
+// portal can offer a Demo ⇄ Production toggle (default Demo — no real spend until
+// you flip).
+function buildDemoInference() {
   const models = [
     { model: 'shipyard-economy', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 128000, tier: 'economy', capabilities: ['tools'] },
     { model: 'shipyard-standard', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
@@ -176,35 +186,14 @@ async function buildInference() {
   }
 }
 
-const inference = await buildInference()
-const BASELINE_MODEL = process.env.PORTAL_BASELINE_MODEL ?? inference.baselineModel
-
-// model id -> candidate id, so a pinned pick routes to the provider that serves it.
-const modelToCandidate = new Map()
-for (const c of inference.candidates) {
-  for (const m of c.models ?? []) modelToCandidate.set(m.model, c.id)
-}
-
-// The flat catalog the picker renders (plus the synthetic "auto" entry).
-const modelCatalog = [
-  { id: 'auto', label: 'Auto — cheapest capable', provider: 'shipyard', tier: 'auto' },
-  ...inference.candidates.flatMap((c) =>
-    (c.models ?? []).map((m) => ({
-      id: m.model,
-      label: m.model,
-      provider: c.id,
-      tier: m.tier,
-      inputCostPerMTok: m.inputCostPerMTok,
-      outputCostPerMTok: m.outputCostPerMTok,
-    })),
-  ),
-]
-
-// Pricing the Router can look up by model id. The baseline is priced via this
-// table (not the candidate `models[]`), so the savings model must live here too.
-const pricingOverrides = Object.fromEntries(
-  inference.candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
-)
+// Build BOTH inference backends so the portal can switch at runtime: a mock demo
+// backend (always) and the real production backend (when env configures one). The
+// UI toggles per request; default is Demo — no real spend until you flip. The
+// `inference` alias is the production backing for funding/settlement/network.
+const prodInference = await buildProductionInference()
+const demoInference = buildDemoInference()
+const productionAvailable = Boolean(prodInference)
+const inference = prodInference ?? demoInference
 
 // Per-request telemetry capture (model/provider/cost/savings) without a global
 // race — mirrors the gateway's AsyncLocalStorage approach.
@@ -239,13 +228,42 @@ function routerOnEvent(event) {
   }
 }
 
-const router = new Router({
-  candidates: inference.candidates,
-  strategy: costOptimized(),
-  baselineModel: BASELINE_MODEL,
-  pricingOverrides,
-  onEvent: routerOnEvent,
-})
+// One self-contained runtime per backend: its router, the catalog the picker
+// renders, pricing for the savings baseline, and the model→candidate pin map.
+function buildRuntime(inf) {
+  const baselineModel = process.env.PORTAL_BASELINE_MODEL ?? inf.baselineModel
+  const modelToCandidate = new Map()
+  for (const c of inf.candidates) for (const m of c.models ?? []) modelToCandidate.set(m.model, c.id)
+  const modelCatalog = [
+    { id: 'auto', label: 'Auto — cheapest capable', provider: 'shipyard', tier: 'auto' },
+    ...inf.candidates.flatMap((c) =>
+      (c.models ?? []).map((m) => ({
+        id: m.model,
+        label: m.model,
+        provider: c.id,
+        tier: m.tier,
+        inputCostPerMTok: m.inputCostPerMTok,
+        outputCostPerMTok: m.outputCostPerMTok,
+      })),
+    ),
+  ]
+  const pricingOverrides = Object.fromEntries(
+    inf.candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
+  )
+  const router = new Router({
+    candidates: inf.candidates,
+    strategy: costOptimized(),
+    baselineModel,
+    pricingOverrides,
+    onEvent: routerOnEvent,
+  })
+  return { mode: inf.mode, baselineModel, modelToCandidate, modelCatalog, router }
+}
+
+const demoRT = buildRuntime(demoInference)
+const prodRT = prodInference ? buildRuntime(prodInference) : null
+// Map the UI toggle ('demo' | 'production') to a runtime; default Demo.
+const runtimeFor = (m) => (m === 'production' && prodRT ? prodRT : demoRT)
 
 // Catalog of models a per-session UsePod token serves (bring-your-own-wallet).
 const USEPOD_SESSION_MODELS = [
@@ -342,15 +360,20 @@ function walletSnapshot(session) {
 const app = new Hono()
 app.use('/api/*', cors())
 
-app.get('/api/models', (c) =>
-  c.json({
-    models: modelCatalog,
-    baselineModel: BASELINE_MODEL,
-    mode: inference.mode,
+app.get('/api/models', (c) => {
+  // The picker + savings baseline are per inference mode (?mode=demo|production).
+  const wantProd = c.req.query('mode') === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+  return c.json({
+    models: rt.modelCatalog,
+    baselineModel: rt.baselineModel,
+    inferenceMode: wantProd ? 'production' : 'demo', // the toggle state served
+    backend: rt.mode, // demo | usepod | paybox — what actually serves
+    productionAvailable,
     network: inference.network,
     payer: inference.payer,
-  }),
-)
+  })
+})
 
 app.post('/api/wallet/connect', async (c) => {
   const body = await c.req.json().catch(() => ({}))
@@ -562,26 +585,92 @@ app.post('/api/wallet/deposit/submit', async (c) => {
   }
 })
 
+// ── Tender — idle-attention placements on the request wait state ─────────────
+// Seeded campaigns (config-first; no self-serve dashboard in v1). Each line is a
+// marketplace x402 listing; a "click" = the agent actually calling endpointUrl.
+const tenderAuction = new Auction([
+  {
+    campaignId: 'demo-vercel',
+    placementId: 'vercel-deploy',
+    advertiserWallet: 'TenderAdVerce1111111111111111111111111111111',
+    endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy',
+    line: '🛰️  Ship this to prod — one-call Vercel deploy on Shipyard Market',
+    usdcPerImpression: 0.005,
+    remainingImpressions: 1000,
+    fundedUsdc: 5,
+    targeting: {},
+  },
+  {
+    campaignId: 'demo-embed',
+    placementId: 'nomic-embed',
+    advertiserWallet: 'TenderAdEmbed22222222222222222222222222222222',
+    endpointUrl: 'https://api.shipyard.market/x402/nomic-embed',
+    line: '⚡  Add semantic search — Nomic embeddings, pay-per-call USDC',
+    usdcPerImpression: 0.002,
+    remainingImpressions: 1000,
+    fundedUsdc: 2,
+    targeting: {},
+  },
+])
+const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
+
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !Array.isArray(body.messages)) {
     return c.json({ error: '`messages` is required' }, 400)
   }
 
-  const params = toChatParams(body)
+  // Inference mode toggle (default Demo). Production routes to the real backend
+  // when one is configured; otherwise it falls back to Demo.
+  const wantProd = body.mode === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+  const params = toChatParams(body, rt.modelToCandidate)
   const session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (session) params.metadata = { userId: session.id }
-  // Bring-your-own-wallet sessions route through the user's own UsePod token.
-  const activeRouter = session?.usepod?.router ?? router
+  // Production bring-your-own-wallet sessions route through the user's own UsePod
+  // token; otherwise the selected mode's shared router.
+  const activeRouter = wantProd ? (session?.usepod?.router ?? rt.router) : rt.router
 
   return streamSSE(c, async (stream) => {
     const controller = new AbortController()
     stream.onAbort(() => controller.abort())
     const ctx = {}
 
+    // Tender — a thin portal surface. It paints a won placement into UI chrome
+    // via a side-channel SSE event; it is NEVER spliced into the `delta` stream
+    // (the placement invariant). The wait observer below holds no stream writer.
+    const requestId = `req-${randomBytes(8).toString('hex')}`
+    const surface = {
+      id: 'portal-ide',
+      async render(placement) {
+        await stream.writeSSE({ event: 'placement', data: JSON.stringify(placement) })
+      },
+      async clear(rid) {
+        await stream.writeSSE({ event: 'placement_clear', data: JSON.stringify({ requestId: rid }) })
+      },
+    }
+    const tenderCtx = {
+      requestId,
+      surfaceId: surface.id,
+      model: body.model && body.model !== 'auto' ? body.model : undefined,
+      agentic: Array.isArray(body.tools) && body.tools.length > 0,
+      userWallet: session?.address,
+      userId: session?.id,
+    }
+
     try {
       await als.run(ctx, async () => {
-        for await (const event of activeRouter.chatStream(params, { signal: controller.signal })) {
+        const observed = observeWaitWindow(
+          activeRouter.chatStream(params, { signal: controller.signal }),
+          {
+            onWaitWindow: async () => {
+              const placement = tenderAuction.select(tenderCtx)
+              if (placement) await surface.render(placement, tenderCtx)
+            },
+          },
+          { minWaitMs: TENDER_MIN_WAIT_MS },
+        )
+        for await (const event of observed) {
           if (event.type === 'text_delta') {
             await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: event.text }) })
           }
@@ -632,7 +721,7 @@ app.post('/api/chat', async (c) => {
 
 // Convert the browser's OpenAI-ish payload into LLMChatParams. System messages
 // fold into `system`; a non-"auto" model pins to the candidate that serves it.
-function toChatParams(body) {
+function toChatParams(body, modelToCandidate) {
   const system = []
   const messages = []
   for (const m of body.messages) {
@@ -688,8 +777,14 @@ const MODE_NOTE = {
 }
 serve({ fetch: app.fetch, port: PORT })
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
-console.log(`  inference: ${inference.mode}  (${MODE_NOTE[inference.mode] ?? ''})`)
-if (inference.mode === 'paybox') {
-  console.log(`  paybox:    ${inference.payer} · ${inference.network}`)
+console.log(
+  `  inference: demo (mock)` +
+    (productionAvailable
+      ? ` ⇄ ${prodInference.mode} (production) — UI toggle, default demo`
+      : ` only — production not configured`),
+)
+if (productionAvailable) console.log(`             production: ${MODE_NOTE[prodInference.mode] ?? ''}`)
+if (prodInference?.mode === 'paybox') {
+  console.log(`  paybox:    ${prodInference.payer} · ${prodInference.network}`)
 }
-console.log(`  baseline:  ${BASELINE_MODEL} · margin: ${(MARGIN * 100).toFixed(0)}%`)
+console.log(`  baseline:  ${demoRT.baselineModel} (demo) · margin: ${(MARGIN * 100).toFixed(0)}%`)

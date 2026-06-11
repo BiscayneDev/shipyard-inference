@@ -86,6 +86,11 @@
             <div class="model-menu hidden" id="model-menu" role="listbox"></div>
           </div>
           <span class="mode-badge" id="mode-badge" title=""></span>
+          <div class="infmode" id="infmode" role="group" aria-label="Inference mode">
+            <button type="button" class="infmode-opt active" data-infmode="demo">Demo</button>
+            <button type="button" class="infmode-opt" data-infmode="production" id="infmode-prod"
+              title="Real wallet-funded inference">Production</button>
+          </div>
           <button class="btn ghost" id="new-chat">New chat</button>
         </header>
 
@@ -115,6 +120,14 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Tender: sponsored placement chrome. Rendered OUTSIDE the message
+             thread and the model context window — surface chrome only. -->
+        <div class="placement-bar hidden" id="placement-bar" role="complementary" aria-label="Sponsored placement">
+          <span class="placement-tag">Sponsored</span>
+          <span class="placement-line" id="placement-line"></span>
+          <a class="placement-cta" id="placement-cta" href="#" target="_blank" rel="noreferrer noopener">Open ↗</a>
         </div>
 
         <div class="composer-wrap">
