@@ -7,32 +7,50 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div class="aurora" aria-hidden="true"></div>
+
     <div class="app">
       <aside class="sidebar">
         <div class="brand">
           <span class="logo">⚓</span>
-          <div>
+          <div class="brand-text">
             <div class="brand-name">Shipyard</div>
             <div class="brand-sub">inference portal</div>
           </div>
         </div>
 
         <section class="wallet" id="wallet">
-          <button class="btn primary" id="connect">Connect wallet</button>
+          <div class="connect" id="connect-panel">
+            <button class="btn primary block wallet-choice" data-wallet="paybox">
+              <span class="wc-icon">◈</span> Connect Paybox
+            </button>
+            <div class="connect-sub">Shipyard's USDC smart account — funds inference per request, no provider API key.</div>
+            <div class="connect-or"><span>or connect an existing wallet</span></div>
+            <div class="wallet-options">
+              <button class="btn ghost wallet-choice" data-wallet="phantom"><span class="wc-icon">👻</span> Phantom</button>
+              <button class="btn ghost wallet-choice" data-wallet="metamask"><span class="wc-icon">🦊</span> MetaMask</button>
+            </div>
+            <div class="connect-status" id="connect-note"></div>
+          </div>
           <div class="wallet-card hidden" id="wallet-card">
-            <div class="wallet-row">
-              <span class="muted">Wallet</span>
-              <span class="mono addr" id="addr" title=""></span>
+            <div class="wallet-head">
+              <span class="wallet-label" id="wallet-label">Paybox · smart account</span>
+              <span class="pill" id="mode-pill">demo</span>
             </div>
-            <div class="wallet-row">
-              <span class="muted">Balance</span>
-              <span class="mono" id="balance">—</span>
+            <div class="wallet-addr mono addr" id="addr" title=""></div>
+            <div class="wallet-balance">
+              <span class="mono" id="balance">$0.00</span>
+              <button class="btn ghost tiny" id="topup-toggle">+ Top up</button>
             </div>
-            <div class="wallet-row">
+            <div class="wallet-sub">
               <span class="muted">Pending</span>
-              <span class="mono" id="pending">—</span>
+              <span class="mono" id="pending">$0.000000</span>
             </div>
-            <span class="pill" id="mode-pill">demo</span>
+            <div class="topup hidden" id="topup">
+              <button class="btn ghost tiny topup-amt" data-amt="5">+$5</button>
+              <button class="btn ghost tiny topup-amt" data-amt="10">+$10</button>
+              <button class="btn ghost tiny topup-amt" data-amt="25">+$25</button>
+            </div>
           </div>
         </section>
 
@@ -40,48 +58,73 @@
           <div class="savings-title">Session savings</div>
           <div class="savings-big" id="saved-total">$0.000000</div>
           <div class="savings-meta">
-            <span><span id="saved-pct">0</span>% saved vs <span class="mono" id="baseline-name">baseline</span></span>
+            <span id="saved-pct">0</span>% saved vs <span class="mono" id="baseline-name">baseline</span>
           </div>
           <div class="savings-grid">
-            <div><div class="muted">Spent</div><div class="mono" id="spent-total">$0.00</div></div>
-            <div><div class="muted">Baseline</div><div class="mono" id="baseline-total">$0.00</div></div>
-            <div><div class="muted">Messages</div><div class="mono" id="msg-total">0</div></div>
+            <div><div class="cell-k">Spent</div><div class="mono cell-v" id="spent-total">$0.00</div></div>
+            <div><div class="cell-k">Baseline</div><div class="mono cell-v" id="baseline-total">$0.00</div></div>
+            <div><div class="cell-k">Messages</div><div class="mono cell-v" id="msg-total">0</div></div>
           </div>
         </section>
 
-        <div class="sidebar-foot muted">
-          Routes to the cheapest capable model and meters real token cost.
+        <div class="sidebar-foot">
+          Routes every prompt to the cheapest capable model and meters real token cost.
           <a href="https://github.com/BiscayneDev/shipyard-inference" target="_blank" rel="noreferrer">Learn more →</a>
         </div>
       </aside>
 
       <main class="chat">
         <header class="topbar">
-          <label class="model-pick">
-            <span class="muted">Model</span>
-            <select id="model"></select>
-          </label>
+          <div class="model-pick" id="model-pick">
+            <button class="model-trigger" id="model-trigger" aria-haspopup="listbox" aria-expanded="false">
+              <span class="model-trigger-label" id="model-trigger-label">Auto — cheapest capable</span>
+              <span class="caret">▾</span>
+            </button>
+            <div class="model-menu hidden" id="model-menu" role="listbox"></div>
+          </div>
           <span class="mode-badge" id="mode-badge" title=""></span>
           <button class="btn ghost" id="new-chat">New chat</button>
         </header>
 
         <div class="thread" id="thread">
           <div class="empty" id="empty">
-            <div class="empty-logo">⚓</div>
-            <h1>Frontier models, for less</h1>
-            <p>Shipyard routes every prompt to the cheapest capable model and pays from your
-               wallet — so you get the same answer for a smaller bill. Each reply shows what
-               it cost and what you saved.</p>
+            <div class="empty-mark">⚓</div>
+            <h1>Frontier models, <span class="grad">for less</span></h1>
+            <p>Shipyard routes every prompt to the cheapest capable model and pays from
+               your wallet — the same answer for a smaller bill. Each reply shows exactly
+               what it cost and what you saved.</p>
+            <div class="examples" id="examples">
+              <button class="example" data-prompt="Explain how x402 micropayments work, with a diagram in code.">
+                <span class="example-k">Explain</span>
+                How x402 micropayments work
+              </button>
+              <button class="example" data-prompt="Write a TypeScript function that retries a fetch with exponential backoff.">
+                <span class="example-k">Write code</span>
+                A retry-with-backoff helper in TypeScript
+              </button>
+              <button class="example" data-prompt="Compare prepaid balances vs pay-per-request billing for AI inference.">
+                <span class="example-k">Compare</span>
+                Prepaid vs pay-per-request billing
+              </button>
+              <button class="example" data-prompt="Draft a short product tagline for a wallet-funded AI gateway.">
+                <span class="example-k">Brainstorm</span>
+                Taglines for a wallet-funded gateway
+              </button>
+            </div>
           </div>
         </div>
 
-        <form class="composer" id="composer">
-          <textarea id="input" rows="1" placeholder="Message Shipyard…" autocomplete="off"></textarea>
-          <button class="btn primary send" id="send" type="submit" aria-label="Send">↑</button>
-        </form>
+        <div class="composer-wrap">
+          <form class="composer" id="composer">
+            <textarea id="input" rows="1" placeholder="Message Shipyard…" autocomplete="off"></textarea>
+            <button class="btn primary send" id="send" type="submit" aria-label="Send">↑</button>
+          </form>
+          <div class="composer-hint">Wallet-funded · routed to the cheapest capable model · metered to the token</div>
+        </div>
       </main>
     </div>
 
+    <script src="./wallet-bundle.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

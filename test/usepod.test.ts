@@ -1,7 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { registerUsePod, usePodBalance, createUsePodProvider } from '../src/index.js'
+import { registerUsePod, usePodBalance, createUsePodProvider, depositUsdcWithSigner, buildUsePodDepositTx } from '../src/index.js'
 import { chatParams } from './helpers.js'
+
+const fakeSigner = {
+  publicKey: '11111111111111111111111111111111',
+  async signTransaction(tx: Uint8Array) {
+    return tx
+  },
+}
 
 function jsonFetch(body: unknown, capture?: (url: string, init?: RequestInit) => void): typeof fetch {
   return (async (url: unknown, init?: RequestInit) => {
@@ -13,13 +20,20 @@ function jsonFetch(body: unknown, capture?: (url: string, init?: RequestInit) =>
   }) as unknown as typeof fetch
 }
 
-test('registerUsePod returns the token and deposit code', async () => {
+test('registerUsePod returns the token and deposit code (live `api_token` shape)', async () => {
   const calls: string[] = []
   const account = await registerUsePod({
-    fetch: jsonFetch({ token: 'tok-123', deposit_code: 'deadbeefdeadbeef' }, (u) => calls.push(u)),
+    fetch: jsonFetch({ api_token: 'tok-123', deposit_code: 'deadbeefdeadbeef' }, (u) => calls.push(u)),
   })
   assert.deepEqual(account, { token: 'tok-123', depositCode: 'deadbeefdeadbeef' })
   assert.ok(calls[0]?.endsWith('/v1/register'))
+})
+
+test('registerUsePod also accepts a bare `token` field', async () => {
+  const account = await registerUsePod({
+    fetch: jsonFetch({ token: 'tok-legacy', deposit_code: 'deadbeefdeadbeef' }),
+  })
+  assert.deepEqual(account, { token: 'tok-legacy', depositCode: 'deadbeefdeadbeef' })
 })
 
 test('usePodBalance converts microunits to USDC', async () => {
@@ -79,4 +93,29 @@ test('createUsePodProvider (anthropic) keeps the base at /proxy/<token>', async 
   })
   await provider.chat(chatParams())
   assert.ok(url.includes('/proxy/tok/v1/messages'), url)
+})
+
+test('depositUsdcWithSigner rejects a non-positive amount before touching the chain', async () => {
+  await assert.rejects(
+    () => depositUsdcWithSigner({ signer: fakeSigner, depositCode: 'deadbeefdeadbeef', amountUsdc: 0 }),
+    /amountUsdc > 0/,
+  )
+})
+
+test('depositUsdcWithSigner rejects a malformed deposit code', async () => {
+  await assert.rejects(
+    () => depositUsdcWithSigner({ signer: fakeSigner, depositCode: 'nothex', amountUsdc: 5 }),
+    /16 hex chars/,
+  )
+})
+
+test('buildUsePodDepositTx validates amount + deposit code before any chain access', async () => {
+  await assert.rejects(
+    () => buildUsePodDepositTx({ payer: fakeSigner.publicKey, depositCode: 'deadbeefdeadbeef', amountUsdc: -1 }),
+    /amountUsdc > 0/,
+  )
+  await assert.rejects(
+    () => buildUsePodDepositTx({ payer: fakeSigner.publicKey, depositCode: 'zzz', amountUsdc: 5 }),
+    /16 hex chars/,
+  )
 })

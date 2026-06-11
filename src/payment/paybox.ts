@@ -198,7 +198,18 @@ export async function payboxSigner(
         } as Parameters<PayboxClient['requestWalletSign']>[0]),
         options,
       )
-      const signed = response.output?.value
+      // In-process signing returns the artifact on output.value. For a Solana tx
+      // that's `{ signedTransactionBase64 }` (an object); for some surfaces it's a
+      // bare base64 string. Accept both.
+      const out = response.output?.value
+      const signed =
+        typeof out === 'string'
+          ? out
+          : out &&
+              typeof out === 'object' &&
+              typeof (out as { signedTransactionBase64?: unknown }).signedTransactionBase64 === 'string'
+            ? (out as { signedTransactionBase64: string }).signedTransactionBase64
+            : undefined
       if (typeof signed !== 'string') {
         throw new PaymentError(
           `Paybox wallet sign ${response.request_id} returned no signed transaction`,

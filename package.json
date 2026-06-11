@@ -1,6 +1,6 @@
 {
   "name": "shipyard-inference",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "The always-available inference layer for the Shipyard stack: streaming, cost-aware routing, x402-on-Solana payments, and a drop-in OpenAI-compatible gateway over Anthropic, OpenAI, UsePod, and Nous/Hermes.",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,10 +13,15 @@
     "./gateway": {
       "import": "./dist/gateway/index.js",
       "types": "./dist/gateway/index.d.ts"
+    },
+    "./operator": {
+      "import": "./dist/operator/index.js",
+      "types": "./dist/operator/index.d.ts"
     }
   },
   "bin": {
-    "shipyard-gateway": "./dist/gateway/bin.js"
+    "shipyard-gateway": "./dist/gateway/bin.js",
+    "shipyard-operator": "./dist/operator/bin.js"
   },
   "files": [
     "dist",
@@ -24,11 +29,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "rm -rf dist/operator/public && cp -R src/operator/public dist/operator/public",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx test/*.test.ts",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run clean && npm run build",
+    "build:portal-wallet": "esbuild examples/chat-portal/public/src/wallet.js --bundle --format=iife --target=es2020 --minify --outfile=examples/chat-portal/public/wallet-bundle.js"
   },
   "keywords": [
     "shipyard",
@@ -62,6 +69,7 @@
     "openai": "^6.32.0"
   },
   "peerDependencies": {
+    "@coral-xyz/anchor": "^0.30 || ^0.31 || ^0.32",
     "@hono/node-server": "^1 || ^2",
     "@paybox-sh/sdk": "^0.1.0",
     "@solana/spl-token": "^0.4.0",
@@ -83,14 +91,20 @@
     },
     "@hono/node-server": {
       "optional": true
+    },
+    "@coral-xyz/anchor": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@hono/node-server": "^2.0.4",
     "@paybox-sh/sdk": "^0.1.0",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "@types/node": "^20",
+    "@vercel/functions": "^3.7.0",
+    "esbuild": "^0.28.0",
     "hono": "^4.12.25",
     "tsx": "^4.19.0",
     "typescript": "^5"

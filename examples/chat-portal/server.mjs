@@ -28,7 +28,14 @@ import {
   costOptimized,
   createUsePodProvider,
   createWalletInference,
+  createTelemetryReporter,
   payboxSigner,
+  payboxSettle,
+  registerUsePod,
+  depositUsdcWithSigner,
+  buildUsePodDepositTx,
+  submitSolanaTransaction,
+  usePodBalance,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -84,26 +91,56 @@ function mockProvider() {
 // priced against) — but never a raw provider key. Wallet-funded, end to end.
 // ---------------------------------------------------------------------------
 async function buildInference() {
-  // Mode C — x402: pay per request from a Solana wallet against a true x402
-  // inference endpoint. The connected wallet (Paybox/keypair) IS the funding.
-  if (process.env.SHIPYARD_X402_URL && process.env.PAYBOX_CREDENTIAL_ID) {
+  // Mode — Paybox x402 (advanced): pay for inference *per request* over x402,
+  // from a non-custodial Paybox wallet, against a true x402 inference endpoint.
+  // This is the ONLY mode that needs an x402 endpoint — most setups don't. The
+  // far simpler real path is UsePod inference + Paybox *settlement* (below), which
+  // is how Dock runs and needs no endpoint at all. Only entered when an endpoint
+  // is actually configured; otherwise Paybox is used purely for settlement.
+  const x402Url = process.env.SHIPYARD_X402_URL ?? process.env.USEPOD_X402_URL
+  if (x402Url && process.env.PAYBOX_CREDENTIAL_ID) {
+    const baseURL = x402Url
+    const network = process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet'
+    const family = process.env.SHIPYARD_X402_FAMILY === 'openai' ? 'openai' : 'anthropic'
     const models = [
-      { model: 'shipyard-economy', inputCostPerMTok: 0.6, outputCostPerMTok: 1.2, contextWindow: 128000, tier: 'economy', capabilities: ['tools'] },
-      { model: 'shipyard-standard', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
+      { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
+      { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
     ]
-    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID })
-    const wi = await createWalletInference({
-      signer,
-      baseURL: process.env.SHIPYARD_X402_URL,
-      network: process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet',
-      family: process.env.SHIPYARD_X402_FAMILY === 'anthropic' ? 'anthropic' : 'openai',
-      models,
-    })
+    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network })
+    const wi = await createWalletInference({ signer, baseURL, network, family, models })
     return {
-      mode: 'x402',
-      candidates: [{ id: 'x402', provider: wi.provider, models }],
-      baselineModel: 'shipyard-standard',
+      mode: 'paybox',
+      candidates: [{ id: 'paybox', provider: wi.provider, models }],
+      baselineModel: 'claude-sonnet-4-5',
+      payer: signer.publicKey,
+      network,
       close: wi.close,
+    }
+  }
+
+  // Mode — Paybox-funded UsePod: a funded, non-custodial Paybox wallet provisions
+  // a UsePod token and tops it up on-chain (depositUsdcWithSigner — no raw key,
+  // no x402 endpoint). Inference then runs off that prepaid USDC balance. This is
+  // the "a funded Paybox account powers the UsePod side" path. Opt in with
+  // PAYBOX_FUND_USEPOD=1. UsePod's deposit program is mainnet — real USDC.
+  if (process.env.PAYBOX_CREDENTIAL_ID && process.env.PAYBOX_FUND_USEPOD && !process.env.USEPOD_TOKEN) {
+    const network = process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet'
+    const signer = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network })
+    const account = await registerUsePod() // { token, depositCode } — funds via Paybox on Top up
+    const models = [
+      { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
+      { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
+    ]
+    const provider = createUsePodProvider({ token: account.token, family: 'anthropic' })
+    return {
+      mode: 'usepod',
+      candidates: [{ id: 'usepod', provider, models }],
+      baselineModel: 'claude-sonnet-4-5',
+      payer: signer.publicKey,
+      network,
+      // Funding handle: Top up deposits real USDC from Paybox → this UsePod token.
+      funding: { signer, token: account.token, depositCode: account.depositCode, network },
+      close: async () => {},
     }
   }
 
@@ -173,27 +210,61 @@ const pricingOverrides = Object.fromEntries(
 // race — mirrors the gateway's AsyncLocalStorage approach.
 const als = new AsyncLocalStorage()
 
+// Optional: report every request to a Shipyard Operator command center. Set
+// OPERATOR_URL (+ OPERATOR_TOKEN) and this portal shows up as a `chat-portal`
+// source in the operator dashboard — the one-line drop-in any integration uses.
+const reporter = process.env.OPERATOR_URL
+  ? createTelemetryReporter({
+      url: process.env.OPERATOR_URL,
+      token: process.env.OPERATOR_TOKEN,
+      source: process.env.OPERATOR_SOURCE ?? 'chat-portal',
+    })
+  : undefined
+
+// Telemetry capture shared by the default router and any per-session router.
+function routerOnEvent(event) {
+  reporter?.onEvent(event)
+  const ctx = als.getStore()
+  if (!ctx) return
+  if (event.type === 'route_selected' || event.type === 'route_success') {
+    ctx.provider = event.candidateId
+    if (event.model) ctx.model = event.model
+  } else if (event.type === 'request_completed') {
+    ctx.provider = event.candidateId
+    if (event.model) ctx.model = event.model
+    ctx.actualCostUsd = event.actualCostUsd
+    ctx.baselineCostUsd = event.baselineCostUsd
+    ctx.savedUsd = event.savedUsd
+    ctx.usage = event.usage
+  }
+}
+
 const router = new Router({
   candidates: inference.candidates,
   strategy: costOptimized(),
   baselineModel: BASELINE_MODEL,
   pricingOverrides,
-  onEvent: (event) => {
-    const ctx = als.getStore()
-    if (!ctx) return
-    if (event.type === 'route_selected' || event.type === 'route_success') {
-      ctx.provider = event.candidateId
-      if (event.model) ctx.model = event.model
-    } else if (event.type === 'request_completed') {
-      ctx.provider = event.candidateId
-      if (event.model) ctx.model = event.model
-      ctx.actualCostUsd = event.actualCostUsd
-      ctx.baselineCostUsd = event.baselineCostUsd
-      ctx.savedUsd = event.savedUsd
-      ctx.usage = event.usage
-    }
-  },
+  onEvent: routerOnEvent,
 })
+
+// Catalog of models a per-session UsePod token serves (bring-your-own-wallet).
+const USEPOD_SESSION_MODELS = [
+  { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
+  { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
+]
+
+// A Router bound to one user's own UsePod token — inference is paid from the
+// balance THAT user funds from THEIR connected wallet (Phantom). Bring-your-own.
+function buildSessionRouter(token) {
+  const provider = createUsePodProvider({ token, family: 'anthropic' })
+  return new Router({
+    candidates: [{ id: 'usepod', provider, models: USEPOD_SESSION_MODELS }],
+    strategy: costOptimized(),
+    baselineModel: 'claude-sonnet-4-5',
+    pricingOverrides: Object.fromEntries(USEPOD_SESSION_MODELS.map((m) => [m.model, m])),
+    onEvent: routerOnEvent,
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Wallet sessions. The connected wallet is the funding source — in demo mode an
@@ -203,19 +274,58 @@ const router = new Router({
 // ---------------------------------------------------------------------------
 const sessions = new Map()
 
-function newAddress() {
+// Address shaped to the chosen wallet: MetaMask is EVM (0x-hex), Paybox and
+// Phantom are Solana (base58). Demo sessions mint a throwaway one.
+function newAddress(wallet) {
+  if (wallet === 'metamask') {
+    return '0x' + randomBytes(20).toString('hex')
+  }
   const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
   let s = ''
   for (const byte of randomBytes(32)) s += b58[byte % b58.length]
-  return (inference.mode === 'demo' ? 'Demo' : '') + s.slice(0, 40)
+  return s.slice(0, 44)
 }
 
 const round6 = (n) => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+
+// Settlement runs on the same Solana cluster as the Paybox inference wallet
+// (mainnet in paybox mode), else honours SHIPYARD_SETTLE_NETWORK (devnet-safe).
+const SETTLE_NETWORK =
+  inference.network ?? (process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet')
+
+// Real meter-then-settle (Dock's proven path): when a treasury + Paybox wallet
+// are configured, /api/settle moves the metered USDC on-chain from the Paybox
+// wallet to the treasury via payboxSettle(). Signing is in-process and hands-off
+// when a `pbxk1` signing key is configured (PAYBOX_SIGNING_KEY / `paybox login`).
+// Without a treasury we fall back to a simulated receipt (demo).
+const TREASURY = process.env.SHIPYARD_TREASURY_WALLET
+let settlementSigner
+if (TREASURY && process.env.PAYBOX_CREDENTIAL_ID) {
+  settlementSigner = await payboxSigner({
+    credentialId: process.env.PAYBOX_CREDENTIAL_ID,
+    network: SETTLE_NETWORK,
+  })
+  console.log(`  settle:    REAL · ${settlementSigner.publicKey} → ${TREASURY} (${SETTLE_NETWORK})`)
+}
+
+// A base58 string shaped like a Solana tx signature (~88 chars). In x402 mode a
+// real settlement returns the on-chain signature; in demo/usepod we mint a
+// realistic stand-in so the receipt UI has a tx hash + explorer link to show.
+function mockSignature() {
+  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  let s = ''
+  for (const byte of randomBytes(64)) s += b58[byte % b58.length]
+  return s.slice(0, 88)
+}
+
+const explorerUrl = (sig, network) =>
+  `https://explorer.solana.com/tx/${sig}${network === 'mainnet' ? '' : `?cluster=${network}`}`
 
 function walletSnapshot(session) {
   return {
     sessionId: session.id,
     address: session.address,
+    wallet: session.wallet,
     mode: session.mode,
     balanceUsd: round6(session.balanceUsd),
     pendingUsd: round6(session.pendingUsd),
@@ -223,6 +333,8 @@ function walletSnapshot(session) {
     savedUsd: round6(session.savedUsd),
     messages: session.messages,
     settlements: session.settlements.length,
+    realInference: !!session.realInference,
+    usepodToken: session.usepod ? `${session.usepod.token.slice(0, 6)}…` : undefined,
   }
 }
 
@@ -231,7 +343,13 @@ const app = new Hono()
 app.use('/api/*', cors())
 
 app.get('/api/models', (c) =>
-  c.json({ models: modelCatalog, baselineModel: BASELINE_MODEL, mode: inference.mode }),
+  c.json({
+    models: modelCatalog,
+    baselineModel: BASELINE_MODEL,
+    mode: inference.mode,
+    network: inference.network,
+    payer: inference.payer,
+  }),
 )
 
 app.post('/api/wallet/connect', async (c) => {
@@ -239,9 +357,13 @@ app.post('/api/wallet/connect', async (c) => {
   let session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (!session) {
     const id = randomBytes(12).toString('hex')
+    const wallet = ['paybox', 'phantom', 'metamask'].includes(body.wallet) ? body.wallet : 'paybox'
+    // A real non-custodial wallet hands us its actual on-chain address.
+    const realAddress = typeof body.address === 'string' && body.address.length >= 32 ? body.address : null
     session = {
       id,
-      address: newAddress(),
+      address: realAddress ?? newAddress(wallet),
+      wallet,
       mode: inference.mode,
       balanceUsd: DEMO_BALANCE,
       pendingUsd: 0,
@@ -249,6 +371,29 @@ app.post('/api/wallet/connect', async (c) => {
       savedUsd: 0,
       messages: 0,
       settlements: [],
+      realInference: false,
+    }
+
+    // Bring-your-own wallet (Phantom): provision THIS user a UsePod token they
+    // fund from their own wallet. Inference for the session routes through it,
+    // and the balance is the real remaining UsePod balance (0 until Top up).
+    if (wallet === 'phantom' && realAddress) {
+      try {
+        const account = await registerUsePod()
+        session.usepod = { token: account.token, depositCode: account.depositCode, router: buildSessionRouter(account.token) }
+        session.mode = 'usepod'
+        session.realInference = true
+        session.balanceUsd = (await usePodBalance(account.token).catch(() => ({ usdc: 0 }))).usdc
+      } catch (err) {
+        // UsePod unreachable — connect anyway (UI works), but inference stays mock.
+        console.warn('phantom connect: UsePod provisioning failed —', err?.message ?? err)
+      }
+    } else if (inference.funding) {
+      // Operator Paybox-funded UsePod: balance is the real remaining balance.
+      try {
+        session.balanceUsd = (await usePodBalance(inference.funding.token)).usdc
+        session.realInference = true
+      } catch { /* keep demo balance if the balance API is unreachable */ }
     }
     sessions.set(id, session)
   }
@@ -269,15 +414,152 @@ app.post('/api/settle', async (c) => {
   const amount = round6(session.pendingUsd)
   if (amount <= 0) return c.json({ settled: 0, wallet: walletSnapshot(session) })
 
-  // Demo path moves metered spend pending → settled. The real path settles via
-  // the wallet: UsePod debits its USDC balance per request; x402/Paybox would
-  // call payboxSettle(...) to a treasury here (see README).
+  // Real meter-then-settle (Dock's proven path): move the metered USDC on-chain
+  // from the Paybox wallet to the treasury. Only on success do we clear pending
+  // and debit the balance — a settle failure leaves spend pending (never
+  // double-charges; it retries next turn). Without a treasury we simulate it.
+  let signature
+  let simulated
+  if (settlementSigner) {
+    const atomicUsdc = String(Math.round(amount * 1_000_000)) // USDC has 6 decimals
+    try {
+      const res = await payboxSettle({
+        signer: settlementSigner,
+        treasury: TREASURY,
+        amount: atomicUsdc,
+        network: SETTLE_NETWORK,
+        rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+        usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+      })
+      signature = res.signature
+      simulated = false
+    } catch (err) {
+      // Leave pendingUsd intact — the next /api/settle retries this amount.
+      return c.json(
+        { error: `settlement failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) },
+        502,
+      )
+    }
+  } else {
+    signature = mockSignature()
+    simulated = true
+  }
+
   session.balanceUsd = Math.max(0, session.balanceUsd - amount)
   session.spentUsd += amount
   session.pendingUsd = 0
-  session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode })
+  session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode, signature })
 
-  return c.json({ settled: amount, wallet: walletSnapshot(session) })
+  // Report the settlement to the operator command center (real USDC collected).
+  reporter?.recordSettlement({
+    userId: session.id,
+    amountUsd: amount,
+    status: 'settled',
+    network: SETTLE_NETWORK,
+  })
+
+  // The receipt: a USDC micropayment on Solana. In x402 mode `signature` is the
+  // real on-chain tx; in demo/usepod it's a realistic stand-in (`simulated`).
+  return c.json({
+    settled: amount,
+    signature,
+    network: SETTLE_NETWORK,
+    explorerUrl: explorerUrl(signature, SETTLE_NETWORK),
+    simulated,
+    wallet: walletSnapshot(session),
+  })
+})
+
+// Top up the inference balance. In Paybox-funded UsePod mode this is a REAL
+// on-chain deposit: depositUsdcWithSigner moves USDC from the Paybox wallet into
+// the UsePod token, then we read the live balance back. Otherwise (demo) it just
+// credits the in-memory balance.
+app.post('/api/wallet/topup', async (c) => {
+  const { sessionId, amountUsd } = await c.req.json().catch(() => ({}))
+  const session = sessions.get(sessionId)
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  const amount = round6(Math.max(0, Math.min(Number(amountUsd) || 0, 1000)))
+  if (amount <= 0) return c.json({ error: 'amount must be > 0' }, 400)
+
+  if (inference.funding) {
+    try {
+      const signature = await depositUsdcWithSigner({
+        signer: inference.funding.signer,
+        depositCode: inference.funding.depositCode,
+        amountUsdc: amount,
+        network: inference.funding.network,
+        rpcUrl: process.env.USEPOD_RPC_URL,
+        usdcMint: process.env.USEPOD_USDC_MINT,
+      })
+      session.balanceUsd = (await usePodBalance(inference.funding.token)).usdc
+      return c.json({
+        deposited: amount,
+        signature,
+        explorerUrl: explorerUrl(signature, inference.funding.network),
+        wallet: walletSnapshot(session),
+      })
+    } catch (err) {
+      return c.json({ error: `deposit failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) }, 502)
+    }
+  }
+
+  session.balanceUsd += amount
+  return c.json({ deposited: amount, wallet: walletSnapshot(session) })
+})
+
+// Bring-your-own-wallet funding (Phantom). Two steps so the user's wallet signs
+// in the browser, with the key never leaving it:
+//   1) /deposit/build — server builds the UNSIGNED UsePod-deposit tx for the
+//      session's wallet (Anchor IDL → correct accounts), returns base64.
+//   2) browser signs it with Phantom and posts it back…
+//   3) /deposit/submit — server broadcasts + confirms, then reads the live balance.
+const usepodNetwork = () => (process.env.SHIPYARD_SETTLE_NETWORK === 'devnet' ? 'devnet' : 'mainnet')
+
+app.post('/api/wallet/deposit/build', async (c) => {
+  const { sessionId, amountUsd } = await c.req.json().catch(() => ({}))
+  const session = sessions.get(sessionId)
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  if (!session.usepod) return c.json({ error: 'session has no UsePod token to fund' }, 400)
+  const amount = round6(Math.max(0, Math.min(Number(amountUsd) || 0, 1000)))
+  if (amount <= 0) return c.json({ error: 'amount must be > 0' }, 400)
+  try {
+    const built = await buildUsePodDepositTx({
+      payer: session.address,
+      depositCode: session.usepod.depositCode,
+      amountUsdc: amount,
+      network: usepodNetwork(),
+      rpcUrl: process.env.USEPOD_RPC_URL,
+      usdcMint: process.env.USEPOD_USDC_MINT,
+    })
+    return c.json({ transactionBase64: built.transactionBase64, amountUsd: amount })
+  } catch (err) {
+    return c.json({ error: `build failed: ${err instanceof Error ? err.message : String(err)}` }, 502)
+  }
+})
+
+app.post('/api/wallet/deposit/submit', async (c) => {
+  const { sessionId, signedTransactionBase64 } = await c.req.json().catch(() => ({}))
+  const session = sessions.get(sessionId)
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  if (!session.usepod) return c.json({ error: 'session has no UsePod token to fund' }, 400)
+  if (!signedTransactionBase64) return c.json({ error: 'signedTransactionBase64 is required' }, 400)
+  const network = usepodNetwork()
+  try {
+    const signature = await submitSolanaTransaction({
+      signedTransactionBase64,
+      network,
+      rpcUrl: process.env.USEPOD_RPC_URL,
+    })
+    // Let UsePod credit the deposit, then reflect the real balance.
+    session.balanceUsd = (await usePodBalance(session.usepod.token).catch(() => ({ usdc: session.balanceUsd }))).usdc
+    return c.json({
+      signature,
+      explorerUrl: explorerUrl(signature, network),
+      wallet: walletSnapshot(session),
+    })
+  } catch (err) {
+    return c.json({ error: `submit failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) }, 502)
+  }
 })
 
 app.post('/api/chat', async (c) => {
@@ -289,6 +571,8 @@ app.post('/api/chat', async (c) => {
   const params = toChatParams(body)
   const session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (session) params.metadata = { userId: session.id }
+  // Bring-your-own-wallet sessions route through the user's own UsePod token.
+  const activeRouter = session?.usepod?.router ?? router
 
   return streamSSE(c, async (stream) => {
     const controller = new AbortController()
@@ -297,7 +581,7 @@ app.post('/api/chat', async (c) => {
 
     try {
       await als.run(ctx, async () => {
-        for await (const event of router.chatStream(params, { signal: controller.signal })) {
+        for await (const event of activeRouter.chatStream(params, { signal: controller.signal })) {
           if (event.type === 'text_delta') {
             await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: event.text }) })
           }
@@ -381,6 +665,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/wallet-bundle.js': ['wallet-bundle.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 }
 
@@ -399,9 +684,12 @@ app.get('*', async (c) => {
 const MODE_NOTE = {
   demo: 'built-in mock — no real inference',
   usepod: 'wallet-funded · UsePod prepaid USDC',
-  x402: 'wallet-funded · per-request x402 USDC',
+  paybox: 'REAL inference · Paybox wallet pays per-request USDC over x402',
 }
 serve({ fetch: app.fetch, port: PORT })
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
 console.log(`  inference: ${inference.mode}  (${MODE_NOTE[inference.mode] ?? ''})`)
+if (inference.mode === 'paybox') {
+  console.log(`  paybox:    ${inference.payer} · ${inference.network}`)
+}
 console.log(`  baseline:  ${BASELINE_MODEL} · margin: ${(MARGIN * 100).toFixed(0)}%`)
