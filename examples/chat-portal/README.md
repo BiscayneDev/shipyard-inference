@@ -51,22 +51,38 @@ is always wallet-funded — there is no provider-API-key path.**
 | **usepod** | `USEPOD_TOKEN` | A prepaid USDC balance proxy — auth is the funded token in the URL, **no API key**. UsePod routes each request to the cheapest provider. |
 | **demo** (default) | _no env_ | Built-in mock model. Nothing is billed. |
 
-### Go live (mainnet, Paybox-funded)
+### Go live (Paybox-funded inference + real settlement)
+
+This is the same path proven in [Dock](https://github.com/BiscayneDev/dock): inference
+runs through Shipyard, spend is metered, then **`payboxSettle()` moves the metered
+USDC on-chain from the Paybox wallet to a treasury** — the receipt chip links to the
+real tx.
 
 ```bash
-# 1. Authenticate Paybox (once) — funds & signing live in your Paybox account:
-paybox login                       # or export PAYBOX_API_KEY=...
+# 1. Authenticate Paybox (once). The scoped `pbxk1` signing key enables hands-off,
+#    in-process signing (autonomous grant) — no per-settlement passkey tap.
+paybox login                                  # or: export PAYBOX_API_KEY=... PAYBOX_SIGNING_KEY=pbxk1...
 
-# 2. Point at a true x402 inference endpoint and your Paybox wallet credential.
-#    Mainnet is the default; real USDC is spent per request.
+# 2. Wallet-funded inference over x402 (endpoint defaults to UsePod's x402 URL):
 export PAYBOX_CREDENTIAL_ID=<wallet-credential-id>
 export SHIPYARD_X402_URL=https://<true-x402-inference-endpoint>   # or USEPOD_X402_URL
+
+# 3. Turn on REAL settlement — metered USDC → your treasury, on-chain:
+export SHIPYARD_TREASURY_WALLET=<solana-treasury-address>
+export SHIPYARD_SETTLE_NETWORK=devnet         # rehearse on devnet first (test USDC)
+export SHIPYARD_SETTLE_USDC_MINT=<mint>       # e.g. Nebula devUSDC on devnet
+# export SHIPYARD_SETTLE_RPC_URL=https://...  # optional custom RPC
+
 node examples/chat-portal/server.mjs
-# boot log prints:  inference: paybox  ·  paybox: <payer-pubkey> · mainnet
+# boot log:  inference: paybox · <payer> · devnet
+#            settle:    REAL · <payer> → <treasury> (devnet)
 ```
 
-Set `SHIPYARD_SETTLE_NETWORK=devnet` to rehearse on devnet first (test USDC).
+Without `SHIPYARD_TREASURY_WALLET`, settlement is **simulated** (a stand-in receipt) so
+the demo stays runnable. With it, every settle is a real on-chain USDC transfer; a
+failure leaves the spend pending and retries next turn (never double-charges).
 `SHIPYARD_X402_FAMILY=openai` if the endpoint speaks the OpenAI surface (default `anthropic`).
+**Prove it on devnet before mainnet** — the on-chain path spends real USDC.
 
 The active mode shows as a badge in the top bar (amber **demo** vs. green
 **usepod** / **paybox · live**), so it's always clear when real inference is on.

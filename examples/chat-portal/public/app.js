@@ -320,6 +320,15 @@ async function settle(assistant) {
       body: JSON.stringify({ sessionId: state.sessionId }),
     })).json()
     if (r.wallet) applyWallet(r.wallet)
+    if (r.error) {
+      const chips = assistant.querySelector('.chips')
+      const chip = document.createElement('span')
+      chip.className = 'chip err'
+      chip.textContent = 'settle pending — will retry'
+      chip.title = r.error
+      chips?.appendChild(chip)
+      return
+    }
     if (r.settled > 0) {
       const ms = Math.round(performance.now() - t0)
       const chips = assistant.querySelector('.chips')

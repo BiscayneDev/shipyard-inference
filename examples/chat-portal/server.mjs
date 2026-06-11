@@ -30,6 +30,7 @@ import {
   createWalletInference,
   createTelemetryReporter,
   payboxSigner,
+  payboxSettle,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -238,7 +239,25 @@ function newAddress(wallet) {
 
 const round6 = (n) => Math.round((n + Number.EPSILON) * 1e6) / 1e6
 
-const SETTLE_NETWORK = process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet'
+// Settlement runs on the same Solana cluster as the Paybox inference wallet
+// (mainnet in paybox mode), else honours SHIPYARD_SETTLE_NETWORK (devnet-safe).
+const SETTLE_NETWORK =
+  inference.network ?? (process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet')
+
+// Real meter-then-settle (Dock's proven path): when a treasury + Paybox wallet
+// are configured, /api/settle moves the metered USDC on-chain from the Paybox
+// wallet to the treasury via payboxSettle(). Signing is in-process and hands-off
+// when a `pbxk1` signing key is configured (PAYBOX_SIGNING_KEY / `paybox login`).
+// Without a treasury we fall back to a simulated receipt (demo).
+const TREASURY = process.env.SHIPYARD_TREASURY_WALLET
+let settlementSigner
+if (TREASURY && process.env.PAYBOX_CREDENTIAL_ID) {
+  settlementSigner = await payboxSigner({
+    credentialId: process.env.PAYBOX_CREDENTIAL_ID,
+    network: SETTLE_NETWORK,
+  })
+  console.log(`  settle:    REAL · ${settlementSigner.publicKey} → ${TREASURY} (${SETTLE_NETWORK})`)
+}
 
 // A base58 string shaped like a Solana tx signature (~88 chars). In x402 mode a
 // real settlement returns the on-chain signature; in demo/usepod we mint a
@@ -319,14 +338,40 @@ app.post('/api/settle', async (c) => {
   const amount = round6(session.pendingUsd)
   if (amount <= 0) return c.json({ settled: 0, wallet: walletSnapshot(session) })
 
-  // Demo path moves metered spend pending → settled. The real path settles via
-  // the wallet: UsePod debits its USDC balance per request; x402/Paybox would
-  // call payboxSettle(...) to a treasury here (see README).
+  // Real meter-then-settle (Dock's proven path): move the metered USDC on-chain
+  // from the Paybox wallet to the treasury. Only on success do we clear pending
+  // and debit the balance — a settle failure leaves spend pending (never
+  // double-charges; it retries next turn). Without a treasury we simulate it.
+  let signature
+  let simulated
+  if (settlementSigner) {
+    const atomicUsdc = String(Math.round(amount * 1_000_000)) // USDC has 6 decimals
+    try {
+      const res = await payboxSettle({
+        signer: settlementSigner,
+        treasury: TREASURY,
+        amount: atomicUsdc,
+        network: SETTLE_NETWORK,
+        rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+        usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+      })
+      signature = res.signature
+      simulated = false
+    } catch (err) {
+      // Leave pendingUsd intact — the next /api/settle retries this amount.
+      return c.json(
+        { error: `settlement failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) },
+        502,
+      )
+    }
+  } else {
+    signature = mockSignature()
+    simulated = true
+  }
+
   session.balanceUsd = Math.max(0, session.balanceUsd - amount)
   session.spentUsd += amount
   session.pendingUsd = 0
-  const signature = mockSignature()
-  const simulated = session.mode === 'demo'
   session.settlements.push({ amountUsd: amount, at: new Date().toISOString(), mode: session.mode, signature })
 
   // Report the settlement to the operator command center (real USDC collected).
