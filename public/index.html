@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shipyard Inference — the inference layer agents pay for themselves</title>
+    <meta
+      name="description"
+      content="An OpenAI-compatible gateway that routes every request to the cheapest capable model, fails over automatically, and lets agents pay per request in USDC over x402. Change one URL."
+    />
+    <style>
+      :root {
+        --bg: #07090d;
+        --panel: #0e1218;
+        --line: #1c232e;
+        --fg: #e8edf3;
+        --muted: #8b97a6;
+        --accent: #4fd1c5;
+        --accent2: #7c9cff;
+        --code: #0a0d12;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 600px at 70% -10%, #11202b 0%, var(--bg) 55%);
+        color: var(--fg);
+        font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent2); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+      header { padding: 28px 0; display: flex; align-items: center; justify-content: space-between; }
+      .brand { font-weight: 700; letter-spacing: -0.01em; font-size: 16px; }
+      .brand b { color: var(--accent); }
+      nav a { color: var(--muted); margin-left: 20px; font-size: 14px; }
+      .hero { padding: 56px 0 28px; }
+      .pill {
+        display: inline-block; font-size: 12px; color: var(--accent);
+        border: 1px solid #1f3a3a; background: #0c1614; border-radius: 999px;
+        padding: 4px 12px; margin-bottom: 22px; letter-spacing: 0.02em;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 46px); line-height: 1.08; margin: 0 0 18px;
+        letter-spacing: -0.025em; font-weight: 720;
+      }
+      h1 .grad {
+        background: linear-gradient(95deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
+      .sub { font-size: 18px; color: var(--muted); max-width: 660px; margin: 0 0 30px; }
+      .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .btn {
+        display: inline-block; padding: 11px 18px; border-radius: 10px; font-weight: 600;
+        font-size: 14px; border: 1px solid transparent; cursor: pointer;
+      }
+      .btn.primary { background: linear-gradient(95deg, var(--accent), var(--accent2)); color: #04130f; }
+      .btn.ghost { border-color: var(--line); color: var(--fg); background: var(--panel); }
+      section { padding: 22px 0; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 8px; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+      .card h3 { margin: 0 0 6px; font-size: 15px; }
+      .card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+      .codewrap { position: relative; margin-top: 14px; }
+      pre {
+        background: var(--code); border: 1px solid var(--line); border-radius: 12px;
+        padding: 18px 16px; overflow-x: auto; font-size: 13px; line-height: 1.55;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; margin: 0;
+      }
+      pre .c { color: var(--muted); }
+      pre .k { color: var(--accent); }
+      pre .s { color: #9fe0a6; }
+      .copy {
+        position: absolute; top: 10px; right: 10px; font-size: 11px; color: var(--muted);
+        background: #11161d; border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; cursor: pointer;
+      }
+      .copy:hover { color: var(--fg); }
+      h2 { font-size: 22px; letter-spacing: -0.02em; margin: 8px 0 6px; }
+      .lede { color: var(--muted); margin: 0 0 6px; }
+      .endpoint { color: var(--accent); font-family: ui-monospace, monospace; }
+      footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; border-top: 1px solid var(--line); margin-top: 30px; }
+      @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand"><b>shipyard</b> · inference</div>
+        <nav>
+          <a href="/connect">Connect IDE</a>
+          <a href="/advertise">Advertise</a>
+          <a href="/me">Earnings</a>
+          <a href="/dashboard/">Dashboard</a>
+          <a href="https://github.com/BiscayneDev/shipyard-inference" target="_blank" rel="noopener">GitHub</a>
+        </nav>
+      </header>
+
+      <div class="hero">
+        <span class="pill">OpenAI-compatible · x402-native · agent-ready</span>
+        <h1>The inference layer your agents<br /><span class="grad">pay for themselves.</span></h1>
+        <p class="sub">
+          One endpoint in front of every model. Shipyard routes each request to the cheapest
+          capable model, fails over when a provider blinks, and settles per request in USDC over
+          x402 — so an autonomous agent can buy its own compute with <em>no provider keys, no
+          monthly bill</em>, and even <em>earn USDC back</em> while it waits. One command to connect.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="#try">Connect your IDE →</a>
+          <a class="btn ghost" href="/dashboard/">Watch live traffic</a>
+        </div>
+      </div>
+
+      <section>
+        <div class="grid">
+          <div class="card">
+            <h3>Two ways to win</h3>
+            <p>Every request is routed to the cheapest capable model — typically <strong>70%+</strong> off baseline — <em>and</em> earns you USDC for the wait. You save on inference and get paid on it.</p>
+          </div>
+          <div class="card">
+            <h3>Get paid for the wait</h3>
+            <p>The idle moment during inference is auctioned as one sponsored status line — never in your prompt, never in context. You keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling an x402 endpoint.</p>
+          </div>
+          <div class="card">
+            <h3>Settled in USDC — today</h3>
+            <p>Payouts are real now, not "Stripe, coming soon": x402-on-Solana settles per request. Failover + retry keep you answering when a provider blinks.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0 0 4px">Two-sided by design</h3>
+            <p style="margin:0;color:var(--muted)">Developers earn on the wait; advertisers bid for that attention in a first-price auction, settled in USDC. The most-watched line on Earth, with a real market under it.</p>
+          </div>
+          <a class="btn ghost" href="/advertise" style="white-space:nowrap">Advertise on the wait →</a>
+        </div>
+      </section>
+
+      <section id="try">
+        <h2>Connect in one command</h2>
+        <p class="lede">One command issues your key and wires it into your IDE / Claude Code. Your traffic settles to <em>your</em> wallet — and earns USDC kickbacks while it runs.</p>
+        <div class="codewrap">
+          <button class="copy" data-target="connect">copy</button>
+          <pre id="connect"><span class="c"># Issues an sk-shipyard key + points your IDE at this gateway</span>
+npx shipyard-inference <span class="k">connect</span> --url <span class="s" id="b0">https://YOUR-DEPLOYMENT</span></pre>
+        </div>
+        <p class="lede" style="margin-top:18px">Or drop the key into any OpenAI SDK — the only change is <code>base_url</code> + your key:</p>
+        <div class="codewrap">
+          <button class="copy" data-target="sdk">copy</button>
+          <pre id="sdk"><span class="k">from</span> openai <span class="k">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="s" id="b1">"https://YOUR-DEPLOYMENT/v1"</span>,
+    api_key=<span class="s">"sk-shipyard-…"</span>,  <span class="c"># your key from `connect`</span>
+)
+resp = client.chat.completions.create(
+    model=<span class="s">"auto"</span>,  <span class="c"># let Shipyard pick the cheapest capable model</span>
+    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"Hello from my agent"</span>}],
+)
+<span class="k">print</span>(resp.choices[0].message.content)</pre>
+        </div>
+
+        <div class="codewrap">
+          <button class="copy" data-target="curl">copy</button>
+          <pre id="curl"><span class="c"># Or curl it directly with your key</span>
+curl <span class="s" id="b2">https://YOUR-DEPLOYMENT/v1/chat/completions</span> \
+  -H <span class="s">"authorization: Bearer sk-shipyard-…"</span> \
+  -H <span class="s">"content-type: application/json"</span> \
+  -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></pre>
+        </div>
+        <p class="lede" style="margin-top:14px"><a href="/connect">Get a key in the browser →</a> · <a href="/me">your earnings →</a></p>
+      </section>
+
+      <section>
+        <h2>See it land</h2>
+        <p class="lede">
+          Every request — model chosen, tokens, cost, savings, settlement — streams to the
+          <a href="/dashboard/">operator command center</a> in real time. That's the same console
+          we run in production.
+        </p>
+      </section>
+
+      <footer>
+        Built for the <a href="https://openshipyard.xyz" target="_blank" rel="noopener">Shipyard</a> agent stack —
+        framework- and language-agnostic by design. Wraps Anthropic, OpenAI, OpenRouter, UsePod, and Nous/Hermes behind one interface.
+      </footer>
+    </div>
+
+    <script>
+      // Fill in the real endpoint once deployed, so the snippets are copy-paste correct.
+      const origin = window.location.origin;
+      document.getElementById('ep').textContent = origin;
+      document.getElementById('b0').textContent = origin;
+      document.getElementById('b1').textContent = '"' + origin + '/v1"';
+      document.getElementById('b2').textContent = origin + '/v1/chat/completions';
+      for (const btn of document.querySelectorAll('.copy')) {
+        btn.addEventListener('click', () => {
+          const el = document.getElementById(btn.dataset.target);
+          navigator.clipboard.writeText(el.innerText).then(() => {
+            const t = btn.textContent;
+            btn.textContent = 'copied';
+            setTimeout(() => (btn.textContent = t), 1200);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

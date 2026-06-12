@@ -1,5 +1,7 @@
 node_modules/
 dist/
+public/dashboard/
+.vercel/
 *.log
 .env
 .env.*
@@ -8,3 +10,6 @@ dist/
 .vscode/
 .idea/
 *.tgz
+examples/chat-portal/.usepod-fund.json
+.vercel
+landing.generated.ts

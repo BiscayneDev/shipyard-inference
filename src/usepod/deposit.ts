@@ -28,10 +28,15 @@ function toSecretBytes(raw: Uint8Array | number[] | string): Uint8Array {
 }
 
 // Loaded via a non-literal specifier so tsc doesn't require the (optional) package at build time.
+// Anchor ships as CJS, so under ESM `import()` its symbols land on `.default`
+// (e.g. `BN` is NOT hoisted as a top-level named export) — unwrap it so every
+// symbol (AnchorProvider/Program/Wallet/BN) is reachable on one object.
 async function loadAnchor(): Promise<Record<string, unknown>> {
   const spec: string = '@coral-xyz/anchor'
   try {
-    return (await import(spec)) as Record<string, unknown>
+    const mod = (await import(spec)) as Record<string, unknown>
+    const unwrapped = mod.default as Record<string, unknown> | undefined
+    return unwrapped && 'BN' in unwrapped ? unwrapped : mod
   } catch {
     throw new MissingDependencyError('@coral-xyz/anchor', 'depositUsdc (UsePod on-chain funding)')
   }

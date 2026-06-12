@@ -35,7 +35,10 @@
           <div class="wallet-card hidden" id="wallet-card">
             <div class="wallet-head">
               <span class="wallet-label" id="wallet-label">Paybox · smart account</span>
-              <span class="pill" id="mode-pill">demo</span>
+              <div class="wallet-head-right">
+                <span class="pill" id="mode-pill">demo</span>
+                <button class="btn ghost tiny" id="disconnect" title="Disconnect wallet">Disconnect</button>
+              </div>
             </div>
             <div class="wallet-addr mono addr" id="addr" title=""></div>
             <div class="wallet-balance">
@@ -45,6 +48,18 @@
             <div class="wallet-sub">
               <span class="muted">Pending</span>
               <span class="mono" id="pending">$0.000000</span>
+            </div>
+            <div class="wallet-sub hidden" id="credit-row" title="Idle-attention revenue (Tender), netted against your inference bill">
+              <span class="muted">Idle credit</span>
+              <span class="mono pos" id="tender-credit">$0.000000</span>
+            </div>
+            <div class="wallet-sub hidden" id="payout-row" title="Kickbacks earned beyond your inference bill — cash out to your wallet in USDC">
+              <span class="muted">Earned</span>
+              <button class="btn ghost tiny" id="cashout">$0.000000 · cash out →</button>
+            </div>
+            <div class="wallet-sub hidden" id="payout-receipt">
+              <span class="muted">Paid out</span>
+              <a class="mono pos" id="payout-link" target="_blank" rel="noreferrer noopener"></a>
             </div>
             <div class="topup hidden" id="topup">
               <button class="btn ghost tiny topup-amt" data-amt="5">+$5</button>
@@ -83,6 +98,11 @@
             <div class="model-menu hidden" id="model-menu" role="listbox"></div>
           </div>
           <span class="mode-badge" id="mode-badge" title=""></span>
+          <div class="infmode" id="infmode" role="group" aria-label="Inference mode">
+            <button type="button" class="infmode-opt active" data-infmode="demo">Demo</button>
+            <button type="button" class="infmode-opt" data-infmode="production" id="infmode-prod"
+              title="Real wallet-funded inference">Production</button>
+          </div>
           <button class="btn ghost" id="new-chat">New chat</button>
         </header>
 
@@ -112,6 +132,15 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Tender: sponsored placement chrome. Rendered OUTSIDE the message
+             thread and the model context window — surface chrome only. -->
+        <div class="placement-bar hidden" id="placement-bar" role="complementary" aria-label="Sponsored placement">
+          <span class="placement-tag">Sponsored</span>
+          <span class="placement-line" id="placement-line"></span>
+          <span class="placement-attest" id="placement-attest" title=""></span>
+          <a class="placement-cta" id="placement-cta" href="#" target="_blank" rel="noreferrer noopener">Open ↗</a>
         </div>
 
         <div class="composer-wrap">

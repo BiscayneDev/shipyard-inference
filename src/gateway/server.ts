@@ -13,7 +13,17 @@ import {
   toOpenAIError,
 } from '../openai-compat/index.js'
 import type { OpenAIChatRequest, OpenAIErrorBody } from '../openai-compat/index.js'
-import { checkBearer } from './auth.js'
+import {
+  anthropicRequestToChatParams,
+  llmResponseToAnthropicMessage,
+  createAnthropicSSEEncoder,
+  estimateInputTokens,
+  toAnthropicError,
+} from '../anthropic-compat/index.js'
+import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
+import { TENDER_DEFAULTS } from '../tender/types.js'
+import type { LLMChatParams, LLMStreamEvent } from '../types.js'
+import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 
 interface RequestContext {
@@ -56,16 +66,17 @@ function errorJson(
  * via AsyncLocalStorage and surfaced as `x-shipyard-*` headers / an SSE trailer.
  */
 export function createGatewayApp(config: GatewayConfig): Hono {
-  if (!config.apiKeys || config.apiKeys.length === 0) {
+  if ((!config.apiKeys || config.apiKeys.length === 0) && !config.keyStore) {
     console.warn(
-      '[shipyard-inference] gateway started with NO api keys — auth is disabled. ' +
-        'Set apiKeys for anything but local dev.',
+      '[shipyard-inference] gateway started with NO api keys and no key store — ' +
+        'auth is disabled. Set apiKeys or a keyStore for anything but local dev.',
     )
   }
 
   const router = new Router({
     candidates: config.candidates,
     strategy: config.strategy,
+    baselineModel: config.baselineModel,
     pricingOverrides: config.pricingOverrides,
     cache: config.cache,
     usageRecorder: config.usageRecorder,
@@ -81,12 +92,76 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   const exposeCost = config.exposeCostHeaders !== false
   const app = new Hono()
 
+  // Tender — monetize the wait state of a streaming request. Wraps the model
+  // stream: on a qualifying wait it auctions a placement (the account's current
+  // ad, shown in their status line); on completion it attests the real, billed
+  // impression and accrues the kickback. A no-op without `config.tender` or an
+  // attributed account. The content stream passes through untouched.
+  //
+  // The wait we monetize is the WHOLE turn the developer waits for — the full
+  // generation streams over that time (and, in agentic runs, the tool round-trips
+  // between steps). We gate on total turn duration, NOT time-to-first-token: the
+  // gateway routes fast (TTFT is typically sub-perceptual ~200ms), so a
+  // first-token-idle gate would essentially never fire for real agent traffic. A
+  // placement is auctioned once the turn has run past `minWaitMs` (so it can be
+  // shown DURING the wait, not after), and at completion we attest the real total
+  // wait — the `measuredWaitMs >= minWaitMs` gate keeps it honest: a turn that
+  // finishes sub-threshold serves nothing and bills nothing.
+  function wrapTender(
+    account: string | undefined,
+    reqId: string,
+    params: LLMChatParams,
+    surfaceId: string,
+    source: AsyncIterable<LLMStreamEvent>,
+  ): { stream: AsyncIterable<LLMStreamEvent>; finish: (ctx: RequestContext) => Promise<void> } {
+    const tender = config.tender
+    if (!tender || !account) return { stream: source, finish: async () => {} }
+    const minWaitMs = tender.minWaitMs ?? TENDER_DEFAULTS.MIN_WAIT_MS
+    let placement: { placementId: string; usdcPerImpression: number; line: string } | null = null
+    const startedAt = Date.now()
+    // Open a placement once the developer has been waiting `minWaitMs` for this
+    // turn to stream. The timer only ever signals serve() — it never receives the
+    // content stream, so an ad can't be spliced into the response (the placement
+    // invariant holds by construction).
+    const timer = setTimeout(() => {
+      placement = tender.serve({
+        requestId: reqId,
+        surfaceId,
+        userId: account,
+        userWallet: account,
+        agentic: (params.tools?.length ?? 0) > 0,
+      })
+    }, minWaitMs)
+    // Pass-through: yield every event unchanged, just observe when the turn ends.
+    async function* observed(): AsyncIterable<LLMStreamEvent> {
+      try {
+        for await (const event of source) yield event
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    const finish = async (ctx: RequestContext): Promise<void> => {
+      clearTimeout(timer)
+      if (!placement) return
+      await tender.settle({
+        userId: account,
+        requestId: reqId,
+        model: ctx.model ?? params.model ?? 'unknown',
+        billedCostUsd: ctx.costUsd ?? 0,
+        measuredWaitMs: Date.now() - startedAt,
+        placement,
+        surfaceId,
+      })
+    }
+    return { stream: observed(), finish }
+  }
+
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
-  app.get('/v1/models', (c) => {
-    if (!checkBearer(config.apiKeys, c.req.header('authorization'))) {
+  app.get('/v1/models', async (c) => {
+    if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
     return c.json({
@@ -101,7 +176,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    if (!checkBearer(config.apiKeys, c.req.header('authorization'))) {
+    const auth = await resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
 
@@ -116,6 +192,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = openAIRequestToChatParams(body)
+    // A per-user key attributes the request to its account — so the developer's
+    // IDE traffic ties to their wallet, no `user` field needed. Overrides `user`.
+    if (auth.account?.userId) {
+      params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
+    }
     const id = requestId()
     const ctx: RequestContext = {}
 
@@ -129,14 +210,22 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         const controller = new AbortController()
         stream.onAbort(() => controller.abort())
 
+        const { stream: tstream, finish } = wrapTender(
+          auth.account?.userId,
+          id,
+          params,
+          'gateway-openai',
+          router.chatStream(params, { signal: controller.signal }),
+        )
         try {
           await als.run(ctx, async () => {
-            for await (const event of router.chatStream(params, { signal: controller.signal })) {
+            for await (const event of tstream) {
               for (const chunk of encoder.forEvent(event)) {
                 await stream.writeSSE({ data: JSON.stringify(chunk) })
               }
             }
           })
+          await finish(ctx)
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
             await stream.writeSSE({
               data: JSON.stringify({
@@ -162,6 +251,90 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toOpenAIError(err)
+      return c.json(errBody, status as 400)
+    }
+  })
+
+  // ── Anthropic Messages API — for Claude Code / Anthropic-SDK agents ────────
+  // Point Claude Code here with ANTHROPIC_BASE_URL=<gateway> (NO /v1 — it
+  // appends /v1/messages). Auth via x-api-key (ANTHROPIC_API_KEY) or Bearer
+  // (ANTHROPIC_AUTH_TOKEN); both resolve a per-user key, same as the OpenAI side.
+  const anthropicAuth = (c: Context): string | undefined => {
+    const bearer = c.req.header('authorization')
+    if (bearer) return bearer
+    const key = c.req.header('x-api-key')
+    return key ? `Bearer ${key}` : undefined
+  }
+  const anthropicAuthError = { type: 'error' as const, error: { type: 'authentication_error', message: 'Invalid API key' } }
+  const anthropicBadJson = { type: 'error' as const, error: { type: 'invalid_request_error', message: 'Invalid JSON body' } }
+
+  app.post('/v1/messages/count_tokens', async (c) => {
+    if (!(await resolveAuth(config, anthropicAuth(c))).ok) return c.json(anthropicAuthError, 401)
+    let body: AnthropicChatRequest
+    try {
+      body = (await c.req.json()) as AnthropicChatRequest
+    } catch {
+      return c.json(anthropicBadJson, 400)
+    }
+    return c.json({ input_tokens: estimateInputTokens(body) })
+  })
+
+  app.post('/v1/messages', async (c) => {
+    const auth = await resolveAuth(config, anthropicAuth(c))
+    if (!auth.ok) return c.json(anthropicAuthError, 401)
+
+    let body: AnthropicChatRequest
+    try {
+      body = (await c.req.json()) as AnthropicChatRequest
+    } catch {
+      return c.json(anthropicBadJson, 400)
+    }
+    if (!body || !Array.isArray(body.messages)) {
+      return c.json({ type: 'error' as const, error: { type: 'invalid_request_error', message: '`messages` is required' } }, 400)
+    }
+
+    const params = anthropicRequestToChatParams(body)
+    if (auth.account?.userId) params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
+    const id = `msg_${randomBytes(12).toString('hex')}`
+    const ctx: RequestContext = {}
+
+    if (body.stream) {
+      return streamSSE(c, async (stream) => {
+        const encoder = createAnthropicSSEEncoder(body.model, id)
+        const controller = new AbortController()
+        stream.onAbort(() => controller.abort())
+        const { stream: tstream, finish } = wrapTender(
+          auth.account?.userId,
+          id,
+          params,
+          'gateway-anthropic',
+          router.chatStream(params, { signal: controller.signal }),
+        )
+        try {
+          await als.run(ctx, async () => {
+            for await (const event of tstream) {
+              for (const f of encoder.forEvent(event)) {
+                await stream.writeSSE({ event: f.event, data: f.data })
+              }
+            }
+          })
+          await finish(ctx)
+        } catch (err) {
+          await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
+        }
+      })
+    }
+
+    try {
+      const res = await als.run(ctx, () => router.chat(params))
+      if (exposeCost) {
+        if (ctx.model) c.header('x-shipyard-model', ctx.model)
+        if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
+        if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+      }
+      return c.json(llmResponseToAnthropicMessage(res, body.model, id))
+    } catch (err) {
+      const { status, body: errBody } = toAnthropicError(err)
       return c.json(errBody, status as 400)
     }
   })
