@@ -260,6 +260,12 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 </style></head><body><div class="wrap">
 <h1>Connect Shipyard to your IDE</h1>
 <p class="sub">One endpoint for Claude Code, Cursor, Codex &amp; any agent. Routes every request to the cheapest capable model, and your idle wait-time earns kickbacks — both credited to your wallet.</p>
+<div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
+  <strong>Fastest — one command</strong> <span class="muted">— wires Claude Code automatically</span>
+  <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
+  <div class="note">Issues a key, writes <code>~/.claude/settings.json</code>, and adds a live-earnings status line. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> to set a payout wallet.</div>
+</div>
+<div class="note" style="text-align:center;margin:6px 0">— or get a key + config manually —</div>
 <div class="card">
   <div class="row">
     <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
@@ -293,6 +299,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 <script>
 const base = location.origin + '/v1';
 const $=s=>document.querySelector(s);
+$('#oneliner').textContent='npx shipyard-inference connect --url '+location.origin;
 $('#gen').addEventListener('click', async ()=>{
   $('#gen').disabled=true; $('#gen').textContent='Generating…';
   try{

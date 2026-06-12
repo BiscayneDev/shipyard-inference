@@ -20,6 +20,7 @@
     }
   },
   "bin": {
+    "shipyard-inference": "./dist/connect/bin.js",
     "shipyard-gateway": "./dist/gateway/bin.js",
     "shipyard-operator": "./dist/operator/bin.js"
   },
