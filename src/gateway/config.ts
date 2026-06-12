@@ -4,6 +4,7 @@ import type { RouterEvent } from '../router/router.js'
 import type { CacheStore } from '../router/cache.js'
 import type { UsageRecorder } from '../router/usage.js'
 import type { TelemetryReporter } from '../operator/reporter.js'
+import type { ApiKeyStore } from './keys.js'
 
 export interface GatewayModel {
   id: string
@@ -36,6 +37,13 @@ export interface GatewayConfig {
   telemetry?: TelemetryReporter
   /** Static bearer keys. Empty/omitted ⇒ auth disabled (dev only; logs a warning). */
   apiKeys?: string[]
+  /**
+   * Per-user API key store. When set, a request's `sk-shipyard-…` bearer resolves
+   * to an account and the request is auto-attributed to that account's `userId`
+   * (overriding the OpenAI `user` field) — so a developer's IDE traffic ties to
+   * their wallet for routing rebates + Tender kickbacks. Composed with `apiKeys`.
+   */
+  keyStore?: ApiKeyStore
   cors?: { origins: string[] | '*' }
   /** Models advertised by `GET /v1/models`. Defaults to candidates' declared models. */
   models?: GatewayModel[]

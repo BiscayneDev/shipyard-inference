@@ -13,7 +13,7 @@ import {
   toOpenAIError,
 } from '../openai-compat/index.js'
 import type { OpenAIChatRequest, OpenAIErrorBody } from '../openai-compat/index.js'
-import { checkBearer } from './auth.js'
+import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 
 interface RequestContext {
@@ -87,7 +87,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
   app.get('/v1/models', (c) => {
-    if (!checkBearer(config.apiKeys, c.req.header('authorization'))) {
+    if (!resolveAuth(config, c.req.header('authorization')).ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
     return c.json({
@@ -102,7 +102,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    if (!checkBearer(config.apiKeys, c.req.header('authorization'))) {
+    const auth = resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
 
@@ -117,6 +118,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = openAIRequestToChatParams(body)
+    // A per-user key attributes the request to its account — so the developer's
+    // IDE traffic ties to their wallet, no `user` field needed. Overrides `user`.
+    if (auth.account?.userId) {
+      params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
+    }
     const id = requestId()
     const ctx: RequestContext = {}
 
