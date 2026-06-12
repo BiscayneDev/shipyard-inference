@@ -36,16 +36,16 @@ export interface AuthResult {
  * (and yields the attributed `account`); otherwise the static `apiKeys` list is
  * used. Auth is disabled only when NEITHER is configured (dev convenience).
  */
-export function resolveAuth(
+export async function resolveAuth(
   opts: { apiKeys?: string[]; keyStore?: ApiKeyStore },
   authHeader: string | undefined,
-): AuthResult {
+): Promise<AuthResult> {
   const keys = opts.apiKeys ?? []
   if (keys.length === 0 && !opts.keyStore) return { ok: true } // auth disabled (dev)
   const token = bearerToken(authHeader)
   if (!token) return { ok: false }
   if (opts.keyStore) {
-    const account = opts.keyStore.resolve(token)
+    const account = await opts.keyStore.resolve(token)
     if (account) return { ok: true, account }
   }
   if (keys.some((key) => safeEqual(key, token))) return { ok: true }

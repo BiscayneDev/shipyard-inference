@@ -5,5 +5,11 @@ export { resolveModelList } from './config.js'
 export type { GatewayConfig, GatewayModel } from './config.js'
 export { checkBearer, resolveAuth } from './auth.js'
 export type { AuthResult } from './auth.js'
-export { MemoryApiKeyStore, generateApiKey } from './keys.js'
-export type { ApiKeyStore, Account, IssuedKey } from './keys.js'
+export {
+  MemoryApiKeyStore,
+  SupabaseApiKeyStore,
+  generateApiKey,
+  hashApiKey,
+  SUPABASE_API_KEYS_SCHEMA,
+} from './keys.js'
+export type { ApiKeyStore, Account, IssuedKey, SupabaseApiKeyStoreOptions } from './keys.js'

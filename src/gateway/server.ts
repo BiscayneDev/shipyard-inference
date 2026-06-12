@@ -56,10 +56,10 @@ function errorJson(
  * via AsyncLocalStorage and surfaced as `x-shipyard-*` headers / an SSE trailer.
  */
 export function createGatewayApp(config: GatewayConfig): Hono {
-  if (!config.apiKeys || config.apiKeys.length === 0) {
+  if ((!config.apiKeys || config.apiKeys.length === 0) && !config.keyStore) {
     console.warn(
-      '[shipyard-inference] gateway started with NO api keys — auth is disabled. ' +
-        'Set apiKeys for anything but local dev.',
+      '[shipyard-inference] gateway started with NO api keys and no key store — ' +
+        'auth is disabled. Set apiKeys or a keyStore for anything but local dev.',
     )
   }
 
@@ -86,8 +86,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
-  app.get('/v1/models', (c) => {
-    if (!resolveAuth(config, c.req.header('authorization')).ok) {
+  app.get('/v1/models', async (c) => {
+    if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
     return c.json({
@@ -102,7 +102,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    const auth = resolveAuth(config, c.req.header('authorization'))
+    const auth = await resolveAuth(config, c.req.header('authorization'))
     if (!auth.ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
