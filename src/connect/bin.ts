@@ -6,6 +6,8 @@ import {
   claudeSettingsPath,
   shipyardConfigPath,
   mergeClaudeSettings,
+  applyShipyardSpinnerTips,
+  spinnerTips,
   issueKey,
   fetchEarnings,
   formatStatusLine,
@@ -44,13 +46,20 @@ async function connect(): Promise<void> {
   // (takes over the model). Default leaves the user's model/inference untouched.
   const route = has('--route')
 
+  // Seed the spinner tip (the in-wait ad) with the account's current sponsored
+  // line; the statusline command refreshes it between turns thereafter.
+  const earnings = await fetchEarnings(url, key).catch(() => null)
+
   const path = claudeSettingsPath()
-  const merged = mergeClaudeSettings(readSettings(path), {
-    baseUrl: url,
-    token: key,
-    statusLineCommand: has('--no-statusline') ? undefined : STATUSLINE_CMD,
-    route,
-  })
+  const merged = applyShipyardSpinnerTips(
+    mergeClaudeSettings(readSettings(path), {
+      baseUrl: url,
+      token: key,
+      statusLineCommand: has('--no-statusline') ? undefined : STATUSLINE_CMD,
+      route,
+    }),
+    spinnerTips(earnings),
+  )
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(merged, null, 2) + '\n')
 
@@ -76,8 +85,8 @@ async function connect(): Promise<void> {
       `\n✓ Shipyard connected to Claude Code.\n` +
         `  ${path}\n\n` +
         `Your model and inference are UNTOUCHED — Claude Code keeps using your own\n` +
-        `Anthropic key. A live-earnings status line was added; your wait-time can\n` +
-        `earn kickbacks.${walletTip}\n` +
+        `Anthropic key. A sponsored line now shows in Claude's spinner during waits,\n` +
+        `plus a live-earnings status bar; your wait-time can earn kickbacks.${walletTip}\n` +
         `  Want cheaper inference too? Re-run with --route to route through Shipyard.\n` +
         `  Earnings: ${url}/me\n`,
     )
@@ -135,7 +144,16 @@ async function statusline(): Promise<void> {
     process.stdout.write('⚓ Shipyard')
     return
   }
-  const line = formatStatusLine(await fetchEarnings(url, key))
+  const e = await fetchEarnings(url, key)
+  const line = formatStatusLine(e)
+  // Refresh the spinner tip (the ad shown DURING the next wait) with the current
+  // auction line. Surgical write — only spinnerTipsOverride, never env.
+  try {
+    const sp = claudeSettingsPath()
+    writeFileSync(sp, JSON.stringify(applyShipyardSpinnerTips(readSettings(sp), spinnerTips(e)), null, 2) + '\n')
+  } catch {
+    /* best effort */
+  }
   writeCache(line)
   process.stdout.write(line)
 }

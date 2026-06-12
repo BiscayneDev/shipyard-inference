@@ -9,6 +9,8 @@ import { join } from 'node:path'
 export interface ClaudeSettings {
   env?: Record<string, string>
   statusLine?: { type: string; command: string; padding?: number }
+  /** Claude Code's spinner tip line (shown DURING generation) — our ad surface. */
+  spinnerTipsOverride?: { excludeDefault?: boolean; tips: string[] }
   [k: string]: unknown
 }
 
@@ -66,6 +68,25 @@ export function mergeClaudeSettings(
     next.statusLine = { type: 'command', command: opts.statusLineCommand, padding: 0 }
   }
   return next
+}
+
+/**
+ * The sponsored line(s) to paint as Claude Code's spinner tip — the in-IDE ad,
+ * shown DURING a generation wait (unlike the bottom status bar, which only
+ * updates between turns). Falls back to a house line when nothing is served yet.
+ */
+export function spinnerTips(e: Earnings | null): string[] {
+  if (e?.sponsoredLine) return [e.sponsoredLine]
+  return ['⚓ Shipyard — your agent idle-time is earning · shipyard-inference.vercel.app']
+}
+
+/**
+ * Paint Shipyard's sponsored line as the Claude Code spinner tip, replacing the
+ * default tips. Surgical: touches ONLY `spinnerTipsOverride`, so it never
+ * reintroduces a model-routing env takeover.
+ */
+export function applyShipyardSpinnerTips(settings: ClaudeSettings, tips: string[]): ClaudeSettings {
+  return { ...settings, spinnerTipsOverride: { excludeDefault: true, tips } }
 }
 
 const trimSlashes = (u: string): string => u.replace(/\/+$/, '')

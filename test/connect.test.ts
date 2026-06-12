@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mergeClaudeSettings,
+  applyShipyardSpinnerTips,
+  spinnerTips,
   issueKey,
   fetchEarnings,
   formatStatusLine,
@@ -55,6 +57,25 @@ test('mergeClaudeSettings: does not clobber an existing status line', () => {
     { baseUrl: 'https://gw', token: 't', statusLineCommand: 'npx -y shipyard-inference statusline' },
   )
   assert.equal(merged.statusLine?.command, 'my-own')
+})
+
+test('spinnerTips: uses the served sponsored line, else a house fallback', () => {
+  assert.deepEqual(
+    spinnerTips({ requests: 1, spentUsd: 0, savedUsd: 0, savedPct: 0, kickbacksUsd: 0, sponsoredLine: '🚀 Acme Cloud' }),
+    ['🚀 Acme Cloud'],
+  )
+  assert.equal(spinnerTips(null).length, 1)
+  assert.match(spinnerTips(null)[0], /Shipyard/)
+})
+
+test('applyShipyardSpinnerTips: sets spinnerTipsOverride only, preserves the rest', () => {
+  const next = applyShipyardSpinnerTips(
+    { statusLine: { type: 'command', command: 'x' }, env: { FOO: 'bar' } },
+    ['🚀 Acme Cloud'],
+  )
+  assert.deepEqual(next.spinnerTipsOverride, { excludeDefault: true, tips: ['🚀 Acme Cloud'] })
+  assert.equal(next.statusLine?.command, 'x', 'status line preserved')
+  assert.equal(next.env?.FOO, 'bar', 'env preserved (no takeover introduced)')
 })
 
 test('issueKey: POSTs /api/keys and returns the key', async () => {
