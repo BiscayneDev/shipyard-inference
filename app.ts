@@ -529,41 +529,76 @@ async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('
 let pollTimer=null;
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 function poll(id){stopPoll();pollTimer=setInterval(async function(){try{const r=await fetch('/api/campaigns/'+id+'/verify',{method:'POST'});const d=await r.json();if(d.status==='active'){stopPoll();$('#paystatus').innerHTML='<span class="green">✓ Payment confirmed — campaign is live'+(d.signature?(' · tx '+d.signature.slice(0,10)+'…'):'')+'</span>';refresh();}}catch(e){}},4000);}
-// Desktop Phantom registers no solana: URL handler, so the deep link only works
-// on mobile / via QR. On desktop we drive the injected provider directly: connect,
-// build the USDC transfer (tagging the campaign reference so the gateway verifier
-// finds it), and let the extension pop up to sign.
-function detectPhantom(){return (window.phantom&&window.phantom.solana&&window.phantom.solana.isPhantom)?window.phantom.solana:((window.solana&&window.solana.isPhantom)?window.solana:null);}
-async function payWithPhantom(pay){
-  var provider=detectPhantom();if(!provider)throw new Error('Phantom not detected');
-  var rpc=pay.network==='mainnet'?'https://api.mainnet-beta.solana.com':'https://api.devnet.solana.com';
+// Pay with WHATEVER wallet the advertiser has. Modern Solana wallets (Phantom,
+// Solflare, Backpack, Glow, Coinbase, …) register via the Wallet Standard, so we
+// enumerate those and show a button per wallet. Fallbacks: a legacy window.solana
+// provider, and the solana: deep link + QR (mobile / no extension). The browser
+// builds the USDC transfer and tags it with the campaign reference so the
+// gateway's on-chain verifier finds exactly this deposit.
+function rpcFor(net){return net==='mainnet'?'https://api.mainnet-beta.solana.com':'https://api.devnet.solana.com';}
+async function loadSolana(){
   var web3=await import('https://esm.sh/@solana/web3.js@1.95.3');
   var spl=await import('https://esm.sh/@solana/spl-token@0.4.9?deps=@solana/web3.js@1.95.3');
-  var conn=new web3.Connection(rpc,'confirmed');
-  var res=await provider.connect();
-  var payer=new web3.PublicKey(res.publicKey.toString());
+  return {web3:web3,spl:spl};
+}
+// USDC transferChecked to the treasury (idempotent dest ATA create) + reference tag.
+async function buildTransfer(web3,spl,conn,pay,payer){
   var mint=new web3.PublicKey(pay.usdcMint),treasury=new web3.PublicKey(pay.treasury),reference=new web3.PublicKey(pay.reference);
   var payerAta=await spl.getAssociatedTokenAddress(mint,payer),destAta=await spl.getAssociatedTokenAddress(mint,treasury);
   var atomic=BigInt(Math.round(Number(pay.amountUsdc)*1e6));
   var transferIx=spl.createTransferCheckedInstruction(payerAta,mint,destAta,payer,atomic,6);
-  transferIx.keys.push({pubkey:reference,isSigner:false,isWritable:false}); // Solana Pay reference
+  transferIx.keys.push({pubkey:reference,isSigner:false,isWritable:false});
   var bh=await conn.getLatestBlockhash();
-  var tx=new web3.Transaction({feePayer:payer,recentBlockhash:bh.blockhash});
-  tx.add(spl.createAssociatedTokenAccountIdempotentInstruction(payer,destAta,treasury,mint)); // safe if treasury ATA already exists
-  tx.add(transferIx);
+  var msg=new web3.TransactionMessage({payerKey:payer,recentBlockhash:bh.blockhash,instructions:[spl.createAssociatedTokenAccountIdempotentInstruction(payer,destAta,treasury,mint),transferIx]}).compileToV0Message();
+  return new web3.VersionedTransaction(msg);
+}
+async function listWallets(){
+  try{var mod=await import('https://esm.sh/@wallet-standard/app@1.1.0');var ws=mod.getWallets().get();
+    return ws.filter(function(w){return w.chains&&w.chains.some(function(c){return c.indexOf('solana:')===0;})&&w.features['standard:connect']&&(w.features['solana:signAndSendTransaction']||w.features['solana:signTransaction']);});}catch(e){return [];}
+}
+async function payWithStandard(wallet,pay){
+  var s=await loadSolana();var conn=new s.web3.Connection(rpcFor(pay.network),'confirmed');
+  var cr=await wallet.features['standard:connect'].connect();var acct=(cr&&cr.accounts&&cr.accounts[0])||wallet.accounts[0];
+  var payer=new s.web3.PublicKey(acct.publicKey);
+  var tx=await buildTransfer(s.web3,s.spl,conn,pay,payer);
+  var chain='solana:'+(pay.network==='mainnet'?'mainnet':'devnet');
+  var b58=(await import('https://esm.sh/bs58@5')).default;
+  if(wallet.features['solana:signAndSendTransaction']){
+    var out=await wallet.features['solana:signAndSendTransaction'].signAndSendTransaction({account:acct,chain:chain,transaction:tx.serialize()});
+    return b58.encode(out[0].signature);
+  }
+  var sg=await wallet.features['solana:signTransaction'].signTransaction({account:acct,chain:chain,transaction:tx.serialize()});
+  return await conn.sendRawTransaction(sg[0].signedTransaction);
+}
+async function payWithLegacy(pay){
+  var provider=(window.phantom&&window.phantom.solana)?window.phantom.solana:window.solana;
+  if(!provider||!provider.signAndSendTransaction)throw new Error('No injected wallet');
+  var s=await loadSolana();var conn=new s.web3.Connection(rpcFor(pay.network),'confirmed');
+  var res=await provider.connect();var pk=(res&&res.publicKey)?res.publicKey:provider.publicKey;
+  var tx=await buildTransfer(s.web3,s.spl,conn,pay,new s.web3.PublicKey(pk.toString()));
   var out=await provider.signAndSendTransaction(tx);
   return (out&&out.signature)?out.signature:String(out);
 }
-function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toFixed(2);var ph=detectPhantom();var h=''
-  +'<div class="note">'+(ph?'Click <strong>Pay with Phantom</strong> to sign in your wallet.':'Scan with a Solana wallet, or')+' send exactly <strong>'+amt+' USDC</strong> on <strong>'+pay.network+'</strong> to the treasury below. Campaign <span class="mono">'+esc(campaign.campaignId)+'</span> goes live the moment the transfer confirms.</div>'
-  +'<div class="paygrid"><div><a class="btn" id="open" href="'+pay.url+'">'+(ph?'Pay with Phantom':'Open in wallet')+'</a><canvas id="qrc" class="qr" width="200" height="200"></canvas></div>'
+function payButton(label,onclick){var b=document.createElement('button');b.textContent=label;b.style.cssText='margin:8px 8px 0 0';b.addEventListener('click',onclick);return b;}
+async function renderWallets(pay){
+  var box=$('#wallets');box.textContent='Detecting wallets…';
+  var ws=await listWallets();box.innerHTML='';
+  function run(p,btn){return async function(){if(btn)btn.disabled=true;$('#paystatus').textContent='Opening wallet — approve the transfer…';try{var sig=await p();$('#paystatus').innerHTML='⏳ Sent ('+String(sig).slice(0,10)+'…) — confirming on-chain…';}catch(err){$('#paystatus').innerHTML='<span style="color:#f6a36b">✗ '+esc((err&&err.message)||String(err))+'</span>';if(btn)btn.disabled=false;}};}
+  if(ws.length){ws.forEach(function(w){var b=payButton('Pay with '+w.name,null);b.addEventListener('click',run(function(){return payWithStandard(w,pay);},b));box.appendChild(b);});}
+  else if(window.solana||(window.phantom&&window.phantom.solana)){var b=payButton('Pay with browser wallet',null);b.addEventListener('click',run(function(){return payWithLegacy(pay);},b));box.appendChild(b);}
+  else{box.innerHTML='<span class="muted">No browser wallet detected — scan the QR or send manually.</span>';}
+}
+function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toFixed(2);var h=''
+  +'<div class="note">Pay <strong>'+amt+' USDC</strong> on <strong>'+pay.network+'</strong> with your wallet below, or scan the QR / send manually. Campaign <span class="mono">'+esc(campaign.campaignId)+'</span> goes live the moment the transfer confirms.</div>'
+  +'<div id="wallets" class="note"></div>'
+  +'<div class="paygrid"><div><a class="btn" id="open" href="'+pay.url+'">Open in wallet (mobile)</a><canvas id="qrc" class="qr" width="200" height="200"></canvas></div>'
   +'<div class="fields"><label>Treasury · USDC '+pay.network+'</label><div class="addr">'+esc(pay.treasury)+'</div>'
   +'<label>Amount</label><div class="addr">'+amt+' USDC</div>'
   +'<label>Reference (tagged on your transfer)</label><div class="addr">'+esc(pay.reference)+'</div></div></div>'
   +'<div class="note" id="paystatus">⏳ Waiting for payment…</div>';
   $('#paybody').innerHTML=h;$('#pay').style.display='block';
   try{if(typeof QRCode!=='undefined'){QRCode.toCanvas(document.getElementById('qrc'),pay.url,{width:200,margin:1});}}catch(e){}
-  if(ph){var open=document.getElementById('open');open.addEventListener('click',async function(e){e.preventDefault();open.style.pointerEvents='none';$('#paystatus').textContent='Opening Phantom — approve the transfer…';try{var sig=await payWithPhantom(pay);$('#paystatus').innerHTML='⏳ Sent ('+sig.slice(0,10)+'…) — confirming on-chain…';}catch(err){$('#paystatus').innerHTML='<span style="color:#f6a36b">✗ '+esc((err&&err.message)||String(err))+'</span>';open.style.pointerEvents='';}});}
+  renderWallets(pay);
   poll(campaign.campaignId);$('#pay').scrollIntoView({behavior:'smooth'});}
 $('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else if(d.payment){$('#msg').innerHTML='<span class="green">✓ Campaign created — fund it below to go live.</span>';showPayment(d.campaign,d.payment);}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';est();refresh();}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
 refresh();
