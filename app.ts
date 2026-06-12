@@ -259,7 +259,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 .note{font-size:13px;color:var(--muted);margin-top:10px}a{color:var(--accent)}
 </style></head><body><div class="wrap">
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">One OpenAI-compatible endpoint. Routes every request to the cheapest capable model, and your idle wait-time earns kickbacks — both credited to your wallet.</p>
+<p class="sub">One endpoint for Claude Code, Cursor, Codex &amp; any agent. Routes every request to the cheapest capable model, and your idle wait-time earns kickbacks — both credited to your wallet.</p>
 <div class="card">
   <div class="row">
     <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
@@ -272,6 +272,10 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
   <pre><span class="copy" data-copy="#keyval">copy</span><span id="keyval" class="key"></span></pre>
   <div class="k">Base URL</div>
   <pre><span class="copy" data-copy="#baseurl">copy</span><span id="baseurl"></span></pre>
+  <div class="card">
+    <strong>Claude Code</strong> <span class="muted">— route Claude Code through Shipyard (Anthropic Messages API)</span>
+    <pre><span class="copy" data-copy="#claude">copy</span><span id="claude"></span></pre>
+  </div>
   <div class="card">
     <strong>Cursor</strong> <span class="muted">— Settings → Models → OpenAI API Key: “Override base URL”</span>
     <pre><span class="copy" data-copy="#cursor">copy</span><span id="cursor"></span></pre>
@@ -296,6 +300,7 @@ $('#gen').addEventListener('click', async ()=>{
     const d=await r.json();
     $('#keyval').textContent=d.key;
     $('#baseurl').textContent=base;
+    $('#claude').textContent='export ANTHROPIC_BASE_URL="'+location.origin+'"\\nexport ANTHROPIC_AUTH_TOKEN="'+d.key+'"\\nclaude';
     $('#cursor').textContent='Base URL: '+base+'\\nAPI Key:  '+d.key;
     $('#cont').textContent=JSON.stringify({models:[{title:'Shipyard',provider:'openai',model:'auto',apiBase:base,apiKey:d.key}]},null,2);
     $('#env').textContent='export OPENAI_BASE_URL="'+base+'"\\nexport OPENAI_API_KEY="'+d.key+'"';
