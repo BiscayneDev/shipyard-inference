@@ -62,6 +62,8 @@ export interface Earnings {
   savedUsd: number
   savedPct: number
   kickbacksUsd: number
+  /** The sponsored line currently served to this account (shown during waits). */
+  sponsoredLine?: string | null
 }
 
 /** Fetch the developer's earnings for the status line (fast, with a timeout). */
@@ -87,9 +89,17 @@ export async function fetchEarnings(
   }
 }
 
-/** The one-line status shown in Claude Code's status bar (kickbacks-style). */
+/**
+ * The one-line status shown in Claude Code's status bar (kickbacks-style). When a
+ * sponsored line is being served (during a wait), it leads — that's the in-IDE ad
+ * impression — with earnings trailing. Otherwise it's the earnings summary.
+ */
 export function formatStatusLine(e: Earnings | null): string {
   if (!e) return '⚓ Shipyard'
+  if (e.sponsoredLine) {
+    const earn = e.kickbacksUsd > 0 ? `+$${e.kickbacksUsd.toFixed(4)}` : `saved $${e.savedUsd.toFixed(4)}`
+    return `${e.sponsoredLine}  ·  ⚓ ${earn}`
+  }
   const saved = `saved $${e.savedUsd.toFixed(4)}${e.savedPct ? ` (${e.savedPct}%)` : ''}`
   const kick = e.kickbacksUsd > 0 ? ` · kickbacks $${e.kickbacksUsd.toFixed(4)}` : ''
   return `⚓ Shipyard · ${saved}${kick}`

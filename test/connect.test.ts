@@ -48,3 +48,10 @@ test('fetchEarnings + formatStatusLine: earnings → status line, failure → fa
   assert.equal(await fetchEarnings('https://gw', 'sk', { fetchImpl: bad }), null)
   assert.equal(formatStatusLine(null), '⚓ Shipyard')
 })
+
+test('formatStatusLine: a sponsored line leads (the in-IDE ad), earnings trail', () => {
+  assert.equal(
+    formatStatusLine({ requests: 1, spentUsd: 0.0001, savedUsd: 0.001, savedPct: 50, kickbacksUsd: 0.0025, sponsoredLine: '🚀 Acme Cloud' }),
+    '🚀 Acme Cloud  ·  ⚓ +$0.0025',
+  )
+})

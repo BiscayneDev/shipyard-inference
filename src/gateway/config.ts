@@ -11,6 +11,27 @@ export interface GatewayModel {
   ownedBy?: string
 }
 
+/** Minimal Tender surface the gateway needs (satisfied by `GatewayTender`). */
+export interface GatewayTenderHook {
+  minWaitMs?: number
+  serve(ctx: {
+    requestId: string
+    surfaceId: string
+    userId?: string
+    userWallet?: string
+    agentic?: boolean
+  }): { placementId: string; usdcPerImpression: number } | null
+  settle(args: {
+    userId: string
+    requestId: string
+    model: string
+    billedCostUsd: number
+    measuredWaitMs: number
+    placement: { placementId: string; usdcPerImpression: number }
+    surfaceId: string
+  }): unknown
+}
+
 export interface GatewayConfig {
   /** Routable backends, exactly as passed to `Router`. */
   candidates: ProviderCandidate[]
@@ -47,6 +68,13 @@ export interface GatewayConfig {
   cors?: { origins: string[] | '*' }
   /** Models advertised by `GET /v1/models`. Defaults to candidates' declared models. */
   models?: GatewayModel[]
+  /**
+   * Tender hook — monetize the request's wait state. On a qualifying wait during
+   * a streaming request, `serve(ctx)` auctions a sponsored placement (remembered
+   * as the account's current ad); on completion `settle(...)` attests the real,
+   * billed impression and accrues the account's kickback. Streaming-only.
+   */
+  tender?: GatewayTenderHook
   /** Emit `x-shipyard-*` cost headers / trailer. Default true. */
   exposeCostHeaders?: boolean
   /** Port for `startGateway`. Default 8787. */

@@ -21,6 +21,8 @@ import {
   toAnthropicError,
 } from '../anthropic-compat/index.js'
 import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
+import { observeWaitWindow } from '../tender/wait.js'
+import type { LLMChatParams, LLMStreamEvent } from '../types.js'
 import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 
@@ -90,6 +92,55 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   const exposeCost = config.exposeCostHeaders !== false
   const app = new Hono()
 
+  // Tender — monetize the wait state of a streaming request. Wraps the model
+  // stream: on a qualifying wait it auctions a placement (the account's current
+  // ad, shown in their status line); on completion it attests the real, billed
+  // impression and accrues the kickback. A no-op without `config.tender` or an
+  // attributed account. The content stream passes through untouched.
+  function wrapTender(
+    account: string | undefined,
+    reqId: string,
+    params: LLMChatParams,
+    surfaceId: string,
+    source: AsyncIterable<LLMStreamEvent>,
+  ): { stream: AsyncIterable<LLMStreamEvent>; finish: (ctx: RequestContext) => void } {
+    const tender = config.tender
+    if (!tender || !account) return { stream: source, finish: () => {} }
+    let placement: { placementId: string; usdcPerImpression: number } | null = null
+    let waitMs: number | undefined
+    const observed = observeWaitWindow(
+      source,
+      {
+        onWaitWindow: () => {
+          placement = tender.serve({
+            requestId: reqId,
+            surfaceId,
+            userId: account,
+            userWallet: account,
+            agentic: (params.tools?.length ?? 0) > 0,
+          })
+        },
+        onFirstToken: (ms) => {
+          waitMs = ms
+        },
+      },
+      { minWaitMs: tender.minWaitMs },
+    )
+    const finish = (ctx: RequestContext): void => {
+      if (!placement) return
+      tender.settle({
+        userId: account,
+        requestId: reqId,
+        model: ctx.model ?? params.model ?? 'unknown',
+        billedCostUsd: ctx.costUsd ?? 0,
+        measuredWaitMs: waitMs ?? 0,
+        placement,
+        surfaceId,
+      })
+    }
+    return { stream: observed, finish }
+  }
+
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
@@ -144,14 +195,22 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         const controller = new AbortController()
         stream.onAbort(() => controller.abort())
 
+        const { stream: tstream, finish } = wrapTender(
+          auth.account?.userId,
+          id,
+          params,
+          'gateway-openai',
+          router.chatStream(params, { signal: controller.signal }),
+        )
         try {
           await als.run(ctx, async () => {
-            for await (const event of router.chatStream(params, { signal: controller.signal })) {
+            for await (const event of tstream) {
               for (const chunk of encoder.forEvent(event)) {
                 await stream.writeSSE({ data: JSON.stringify(chunk) })
               }
             }
           })
+          finish(ctx)
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
             await stream.writeSSE({
               data: JSON.stringify({
@@ -229,14 +288,22 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         const encoder = createAnthropicSSEEncoder(body.model, id)
         const controller = new AbortController()
         stream.onAbort(() => controller.abort())
+        const { stream: tstream, finish } = wrapTender(
+          auth.account?.userId,
+          id,
+          params,
+          'gateway-anthropic',
+          router.chatStream(params, { signal: controller.signal }),
+        )
         try {
           await als.run(ctx, async () => {
-            for await (const event of router.chatStream(params, { signal: controller.signal })) {
+            for await (const event of tstream) {
               for (const f of encoder.forEvent(event)) {
                 await stream.writeSSE({ event: f.event, data: f.data })
               }
             }
           })
+          finish(ctx)
         } catch (err) {
           await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
         }

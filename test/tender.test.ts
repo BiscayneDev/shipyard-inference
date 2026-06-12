@@ -18,6 +18,7 @@ import {
   usdcToAtomic,
   buildCampaign,
   MemoryCampaignStore,
+  GatewayTender,
   type Campaign,
   type Placement,
   type TenderRequestContext,
@@ -264,6 +265,26 @@ test('buildCampaign: derives impressions from budget/bid and validates input', (
   assert.throws(() => buildCampaign({ line: 'x', endpointUrl: '', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1), /endpointUrl/)
   assert.throws(() => buildCampaign({ line: 'x', endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.0001, fundedUsdc: 5 }, 1), /floor/)
   assert.throws(() => buildCampaign({ line: 'x', endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 0 }, 1), /fundedUsdc/)
+})
+
+test('GatewayTender: serve sets the current ad; settle accrues a valid billed impression', () => {
+  let t = 1000
+  const gt = new GatewayTender({ campaigns: [campaign({ campaignId: 'c1' })], minWaitMs: 800, now: () => t })
+  const p = gt.serve({ requestId: 'r1', surfaceId: 'gateway', userId: 'acct1' })
+  assert.ok(p, 'serves a placement')
+  assert.equal(gt.currentLine('acct1'), p!.line, 'remembered as the account current ad')
+
+  t = 3000
+  const res = gt.settle({ userId: 'acct1', requestId: 'r1', model: 'm', billedCostUsd: 0.0001, measuredWaitMs: 1200, placement: p!, surfaceId: 'gateway' })
+  assert.equal(res.valid, true)
+  assert.ok(near(res.creditedUsd, 0.0025)) // 0.5 × 0.005
+  assert.ok(near(gt.balance('acct1'), 0.0025))
+
+  // a $0 (unbilled) request is rejected by the gate — no farming impressions
+  const p2 = gt.serve({ requestId: 'r2', surfaceId: 'gateway', userId: 'acct1' })
+  const res2 = gt.settle({ userId: 'acct1', requestId: 'r2', model: 'm', billedCostUsd: 0, measuredWaitMs: 1200, placement: p2!, surfaceId: 'gateway' })
+  assert.equal(res2.valid, false)
+  assert.ok(near(gt.balance('acct1'), 0.0025), 'unbilled impression accrues nothing')
 })
 
 test('MemoryCampaignStore + Auction: a created campaign serves and can win the slot', async () => {

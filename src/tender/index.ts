@@ -4,6 +4,8 @@
 export * from './types.js'
 export { observeWaitWindow } from './wait.js'
 export type { WaitObserverHooks, WaitObserverOptions } from './wait.js'
+export { GatewayTender } from './gateway-tender.js'
+export type { GatewayTenderOptions, ServeCtx, SettleArgs } from './gateway-tender.js'
 export { Auction, matchesTargeting } from './auction.js'
 export type { AuctionOptions } from './auction.js'
 export { AuctionLog } from './log.js'
