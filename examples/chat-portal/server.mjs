@@ -39,9 +39,10 @@ import {
   observeWaitWindow,
   Auction,
   AuctionLog,
+  CreditLedger,
   loadAttestationKey,
   signAttestation,
-  assertValidAttestation,
+  accrueSettlement,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -353,6 +354,10 @@ function walletSnapshot(session) {
     pendingUsd: round6(session.pendingUsd),
     spentUsd: round6(session.spentUsd),
     savedUsd: round6(session.savedUsd),
+    // Tender idle-attention credit accrued to this wallet, and what's actually
+    // owed after netting it against the inference bill.
+    tenderCreditUsd: round6(creditLedger.balance(session.address)),
+    netOwedUsd: round6(Math.max(0, session.pendingUsd - creditLedger.balance(session.address))),
     messages: session.messages,
     settlements: session.settlements.length,
     realInference: !!session.realInference,
@@ -438,8 +443,17 @@ app.post('/api/settle', async (c) => {
   const session = sessions.get(sessionId)
   if (!session) return c.json({ error: 'unknown session' }, 404)
 
-  const amount = round6(session.pendingUsd)
-  if (amount <= 0) return c.json({ settled: 0, wallet: walletSnapshot(session) })
+  // Net the idle-attention credit against the inference bill — the user settles
+  // only what's left after Tender revenue. If credit covers it, nothing moves
+  // on-chain (the "never top up your agent" effect).
+  const pending = session.pendingUsd
+  const creditApplied = Math.min(pending, creditLedger.balance(session.address))
+  const amount = round6(Math.max(0, pending - creditApplied))
+  if (amount <= 0) {
+    if (creditApplied > 0) creditLedger.consume(session.address, creditApplied)
+    session.pendingUsd = 0
+    return c.json({ settled: 0, creditApplied: round6(creditApplied), wallet: walletSnapshot(session) })
+  }
 
   // Real meter-then-settle (Dock's proven path): move the metered USDC on-chain
   // from the Paybox wallet to the treasury. Only on success do we clear pending
@@ -472,6 +486,7 @@ app.post('/api/settle', async (c) => {
     simulated = true
   }
 
+  if (creditApplied > 0) creditLedger.consume(session.address, creditApplied)
   session.balanceUsd = Math.max(0, session.balanceUsd - amount)
   session.spentUsd += amount
   session.pendingUsd = 0
@@ -621,6 +636,10 @@ const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
 // cross-checks. Set TENDER_SIGNING_KEY (32-byte hex) for a stable, verifiable key.
 const tenderKey = loadAttestationKey()
 const auctionLog = new AuctionLog()
+// The credit ledger Tender writes into — idle-attention revenue, netted against
+// each wallet's inference bill. REQUESTER_SHARE of the impression price accrues.
+const creditLedger = new CreditLedger()
+const REQUESTER_SHARE = Number(process.env.TENDER_REQUESTER_SHARE ?? 0.5)
 
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
@@ -712,25 +731,11 @@ app.post('/api/chat', async (c) => {
         session.messages += 1
       }
 
-      await stream.writeSSE({
-        event: 'meta',
-        data: JSON.stringify({
-          model: ctx.model,
-          provider: ctx.provider,
-          actualCostUsd: actual,
-          baselineCostUsd: baseline,
-          savedUsd: saved,
-          chargedUsd: charged === undefined ? undefined : round6(charged),
-          usage: ctx.usage,
-          wallet: session ? walletSnapshot(session) : undefined,
-        }),
-      })
-
-      // Tender attestation (the moat): for a request that showed a placement, the
-      // gateway signs that a REAL, BILLED inference request produced the
-      // impression. Emitted on the side channel; this signed object is the unit
-      // settlement (step 4) releases against. In Demo mode billedCostUsd is 0, so
-      // the gate rejects it — you can't farm impressions without real inference.
+      // Tender attestation + credit accrual. Built before `meta` so the wallet
+      // snapshot reflects the new credit. accrueSettlement runs the release gate
+      // (the moat) and, only on a valid attestation, accrues REQUESTER_SHARE of
+      // the impression price to the request's wallet as an inference credit.
+      let attEvent
       if (servedPlacement) {
         const attestation = signAttestation(
           {
@@ -745,15 +750,41 @@ app.post('/api/chat', async (c) => {
           },
           tenderKey,
         )
-        const gate = assertValidAttestation(attestation, {
+        const settlement = accrueSettlement(attestation, {
           publicKeyHex: tenderKey.publicKeyHex,
+          ledger: creditLedger,
+          pricePerImpressionUsdc: servedPlacement.usdcPerImpression,
+          requesterShare: REQUESTER_SHARE,
           minWaitMs: TENDER_MIN_WAIT_MS,
           wasServed: (rid, pid) => auctionLog.wasServed(rid, pid),
+          at: Date.now(),
         })
-        await stream.writeSSE({
-          event: 'attestation',
-          data: JSON.stringify({ attestation, valid: gate.ok, reason: gate.reason }),
-        })
+        attEvent = {
+          attestation,
+          valid: settlement.status === 'accrued',
+          reason: settlement.reason,
+          creditedUsd: settlement.requesterShareUsdc,
+        }
+      }
+
+      await stream.writeSSE({
+        event: 'meta',
+        data: JSON.stringify({
+          model: ctx.model,
+          provider: ctx.provider,
+          actualCostUsd: actual,
+          baselineCostUsd: baseline,
+          savedUsd: saved,
+          chargedUsd: charged === undefined ? undefined : round6(charged),
+          usage: ctx.usage,
+          wallet: session ? walletSnapshot(session) : undefined,
+        }),
+      })
+
+      // The signed attestation rides the side channel (proof-of-impression + the
+      // credit it earned). This is what settlement released against.
+      if (attEvent) {
+        await stream.writeSSE({ event: 'attestation', data: JSON.stringify(attEvent) })
       }
 
       await stream.writeSSE({ event: 'done', data: '[DONE]' })

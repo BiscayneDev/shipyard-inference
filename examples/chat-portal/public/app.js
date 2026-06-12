@@ -303,7 +303,13 @@ function applyWallet(w) {
   $('addr').textContent = w.address
   $('addr').title = w.address
   $('balance').textContent = fmt(w.balanceUsd)
-  $('pending').textContent = fmt(w.pendingUsd)
+  // Tender: show what's actually owed after netting the idle-attention credit,
+  // and surface the credit itself when present.
+  const credit = w.tenderCreditUsd || 0
+  $('pending').textContent = fmt(w.netOwedUsd !== undefined ? w.netOwedUsd : w.pendingUsd)
+  const creditRow = $('credit-row')
+  if (creditRow) creditRow.classList.toggle('hidden', !(credit > 0))
+  if ($('tender-credit')) $('tender-credit').textContent = '−' + fmt(credit)
   $('mode-pill').textContent = w.mode
   // A real (wallet-provisioned) session leaves demo — reflect it in the top badge,
   // not just the sidebar pill, so it's clear real inference is on for this session.
@@ -676,9 +682,9 @@ function renderAttestation(d) {
   const el = $('placement-attest')
   if (!el) return
   if (d && d.valid) {
-    el.textContent = '✓ attested'
+    el.textContent = d.creditedUsd ? `✓ attested · +${fmt(d.creditedUsd)}` : '✓ attested'
     el.className = 'placement-attest ok'
-    el.title = `Gateway-signed proof-of-impression · ${d.attestation?.measuredWaitMs ?? 0}ms billed wait`
+    el.title = `Gateway-signed proof-of-impression · ${d.attestation?.measuredWaitMs ?? 0}ms billed wait · credit ${fmt(d.creditedUsd || 0)}`
   } else {
     el.textContent = '⚠ unverified'
     el.className = 'placement-attest bad'

@@ -393,6 +393,7 @@ a.chip.settle:hover { filter: brightness(1.2); }
 .placement-attest { flex: none; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .placement-attest.ok { color: var(--accent-2); }
 .placement-attest.bad { color: var(--amber); }
+.wallet-sub .pos { color: var(--accent-2); }
 .placement-cta {
   flex: none;
   color: var(--accent-2);
