@@ -654,6 +654,20 @@ if (storedCampaigns.length === 0) {
 }
 const tenderAuction = new Auction(storedCampaigns)
 const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
+
+// Advertiser escrow drawdown — the gross an advertiser actually spends, billed
+// only on VALID (attested) impressions/clicks. Keyed by placementId. The
+// developer gets REQUESTER_SHARE of this; the platform keeps the spread. (Real
+// on-chain escrow deposit from the advertiser is the same payboxSettle rail,
+// deferred until advertisers connect wallets — here the budget is the escrow.)
+const campaignSpend = new Map() // placementId -> { grossUsd, impressions, clicks }
+function recordSpend(placementId, grossUsd, kind) {
+  const s = campaignSpend.get(placementId) ?? { grossUsd: 0, impressions: 0, clicks: 0 }
+  s.grossUsd += grossUsd
+  if (kind === 'click') s.clicks += 1
+  else s.impressions += 1
+  campaignSpend.set(placementId, s)
+}
 // The gateway's dedicated attestation key + the auction log the release gate
 // cross-checks. Set TENDER_SIGNING_KEY (32-byte hex) for a stable, verifiable key.
 const tenderKey = loadAttestationKey()
@@ -684,6 +698,7 @@ app.post('/api/tender/click', async (c) => {
     requesterShare: REQUESTER_SHARE,
     at: Date.now(),
   })
+  recordSpend(placementId, grossUsdc, 'click') // advertiser pays the click gross
   return c.json({
     creditedUsd: round6(creditedUsd),
     grossUsdc: round6(grossUsdc),
@@ -775,14 +790,14 @@ td.mono{font-family:var(--mono)}a{color:var(--accent)}
 </div>
 <div class="card">
   <strong>Live inventory</strong> <span class="muted">— what's serving now</span>
-  <table><thead><tr><th>Line</th><th>Bid</th><th>Left</th></tr></thead><tbody id="rows"></tbody></table>
+  <table><thead><tr><th>Line</th><th>Bid</th><th>Spent</th><th>Budget left</th></tr></thead><tbody id="rows"></tbody></table>
 </div>
 <p class="note">Settlement is USDC on Solana via Paybox/x402. The consumer side: <a href="/">chat portal</a>.</p>
 <script>
 const $=s=>document.querySelector(s);
 async function refresh(){
   const d=await (await fetch('/api/campaigns')).json();
-  $('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+c.line.replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+c.remainingImpressions+'</td></tr>').join('');
+  $('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+c.line.replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">$'+(c.spentUsd||0).toFixed(4)+'</td><td class="mono">$'+(c.remainingBudgetUsd!=null?c.remainingBudgetUsd:c.fundedUsdc).toFixed(2)+'</td></tr>').join('');
 }
 $('#go').addEventListener('click',async()=>{
   $('#go').disabled=true;$('#msg').textContent='';
@@ -822,7 +837,20 @@ app.post('/api/campaigns', async (c) => {
   tenderAuction.addCampaign(campaign) // serve immediately
   return c.json({ campaign })
 })
-app.get('/api/campaigns', (c) => c.json({ campaigns: tenderAuction.list() }))
+app.get('/api/campaigns', (c) =>
+  c.json({
+    campaigns: tenderAuction.list().map((cm) => {
+      const s = campaignSpend.get(cm.placementId) ?? { grossUsd: 0, impressions: 0, clicks: 0 }
+      return {
+        ...cm,
+        spentUsd: round6(s.grossUsd),
+        remainingBudgetUsd: round6(Math.max(0, cm.fundedUsdc - s.grossUsd)),
+        impressions: s.impressions,
+        clicks: s.clicks,
+      }
+    }),
+  }),
+)
 
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
@@ -942,6 +970,9 @@ app.post('/api/chat', async (c) => {
           wasServed: (rid, pid) => auctionLog.wasServed(rid, pid),
           at: Date.now(),
         })
+        if (settlement.status === 'accrued') {
+          recordSpend(servedPlacement.placementId, settlement.grossUsdc, 'impression')
+        }
         attEvent = {
           attestation,
           valid: settlement.status === 'accrued',
