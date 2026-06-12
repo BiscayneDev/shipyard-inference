@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import bs58 from 'bs58'
+// Static import (not the dynamic-optional pattern the rest of the codebase uses
+// for solana): this module runs in the deployed gateway where the deposit rail is
+// always needed, and a static import is what gets reliably traced into the Vercel
+// serverless bundle. @solana/web3.js is a hard dependency for that reason.
+import { Connection, PublicKey } from '@solana/web3.js'
 
 // Advertiser-side funding for self-serve campaigns: a campaign created at
 // /advertise is born `pending` and only enters the live auction once the
@@ -105,26 +110,16 @@ export interface DepositStatus {
  * first qualifying transaction. Looks at the treasury's token-balance delta
  * (robust to transfer vs transferChecked instruction shapes) rather than parsing
  * instruction internals.
- *
- * `@solana/web3.js` is loaded by dynamic import so non-crypto consumers of the
- * tender module never pull it in.
  */
 export async function verifyDeposit(
   cfg: DepositConfig,
   reference: string,
   amountUsdc: number,
 ): Promise<DepositStatus> {
-  let web3: typeof import('@solana/web3.js')
-  try {
-    web3 = await import('@solana/web3.js')
-  } catch {
-    throw new Error('verifyDeposit requires @solana/web3.js')
-  }
-
-  const connection = new web3.Connection(rpcFor(cfg), 'confirmed')
+  const connection = new Connection(rpcFor(cfg), 'confirmed')
   const mint = usdcMintFor(cfg)
-  const treasury = new web3.PublicKey(cfg.treasury).toBase58()
-  const referencePk = new web3.PublicKey(reference)
+  const treasury = new PublicKey(cfg.treasury).toBase58()
+  const referencePk = new PublicKey(reference)
 
   const sigs = await connection.getSignaturesForAddress(referencePk, { limit: 25 }, 'confirmed')
   for (const s of sigs) {
