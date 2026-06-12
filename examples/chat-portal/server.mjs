@@ -778,14 +778,15 @@ td.mono{font-family:var(--mono)}a{color:var(--accent)}
 <h1>Advertise on Shipyard</h1>
 <p class="sub">Sponsor the wait. Your line shows during inference idle time; developers get 50% of the spend. First-price auction — highest bid serves first.</p>
 <div class="card">
-  <label for="line">Sponsored line (≤ 80 chars)</label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
-  <label for="url">Marketplace x402 endpoint (the "click" calls this)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
+  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
+  <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
   <div class="grid">
-    <div><label for="bid">Bid · USDC / impression (min 0.001)</label><input id="bid" value="0.005"/></div>
-    <div><label for="budget">Budget · USDC</label><input id="budget" value="5"/></div>
+    <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
+    <div><label for="blocks">Blocks (× 1,000 impressions)</label><input id="blocks" value="1"/></div>
   </div>
-  <label for="wallet">Advertiser wallet (optional)</label><input id="wallet" placeholder="Solana address — escrow source"/>
+  <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address"/>
   <button id="go">Launch campaign</button>
+  <div class="note" id="est"></div>
   <div class="note" id="msg"></div>
 </div>
 <div class="card">
@@ -795,6 +796,8 @@ td.mono{font-family:var(--mono)}a{color:var(--accent)}
 <p class="note">Settlement is USDC on Solana via Paybox/x402. The consumer side: <a href="/">chat portal</a>.</p>
 <script>
 const $=s=>document.querySelector(s);
+function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';}
+['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
 async function refresh(){
   const d=await (await fetch('/api/campaigns')).json();
   $('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+c.line.replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">$'+(c.spentUsd||0).toFixed(4)+'</td><td class="mono">$'+(c.remainingBudgetUsd!=null?c.remainingBudgetUsd:c.fundedUsdc).toFixed(2)+'</td></tr>').join('');
@@ -802,7 +805,7 @@ async function refresh(){
 $('#go').addEventListener('click',async()=>{
   $('#go').disabled=true;$('#msg').textContent='';
   try{
-    const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,usdcPerImpression:Number($('#bid').value),fundedUsdc:Number($('#budget').value),advertiserWallet:$('#wallet').value.trim()||undefined})});
+    const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});
     const d=await r.json();
     if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed');}
     else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions+' impressions at $'+d.campaign.usdcPerImpression+' ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';refresh();}
@@ -813,8 +816,19 @@ refresh();
 </script></div></body></html>`
 
 app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
+const IMPRESSIONS_PER_BLOCK = 1000
 app.post('/api/campaigns', async (c) => {
   const body = await c.req.json().catch(() => ({}))
+  // Blocks model (kickbacks-style): 1 block = 1,000 impressions. Accept a
+  // per-block bid + block count, or fall back to raw per-impression + budget.
+  let usdcPerImpression = Number(body.usdcPerImpression)
+  let fundedUsdc = Number(body.fundedUsdc)
+  if (body.bidPerBlockUsdc != null) {
+    const bidPerBlock = Number(body.bidPerBlockUsdc)
+    const blocks = Math.max(1, Math.floor(Number(body.blocks) || 1))
+    usdcPerImpression = bidPerBlock / IMPRESSIONS_PER_BLOCK
+    fundedUsdc = bidPerBlock * blocks
+  }
   let campaign
   try {
     campaign = buildCampaign(
@@ -824,8 +838,8 @@ app.post('/api/campaigns', async (c) => {
         advertiserWallet:
           (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
           `TenderSelfServe${randomBytes(12).toString('hex')}`,
-        usdcPerImpression: Number(body.usdcPerImpression),
-        fundedUsdc: Number(body.fundedUsdc),
+        usdcPerImpression,
+        fundedUsdc,
         targeting: body.targeting && typeof body.targeting === 'object' ? body.targeting : {},
       },
       Date.now(),
