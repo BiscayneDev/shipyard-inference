@@ -98,12 +98,12 @@
         <p class="sub">
           One endpoint in front of every model. Shipyard routes each request to the cheapest
           capable model, fails over when a provider blinks, and settles per request in USDC over
-          x402 — so an autonomous agent can buy its own compute with <em>no API key, no signup, no
-          monthly bill</em>. Adopt it by changing a single URL.
+          x402 — so an autonomous agent can buy its own compute with <em>no provider keys, no
+          monthly bill</em>, and even <em>earn USDC back</em> while it waits. One command to connect.
         </p>
         <div class="cta">
-          <a class="btn primary" href="/dashboard/">Watch live traffic →</a>
-          <a class="btn ghost" href="#try">Make a request</a>
+          <a class="btn primary" href="#try">Connect your IDE →</a>
+          <a class="btn ghost" href="/dashboard/">Watch live traffic</a>
         </div>
       </div>
 
@@ -125,16 +125,21 @@
       </section>
 
       <section id="try">
-        <h2>Try it — change one line</h2>
-        <p class="lede">Point any OpenAI SDK at <span class="endpoint" id="ep">this deployment</span>. That's the whole integration.</p>
+        <h2>Connect in one command</h2>
+        <p class="lede">One command issues your key and wires it into your IDE / Claude Code. Your traffic settles to <em>your</em> wallet — and earns USDC kickbacks while it runs.</p>
+        <div class="codewrap">
+          <button class="copy" data-target="connect">copy</button>
+          <pre id="connect"><span class="c"># Issues an sk-shipyard key + points your IDE at this gateway</span>
+npx shipyard-inference <span class="k">connect</span> --url <span class="s" id="b0">https://YOUR-DEPLOYMENT</span></pre>
+        </div>
+        <p class="lede" style="margin-top:18px">Or drop the key into any OpenAI SDK — the only change is <code>base_url</code> + your key:</p>
         <div class="codewrap">
           <button class="copy" data-target="sdk">copy</button>
-          <pre id="sdk"><span class="c"># Python — the only change is base_url</span>
-<span class="k">from</span> openai <span class="k">import</span> OpenAI
+          <pre id="sdk"><span class="k">from</span> openai <span class="k">import</span> OpenAI
 
 client = OpenAI(
     base_url=<span class="s" id="b1">"https://YOUR-DEPLOYMENT/v1"</span>,
-    api_key=<span class="s">"shipyard-demo"</span>,  <span class="c"># demo model is open; bring a key for live models</span>
+    api_key=<span class="s">"sk-shipyard-…"</span>,  <span class="c"># your key from `connect`</span>
 )
 resp = client.chat.completions.create(
     model=<span class="s">"auto"</span>,  <span class="c"># let Shipyard pick the cheapest capable model</span>
@@ -145,11 +150,13 @@ resp = client.chat.completions.create(
 
         <div class="codewrap">
           <button class="copy" data-target="curl">copy</button>
-          <pre id="curl"><span class="c"># Or just curl it right now</span>
+          <pre id="curl"><span class="c"># Or curl it directly with your key</span>
 curl <span class="s" id="b2">https://YOUR-DEPLOYMENT/v1/chat/completions</span> \
+  -H <span class="s">"authorization: Bearer sk-shipyard-…"</span> \
   -H <span class="s">"content-type: application/json"</span> \
   -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></pre>
         </div>
+        <p class="lede" style="margin-top:14px"><a href="/connect">Get a key in the browser →</a> · <a href="/me">your earnings →</a></p>
       </section>
 
       <section>
@@ -171,6 +178,7 @@ curl <span class="s" id="b2">https://YOUR-DEPLOYMENT/v1/chat/completions</span> 
       // Fill in the real endpoint once deployed, so the snippets are copy-paste correct.
       const origin = window.location.origin;
       document.getElementById('ep').textContent = origin;
+      document.getElementById('b0').textContent = origin;
       document.getElementById('b1').textContent = '"' + origin + '/v1"';
       document.getElementById('b2').textContent = origin + '/v1/chat/completions';
       for (const btn of document.querySelectorAll('.copy')) {
