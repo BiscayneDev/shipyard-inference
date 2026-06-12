@@ -24,6 +24,13 @@ export type {
   SupabaseCampaignStoreOptions,
 } from './campaign-store.js'
 export {
+  tenderDepositConfig,
+  newPaymentReference,
+  buildDepositIntent,
+  verifyDeposit,
+} from './deposit.js'
+export type { DepositConfig, DepositIntent, DepositStatus } from './deposit.js'
+export {
   loadAttestationKey,
   generateAttestationSeedHex,
   attestationDigest,

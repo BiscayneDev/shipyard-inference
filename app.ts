@@ -32,6 +32,11 @@ import {
   MemoryCampaignStore,
   SupabaseCampaignStore,
   buildCampaign,
+  isCampaignActive,
+  tenderDepositConfig,
+  newPaymentReference,
+  buildDepositIntent,
+  verifyDeposit,
   type CampaignStore,
 } from './dist/index.js'
 import {
@@ -225,9 +230,15 @@ const gatewayTender = new GatewayTender({
 // deploy has something to auction and /advertise isn't blank. After that, the
 // store (advertiser self-serve at /advertise) is authoritative.
 const SEED_CAMPAIGNS = [
-  { campaignId: 'gw-vercel', placementId: 'gw-vercel', advertiserWallet: 'TenderHouseVercel', endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy', line: '🛰️  Ship to prod — one-call Vercel deploy, pay-per-call USDC', usdcPerImpression: 0.005, remainingImpressions: 100_000, fundedUsdc: 500, targeting: {} },
-  { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderHouseEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings over x402', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {} },
+  { campaignId: 'gw-vercel', placementId: 'gw-vercel', advertiserWallet: 'TenderHouseVercel', endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy', line: '🛰️  Ship to prod — one-call Vercel deploy, pay-per-call USDC', usdcPerImpression: 0.005, remainingImpressions: 100_000, fundedUsdc: 500, targeting: {}, status: 'active' as const },
+  { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderHouseEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings over x402', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {}, status: 'active' as const },
 ]
+
+// Advertiser funding rail: when a treasury is configured, self-serve campaigns
+// are born `pending` and must be paid (USDC on Solana, verified on-chain) before
+// they enter the auction. Unset → no rail, campaigns go live on creation (local
+// dev / demo without a treasury).
+const depositConfig = tenderDepositConfig(process.env)
 
 // Advertiser campaign store — the persistent source of truth for self-serve
 // campaigns created at /advertise. Persisted in Supabase (shipyard_campaigns)
@@ -253,7 +264,8 @@ function ensureCampaigns(): Promise<void> {
         for (const c of SEED_CAMPAIGNS) await campaignStore.create(c).catch(() => {})
         rows = await campaignStore.list()
       }
-      for (const c of rows) gatewayTender.addCampaign(c)
+      // Only funded (active) campaigns serve; pending ones await their deposit.
+      for (const c of rows) if (isCampaignActive(c)) gatewayTender.addCampaign(c)
     })().catch(() => {
       campaignsLoaded = undefined
     })
@@ -465,6 +477,7 @@ if($('#key').value)load();
 // auction immediately. Settlement is USDC on Solana (not "Stripe, coming soon").
 const ADVERTISE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise on Shipyard · Tender</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <style>
 :root{--bg:#07090d;--panel:#0e1218;--line:#1c232e;--fg:#e8edf3;--muted:#8b97a6;--accent:#4fd1c5;--accent2:#7c9cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(1100px 560px at 72% -12%,#11202b 0%,var(--bg) 55%);color:var(--fg);font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
@@ -478,6 +491,10 @@ input{width:100%;background:#04050a;border:1px solid var(--line);border-radius:9
 button{appearance:none;border:0;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:11px 18px;cursor:pointer;margin-top:16px}
 button:disabled{opacity:.5}.note{font-size:13px;color:var(--muted);margin-top:9px}.green{color:var(--green)}
 table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td.mono{font-family:var(--mono)}
+.paygrid{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px}.fields{flex:1;min-width:240px}
+.qr{display:block;margin-top:12px;border-radius:10px;background:#e8edf3}
+.addr{font-family:var(--mono);font-size:12px;background:#04050a;border:1px solid var(--line);border-radius:8px;padding:8px 10px;word-break:break-all;margin-bottom:6px}
+a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:10px 16px}
 </style></head><body><div class="wrap">
 <span class="pill">first-price auction · USDC settlement · agentic clicks</span>
 <h1>Advertise on the wait.</h1>
@@ -490,9 +507,13 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{te
     <div><label for="blocks">Blocks (× 1,000 impressions)</label><input id="blocks" value="1"/></div>
   </div>
   <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address"/>
-  <button id="go">Launch campaign</button>
+  <button id="go">Create campaign</button>
   <div class="note" id="est"></div>
   <div class="note" id="msg"></div>
+</div>
+<div class="card" id="pay" style="display:none">
+  <strong>Fund with USDC</strong> <span class="muted">— pay the deposit and the campaign goes live automatically</span>
+  <div id="paybody"></div>
 </div>
 <div class="card">
   <strong>Live inventory</strong> <span class="muted">— what's serving now</span>
@@ -501,10 +522,50 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{te
 <p class="note">Settlement is USDC on Solana via Paybox/x402 — payouts work today, no "coming soon." Consumer side: <a href="/connect">connect your IDE →</a> · <a href="/dashboard/">live dashboard →</a></p>
 <script>
 const $=s=>document.querySelector(s);
+function esc(s){return (s||'').replace(/</g,'&lt;');}
 function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';}
 ['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
-async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+(c.line||'').replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
-$('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';est();refresh()}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
+async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+esc(c.line)+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
+let pollTimer=null;
+function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+function poll(id){stopPoll();pollTimer=setInterval(async function(){try{const r=await fetch('/api/campaigns/'+id+'/verify',{method:'POST'});const d=await r.json();if(d.status==='active'){stopPoll();$('#paystatus').innerHTML='<span class="green">✓ Payment confirmed — campaign is live'+(d.signature?(' · tx '+d.signature.slice(0,10)+'…'):'')+'</span>';refresh();}}catch(e){}},4000);}
+// Desktop Phantom registers no solana: URL handler, so the deep link only works
+// on mobile / via QR. On desktop we drive the injected provider directly: connect,
+// build the USDC transfer (tagging the campaign reference so the gateway verifier
+// finds it), and let the extension pop up to sign.
+function detectPhantom(){return (window.phantom&&window.phantom.solana&&window.phantom.solana.isPhantom)?window.phantom.solana:((window.solana&&window.solana.isPhantom)?window.solana:null);}
+async function payWithPhantom(pay){
+  var provider=detectPhantom();if(!provider)throw new Error('Phantom not detected');
+  var rpc=pay.network==='mainnet'?'https://api.mainnet-beta.solana.com':'https://api.devnet.solana.com';
+  var web3=await import('https://esm.sh/@solana/web3.js@1.95.3');
+  var spl=await import('https://esm.sh/@solana/spl-token@0.4.9?deps=@solana/web3.js@1.95.3');
+  var conn=new web3.Connection(rpc,'confirmed');
+  var res=await provider.connect();
+  var payer=new web3.PublicKey(res.publicKey.toString());
+  var mint=new web3.PublicKey(pay.usdcMint),treasury=new web3.PublicKey(pay.treasury),reference=new web3.PublicKey(pay.reference);
+  var payerAta=await spl.getAssociatedTokenAddress(mint,payer),destAta=await spl.getAssociatedTokenAddress(mint,treasury);
+  var atomic=BigInt(Math.round(Number(pay.amountUsdc)*1e6));
+  var transferIx=spl.createTransferCheckedInstruction(payerAta,mint,destAta,payer,atomic,6);
+  transferIx.keys.push({pubkey:reference,isSigner:false,isWritable:false}); // Solana Pay reference
+  var bh=await conn.getLatestBlockhash();
+  var tx=new web3.Transaction({feePayer:payer,recentBlockhash:bh.blockhash});
+  tx.add(spl.createAssociatedTokenAccountIdempotentInstruction(payer,destAta,treasury,mint)); // safe if treasury ATA already exists
+  tx.add(transferIx);
+  var out=await provider.signAndSendTransaction(tx);
+  return (out&&out.signature)?out.signature:String(out);
+}
+function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toFixed(2);var ph=detectPhantom();var h=''
+  +'<div class="note">'+(ph?'Click <strong>Pay with Phantom</strong> to sign in your wallet.':'Scan with a Solana wallet, or')+' send exactly <strong>'+amt+' USDC</strong> on <strong>'+pay.network+'</strong> to the treasury below. Campaign <span class="mono">'+esc(campaign.campaignId)+'</span> goes live the moment the transfer confirms.</div>'
+  +'<div class="paygrid"><div><a class="btn" id="open" href="'+pay.url+'">'+(ph?'Pay with Phantom':'Open in wallet')+'</a><canvas id="qrc" class="qr" width="200" height="200"></canvas></div>'
+  +'<div class="fields"><label>Treasury · USDC '+pay.network+'</label><div class="addr">'+esc(pay.treasury)+'</div>'
+  +'<label>Amount</label><div class="addr">'+amt+' USDC</div>'
+  +'<label>Reference (tagged on your transfer)</label><div class="addr">'+esc(pay.reference)+'</div></div></div>'
+  +'<div class="note" id="paystatus">⏳ Waiting for payment…</div>';
+  $('#paybody').innerHTML=h;$('#pay').style.display='block';
+  try{if(typeof QRCode!=='undefined'){QRCode.toCanvas(document.getElementById('qrc'),pay.url,{width:200,margin:1});}}catch(e){}
+  if(ph){var open=document.getElementById('open');open.addEventListener('click',async function(e){e.preventDefault();open.style.pointerEvents='none';$('#paystatus').textContent='Opening Phantom — approve the transfer…';try{var sig=await payWithPhantom(pay);$('#paystatus').innerHTML='⏳ Sent ('+sig.slice(0,10)+'…) — confirming on-chain…';}catch(err){$('#paystatus').innerHTML='<span style="color:#f6a36b">✗ '+esc((err&&err.message)||String(err))+'</span>';open.style.pointerEvents='';}});}
+  poll(campaign.campaignId);$('#pay').scrollIntoView({behavior:'smooth'});}
+$('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else if(d.payment){$('#msg').innerHTML='<span class="green">✓ Campaign created — fund it below to go live.</span>';showPayment(d.campaign,d.payment);}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';est();refresh();}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
 refresh();
 </script></div></body></html>`
 
@@ -536,10 +597,11 @@ app.post('/api/keys', async (c) => {
 // middleware so listing/creating a campaign doesn't replay telemetry.
 const IMPRESSIONS_PER_BLOCK = 1000
 app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
+// Live inventory = funded (active) campaigns only — pending ones aren't serving.
 app.get('/api/campaigns', async (c) => {
   await ensureCampaigns()
   const rows = await campaignStore.list().catch(() => [])
-  return c.json({ campaigns: rows })
+  return c.json({ campaigns: rows.filter(isCampaignActive), paymentsEnabled: Boolean(depositConfig) })
 })
 app.post('/api/campaigns', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
@@ -565,6 +627,9 @@ app.post('/api/campaigns', async (c) => {
         usdcPerImpression,
         fundedUsdc,
         targeting: body.targeting && typeof body.targeting === 'object' ? (body.targeting as Record<string, unknown>) : {},
+        // With a treasury configured the campaign must be paid before it serves.
+        status: depositConfig ? 'pending' : 'active',
+        paymentReference: depositConfig ? newPaymentReference() : undefined,
       },
       Date.now(),
     )
@@ -572,8 +637,47 @@ app.post('/api/campaigns', async (c) => {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
   }
   await campaignStore.create(campaign).catch(() => {})
-  gatewayTender.addCampaign(campaign) // serve immediately on this instance
+
+  if (depositConfig && campaign.paymentReference) {
+    // Hand back the Solana Pay deposit intent; the campaign goes live only once
+    // /verify confirms the USDC landed. Do NOT add it to the auction yet.
+    const payment = buildDepositIntent(depositConfig, {
+      amountUsdc: campaign.fundedUsdc,
+      reference: campaign.paymentReference,
+      label: 'Shipyard Tender',
+      message: `Fund campaign ${campaign.campaignId}`,
+    })
+    return c.json({ campaign, payment })
+  }
+  gatewayTender.addCampaign(campaign) // no treasury → serve immediately
   return c.json({ campaign })
+})
+
+// Poll for an advertiser's USDC deposit. Once the on-chain transfer to the
+// treasury (tagged with the campaign's reference) is confirmed, flip the
+// campaign to `active` and add it to the live auction. Idempotent.
+app.post('/api/campaigns/:id/verify', async (c) => {
+  if (!depositConfig) return c.json({ error: 'payments not configured' }, 400)
+  const id = c.req.param('id')
+  const campaign = await campaignStore.get(id).catch(() => undefined)
+  if (!campaign) return c.json({ error: 'campaign not found' }, 404)
+  if (isCampaignActive(campaign)) return c.json({ status: 'active', campaign })
+  if (!campaign.paymentReference) return c.json({ error: 'campaign has no payment reference' }, 400)
+
+  let result
+  try {
+    result = await verifyDeposit(depositConfig, campaign.paymentReference, campaign.fundedUsdc)
+  } catch (err) {
+    return c.json({ status: 'pending', error: err instanceof Error ? err.message : String(err) }, 502)
+  }
+  if (!result.paid) return c.json({ status: 'pending' })
+
+  const updated =
+    (await campaignStore
+      .update(id, { status: 'active', paidSignature: result.signature })
+      .catch(() => undefined)) ?? { ...campaign, status: 'active' as const, paidSignature: result.signature }
+  gatewayTender.addCampaign(updated) // live on this instance immediately
+  return c.json({ status: 'active', campaign: updated, signature: result.signature })
 })
 
 // Gateway — ensure advertiser campaigns are loaded into the auction (so a

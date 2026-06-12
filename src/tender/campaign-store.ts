@@ -19,6 +19,10 @@ export interface CampaignInput {
   /** USDC funded into the campaign; impressions = funded / bid. */
   fundedUsdc: number
   targeting?: TargetingSpec
+  /** Lifecycle. Defaults to `active` (back-compat); self-serve passes `pending`. */
+  status?: 'pending' | 'active'
+  /** Solana Pay reference pubkey the funding deposit must carry (self-serve). */
+  paymentReference?: string
 }
 
 /** Validate advertiser input and mint a Campaign (ids + impressions derived). */
@@ -46,6 +50,9 @@ export function buildCampaign(input: CampaignInput, at: number): Campaign {
     remainingImpressions,
     fundedUsdc: input.fundedUsdc,
     targeting: input.targeting ?? {},
+    status: input.status ?? 'active',
+    paymentReference: input.paymentReference,
+    createdAt: at,
   }
 }
 
@@ -54,6 +61,8 @@ export interface CampaignStore {
   /** All campaigns (most recent first). */
   list(): Promise<Campaign[]>
   get(campaignId: string): Promise<Campaign | undefined>
+  /** Patch fields on an existing campaign (e.g. flip to `active` once funded). */
+  update(campaignId: string, patch: Partial<Campaign>): Promise<Campaign | undefined>
 }
 
 /** In-memory campaign store — process-local. */
@@ -69,6 +78,13 @@ export class MemoryCampaignStore implements CampaignStore {
   }
   async get(campaignId: string): Promise<Campaign | undefined> {
     return this.byId.get(campaignId)
+  }
+  async update(campaignId: string, patch: Partial<Campaign>): Promise<Campaign | undefined> {
+    const existing = this.byId.get(campaignId)
+    if (!existing) return undefined
+    const next = { ...existing, ...patch, campaignId }
+    this.byId.set(campaignId, next)
+    return next
   }
 }
 
@@ -89,6 +105,10 @@ interface CampaignRow {
   remaining_impressions: number
   funded_usdc: number
   targeting: TargetingSpec
+  status?: 'pending' | 'active' | null
+  payment_reference?: string | null
+  paid_signature?: string | null
+  created_at?: number | null
 }
 
 /** Postgres-backed campaign store (PostgREST over fetch). Apply the schema first. */
@@ -122,6 +142,10 @@ export class SupabaseCampaignStore implements CampaignStore {
       remaining_impressions: c.remainingImpressions,
       funded_usdc: c.fundedUsdc,
       targeting: c.targeting,
+      status: c.status ?? 'active',
+      payment_reference: c.paymentReference ?? null,
+      paid_signature: c.paidSignature ?? null,
+      created_at: c.createdAt ?? null,
     }
   }
   private fromRow(r: CampaignRow): Campaign {
@@ -135,6 +159,11 @@ export class SupabaseCampaignStore implements CampaignStore {
       remainingImpressions: r.remaining_impressions,
       fundedUsdc: r.funded_usdc,
       targeting: r.targeting ?? {},
+      // Rows predating the payment columns have null status → treat as active.
+      status: r.status ?? 'active',
+      paymentReference: r.payment_reference ?? undefined,
+      paidSignature: r.paid_signature ?? undefined,
+      createdAt: r.created_at ?? undefined,
     }
   }
 
@@ -158,6 +187,36 @@ export class SupabaseCampaignStore implements CampaignStore {
     const rows = (await res.json()) as CampaignRow[]
     return rows[0] ? this.fromRow(rows[0]) : undefined
   }
+  async update(campaignId: string, patch: Partial<Campaign>): Promise<Campaign | undefined> {
+    // Map only the patched fields to their columns (camel → snake).
+    const map: Partial<Record<keyof Campaign, keyof CampaignRow>> = {
+      line: 'line',
+      endpointUrl: 'endpoint_url',
+      advertiserWallet: 'advertiser_wallet',
+      usdcPerImpression: 'usdc_per_impression',
+      remainingImpressions: 'remaining_impressions',
+      fundedUsdc: 'funded_usdc',
+      targeting: 'targeting',
+      status: 'status',
+      paymentReference: 'payment_reference',
+      paidSignature: 'paid_signature',
+      createdAt: 'created_at',
+    }
+    const row: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(patch)) {
+      const col = map[k as keyof Campaign]
+      if (col) row[col] = v
+    }
+    if (Object.keys(row).length === 0) return this.get(campaignId)
+    const res = await this.fetchImpl(`${this.base}/${this.table}?campaign_id=eq.${campaignId}`, {
+      method: 'PATCH',
+      headers: { ...this.headers, prefer: 'return=representation' },
+      body: JSON.stringify(row),
+    })
+    if (!res.ok) throw new Error(`supabase campaign update failed: ${res.status} ${await res.text().catch(() => '')}`)
+    const rows = (await res.json()) as CampaignRow[]
+    return rows[0] ? this.fromRow(rows[0]) : undefined
+  }
 }
 
 /** One-time schema for the campaigns table. */
@@ -171,6 +230,15 @@ create table if not exists shipyard_campaigns (
   usdc_per_impression   double precision not null,
   remaining_impressions bigint not null,
   funded_usdc           double precision not null,
-  targeting             jsonb  not null default '{}'
+  targeting             jsonb  not null default '{}',
+  status                text   not null default 'active',
+  payment_reference     text,
+  paid_signature        text,
+  created_at            bigint
 );
+-- Self-serve payment columns (idempotent for tables predating them):
+alter table shipyard_campaigns add column if not exists status            text not null default 'active';
+alter table shipyard_campaigns add column if not exists payment_reference text;
+alter table shipyard_campaigns add column if not exists paid_signature    text;
+alter table shipyard_campaigns add column if not exists created_at        bigint;
 `

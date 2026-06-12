@@ -20,6 +20,10 @@ import {
   MemoryCampaignStore,
   GatewayTender,
   SupabaseCreditStore,
+  isCampaignActive,
+  tenderDepositConfig,
+  newPaymentReference,
+  buildDepositIntent,
   type Campaign,
   type Placement,
   type TenderRequestContext,
@@ -323,4 +327,68 @@ test('MemoryCampaignStore + Auction: a created campaign serves and can win the s
   assert.equal((await store.get(c.campaignId))?.line, 'top bid')
   const a = new Auction(await store.list())
   assert.equal(a.select(ctx())?.placementId, c.placementId)
+})
+
+test('advertiser funding: a pending campaign does not serve until marked active', async () => {
+  const store = new MemoryCampaignStore()
+  const ref = newPaymentReference()
+  const c = buildCampaign(
+    { line: 'pay me first', endpointUrl: 'https://x', advertiserWallet: 'Ad', usdcPerImpression: 0.01, fundedUsdc: 1, status: 'pending', paymentReference: ref },
+    1,
+  )
+  await store.create(c)
+  assert.equal(c.status, 'pending')
+  assert.equal(c.paymentReference, ref)
+  assert.equal(isCampaignActive(c), false)
+
+  // Only active campaigns are folded into the auction (mirrors ensureCampaigns).
+  const live = (await store.list()).filter(isCampaignActive)
+  assert.equal(live.length, 0)
+  assert.equal(new Auction(live).select(ctx()), null)
+
+  // Confirm the deposit → flip to active → it now serves.
+  const updated = await store.update(c.campaignId, { status: 'active', paidSignature: 'sig123' })
+  assert.equal(updated?.status, 'active')
+  assert.equal(updated?.paidSignature, 'sig123')
+  assert.equal(isCampaignActive(updated!), true)
+  const a = new Auction((await store.list()).filter(isCampaignActive))
+  assert.equal(a.select(ctx())?.placementId, c.placementId)
+})
+
+test('buildCampaign: defaults to active (back-compat) when no status given', () => {
+  const c = buildCampaign({ line: 'hi', endpointUrl: 'https://x', advertiserWallet: 'Ad', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1)
+  assert.equal(c.status, 'active')
+  assert.equal(isCampaignActive(c), true)
+})
+
+test('tenderDepositConfig: reads treasury + network from env, undefined without treasury', () => {
+  assert.equal(tenderDepositConfig({}), undefined)
+  const cfg = tenderDepositConfig({ TENDER_TREASURY_WALLET: 'Trez111', SHIPYARD_SETTLE_NETWORK: 'mainnet' })
+  assert.equal(cfg?.treasury, 'Trez111')
+  assert.equal(cfg?.network, 'mainnet')
+  // defaults to devnet when network unset
+  assert.equal(tenderDepositConfig({ TENDER_TREASURY_WALLET: 'T' })?.network, 'devnet')
+})
+
+test('newPaymentReference: unique base58 32-byte references', () => {
+  const a = newPaymentReference()
+  const b = newPaymentReference()
+  assert.notEqual(a, b)
+  assert.match(a, /^[1-9A-HJ-NP-Za-km-z]+$/) // base58 alphabet
+})
+
+test('buildDepositIntent: encodes a valid Solana Pay URL (amount + spl-token + reference)', () => {
+  const cfg = { treasury: 'Trez111', network: 'devnet' as const }
+  const intent = buildDepositIntent(cfg, { amountUsdc: 5, reference: 'Ref222', label: 'Shipyard Tender', message: 'Fund campaign cmp_x' })
+  assert.equal(intent.amountUsdc, 5)
+  assert.equal(intent.reference, 'Ref222')
+  assert.equal(intent.network, 'devnet')
+  // devnet USDC mint
+  assert.equal(intent.usdcMint, '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+  assert.ok(intent.url.startsWith('solana:Trez111?'))
+  const q = new URLSearchParams(intent.url.split('?')[1])
+  assert.equal(q.get('amount'), '5')
+  assert.equal(q.get('spl-token'), '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+  assert.equal(q.get('reference'), 'Ref222')
+  assert.equal(q.get('label'), 'Shipyard Tender')
 })

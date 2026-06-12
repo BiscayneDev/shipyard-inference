@@ -93,7 +93,23 @@ export interface Campaign extends Bid {
   campaignId: string
   /** USDC funded into the campaign, held against placements. */
   fundedUsdc: number
+  /**
+   * Lifecycle. `pending` = created but the advertiser's USDC deposit isn't
+   * confirmed yet, so it MUST NOT serve. `active` = funded and live in the
+   * auction. Absent = treat as `active` (house seeds / pre-payment rows).
+   */
+  status?: 'pending' | 'active'
+  /** Solana Pay reference pubkey the funding deposit must carry (self-serve). */
+  paymentReference?: string
+  /** Confirmed on-chain deposit signature, once the campaign is funded. */
+  paidSignature?: string
+  /** Creation time (unix ms). */
+  createdAt?: number
 }
+
+/** A campaign is live in the auction unless explicitly still pending payment. */
+export const isCampaignActive = (c: { status?: 'pending' | 'active' }): boolean =>
+  (c.status ?? 'active') === 'active'
 
 /**
  * A won placement, handed to a surface for chrome-only rendering. It carries no
