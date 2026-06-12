@@ -26,6 +26,8 @@ import {
   createUsePodProvider,
   costOptimized,
   GatewayTender,
+  MemoryCreditStore,
+  SupabaseCreditStore,
 } from './dist/index.js'
 import {
   createGatewayApp,
@@ -197,8 +199,19 @@ const keyStore: ApiKeyStore =
 // status line, and the (real, billed) impression accrues their kickback. Seeded
 // demo inventory; production also pulls campaigns from the advertiser surface.
 // Set TENDER_SIGNING_KEY for a stable attestation key.
+// Durable kickback ledger — survives serverless cold starts when Supabase is
+// configured; in-memory otherwise (fine for a long-lived gateway).
+const tenderCreditStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseCreditStore({
+        url: process.env.SUPABASE_URL,
+        key: process.env.SUPABASE_SERVICE_KEY,
+        table: process.env.SUPABASE_TENDER_CREDITS_TABLE,
+      })
+    : new MemoryCreditStore()
 const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
+  creditStore: tenderCreditStore,
   campaigns: [
     { campaignId: 'gw-vercel', placementId: 'gw-vercel', advertiserWallet: 'TenderAdVerce', endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy', line: '🛰️  Ship to prod — one-call Vercel deploy on Shipyard Market', usdcPerImpression: 0.005, remainingImpressions: 100_000, fundedUsdc: 500, targeting: {} },
     { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderAdEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings, pay-per-call USDC', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {} },
@@ -468,9 +481,9 @@ app.get('/api/me', async (c) => {
     savedUsd: r6(saved),
     savedPct: baseline > 0 ? Math.round((saved / baseline) * 100) : 0,
     // Kickbacks accrued on this account's own (billed, attested) traffic, and the
-    // sponsored line currently served to it — rendered in the status line.
-    kickbacksUsd: r6(gatewayTender.balance(auth.account.userId)),
-    sponsoredLine: gatewayTender.currentLine(auth.account.userId) ?? null,
+    // sponsored line currently served to it — rendered in the status line. Durable.
+    kickbacksUsd: r6(await gatewayTender.balance(auth.account.userId)),
+    sponsoredLine: (await gatewayTender.currentLine(auth.account.userId)) ?? null,
   })
 })
 
