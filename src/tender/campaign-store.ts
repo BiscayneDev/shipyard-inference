@@ -162,7 +162,7 @@ export class SupabaseCampaignStore implements CampaignStore {
 
 /** One-time schema for the campaigns table. */
 export const SUPABASE_CAMPAIGNS_SCHEMA = `
-create table if not exists campaigns (
+create table if not exists shipyard_campaigns (
   campaign_id           text   primary key,
   placement_id          text   not null,
   line                  text   not null,

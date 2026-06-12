@@ -109,7 +109,7 @@ export class SupabaseCreditStore implements CreditStore {
 
 /** One-time schema for the durable kickback ledger. */
 export const SUPABASE_TENDER_CREDITS_SCHEMA = `
-create table if not exists tender_credits (
+create table if not exists shipyard_tender_credits (
   id          bigint generated always as identity primary key,
   account     text   not null,
   amount_usd  double precision not null,
@@ -118,5 +118,5 @@ create table if not exists tender_credits (
   request_id  text   not null,
   at          bigint not null
 );
-create index if not exists tender_credits_account_idx on tender_credits (account, at desc);
+create index if not exists shipyard_tender_credits_account_idx on shipyard_tender_credits (account, at desc);
 `
