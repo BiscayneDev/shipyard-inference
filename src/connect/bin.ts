@@ -11,7 +11,7 @@ import {
   type ClaudeSettings,
 } from './install.js'
 
-const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard.vercel.app'
+const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard-inference.vercel.app'
 const STATUSLINE_CMD = 'npx -y shipyard-inference statusline'
 
 function arg(name: string): string | undefined {
