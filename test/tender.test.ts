@@ -11,6 +11,10 @@ import {
   signAttestation,
   verifyAttestation,
   assertValidAttestation,
+  CreditLedger,
+  accrueSettlement,
+  sweepCredits,
+  usdcToAtomic,
   type Campaign,
   type Placement,
   type TenderRequestContext,
@@ -179,4 +183,58 @@ test('auction log: records served placement for the gate cross-check', () => {
   assert.equal(log.wasServed('r1', 'p1'), true)
   assert.equal(log.wasServed('r1', 'pX'), false)
   assert.equal(log.wasServed('rX', 'p1'), false)
+})
+
+// --- settlement + credit loop (step 4) -------------------------------------
+
+const near = (a: number, b: number) => Math.abs(a - b) < 1e-9
+
+test('credit ledger: accrue, balance, partial consume, sweep', () => {
+  const led = new CreditLedger()
+  led.creditInference('W', 0.003, { requestId: 'r1', placementId: 'p1' }, 1)
+  led.creditInference('W', 0.002, { requestId: 'r2', placementId: 'p1' }, 2)
+  led.creditInference('X', 0.009, { requestId: 'r3', placementId: 'p1' }, 3)
+  assert.ok(near(led.balance('W'), 0.005))
+  assert.ok(near(led.total(), 0.014))
+  assert.ok(near(led.consume('W', 0.004), 0.004)) // spans both W entries (partial 2nd)
+  assert.ok(near(led.balance('W'), 0.001))
+  assert.ok(near(led.markSwept('W'), 0.001))
+  assert.equal(led.balance('W'), 0)
+  assert.ok(near(led.balance('X'), 0.009), 'other wallets untouched')
+})
+
+test('accrueSettlement: valid → accrues REQUESTER_SHARE; invalid → nothing', () => {
+  const led = new CreditLedger()
+  const ok = accrueSettlement(signAttestation(unsigned({ userWallet: 'W' }), KEY), {
+    publicKeyHex: KEY.publicKeyHex, ledger: led, pricePerImpressionUsdc: 0.005, wasServed: () => true, at: 1,
+  })
+  assert.equal(ok.status, 'accrued')
+  assert.ok(near(ok.requesterShareUsdc, 0.0025)) // 0.5 × 0.005
+  assert.ok(near(led.balance('W'), 0.0025))
+
+  const bad = accrueSettlement(signAttestation(unsigned({ userWallet: 'W', billedCostUsd: 0 }), KEY), {
+    publicKeyHex: KEY.publicKeyHex, ledger: led, pricePerImpressionUsdc: 0.005, wasServed: () => true, at: 2,
+  })
+  assert.equal(bad.status, 'rejected')
+  assert.ok(near(led.balance('W'), 0.0025), 'rejected attestation accrues nothing')
+})
+
+test('sweepCredits: batches the balance through the settle rail, then marks swept', async () => {
+  const led = new CreditLedger()
+  led.creditInference('W', 0.0025, { requestId: 'r1', placementId: 'p1' }, 1)
+  const calls: Array<{ amount: string; treasury: string }> = []
+  const res = await sweepCredits(led, 'W', {
+    settle: async (a) => { calls.push(a); return { signature: 'SIG' } },
+    treasury: 'T', network: 'devnet',
+  })
+  assert.equal(res?.signature, 'SIG')
+  assert.ok(near(res?.amountUsd ?? -1, 0.0025))
+  assert.equal(calls[0]?.amount, '2500') // 0.0025 USDC → atomic
+  assert.equal(led.balance('W'), 0)
+  assert.equal(await sweepCredits(led, 'W', { settle: async () => ({ signature: 'X' }), treasury: 'T' }), null)
+})
+
+test('usdcToAtomic: 6-decimal atomic units', () => {
+  assert.equal(usdcToAtomic(0.0025), '2500')
+  assert.equal(usdcToAtomic(1), '1000000')
 })
