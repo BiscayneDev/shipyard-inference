@@ -13,6 +13,7 @@ import {
   assertValidAttestation,
   CreditLedger,
   accrueSettlement,
+  accrueClick,
   sweepCredits,
   usdcToAtomic,
   type Campaign,
@@ -237,4 +238,15 @@ test('sweepCredits: batches the balance through the settle rail, then marks swep
 test('usdcToAtomic: 6-decimal atomic units', () => {
   assert.equal(usdcToAtomic(0.0025), '2500')
   assert.equal(usdcToAtomic(1), '1000000')
+})
+
+test('accrueClick: bills CLICK_MULTIPLIER × impression, credits the share', () => {
+  const led = new CreditLedger()
+  const r = accrueClick({
+    ledger: led, wallet: 'W', requestId: 'r1', placementId: 'p1',
+    pricePerImpressionUsdc: 0.005, clickMultiplier: 50, requesterShare: 0.5, at: 1,
+  })
+  assert.ok(near(r.grossUsdc, 0.25)) // 0.005 × 50
+  assert.ok(near(r.creditedUsd, 0.125)) // 0.25 × 0.50
+  assert.ok(near(led.balance('W'), 0.125))
 })

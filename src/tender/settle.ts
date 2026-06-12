@@ -53,6 +53,38 @@ export function accrueSettlement(att: UsageAttestation, opts: AccrueOptions): Se
   return { ...base, requesterShareUsdc: share, status: 'accrued' }
 }
 
+export interface ClickOptions {
+  ledger: CreditLedger
+  /** Wallet the click credit accrues to. */
+  wallet: string
+  requestId: string
+  placementId: string
+  /** Impression price (USDC) of the served placement. */
+  pricePerImpressionUsdc: number
+  /** Click bills at this × the impression rate (default 50). */
+  clickMultiplier?: number
+  requesterShare?: number
+  at: number
+}
+
+/**
+ * Accrue a CLICK. In an agent context a "click" is the agent actually calling the
+ * sponsored x402 endpoint — the ad and the transaction are the same call. It
+ * bills at `CLICK_MULTIPLIER` × the impression rate; `REQUESTER_SHARE` of that
+ * accrues to the request's wallet, same as an impression. Returns the credit.
+ */
+export function accrueClick(opts: ClickOptions): { creditedUsd: number; grossUsdc: number } {
+  const grossUsdc = opts.pricePerImpressionUsdc * (opts.clickMultiplier ?? TENDER_DEFAULTS.CLICK_MULTIPLIER)
+  const creditedUsd = grossUsdc * (opts.requesterShare ?? TENDER_DEFAULTS.REQUESTER_SHARE)
+  opts.ledger.creditInference(
+    opts.wallet,
+    creditedUsd,
+    { requestId: opts.requestId, placementId: opts.placementId },
+    opts.at,
+  )
+  return { creditedUsd, grossUsdc }
+}
+
 /** USDC has 6 decimals — convert a dollar amount to atomic units (string). */
 export const usdcToAtomic = (usd: number): string => String(Math.round(usd * 1_000_000))
 

@@ -23,5 +23,5 @@ export type {
 } from './attestation.js'
 export { CreditLedger } from './ledger.js'
 export type { CreditEntry } from './ledger.js'
-export { accrueSettlement, sweepCredits, usdcToAtomic } from './settle.js'
-export type { AccrueOptions, SweepDeps, SweepResult } from './settle.js'
+export { accrueSettlement, accrueClick, sweepCredits, usdcToAtomic } from './settle.js'
+export type { AccrueOptions, ClickOptions, SweepDeps, SweepResult } from './settle.js'

@@ -6,6 +6,8 @@ export interface ServedRecord {
   placementId: string
   usdcPerImpression: number
   advertiserWallet: string
+  /** The callable marketplace endpoint — invoking it is the "click". */
+  endpointUrl: string
   /** When it was served (unix ms). */
   at: number
 }
@@ -24,6 +26,7 @@ export class AuctionLog {
       placementId: placement.placementId,
       usdcPerImpression: placement.usdcPerImpression,
       advertiserWallet: placement.advertiserWallet,
+      endpointUrl: placement.endpointUrl,
       at,
     }
     this.byRequest.set(placement.requestId, rec)
