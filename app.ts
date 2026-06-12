@@ -14,6 +14,7 @@
 // JSONL, because serverless has no persistent disk. Gateway requests flush
 // their telemetry within the invocation via `waitUntil`; dashboard requests
 // rebuild aggregates by replaying the recent window from Supabase.
+import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { waitUntil } from '@vercel/functions'
@@ -28,6 +29,10 @@ import {
   GatewayTender,
   MemoryCreditStore,
   SupabaseCreditStore,
+  MemoryCampaignStore,
+  SupabaseCampaignStore,
+  buildCampaign,
+  type CampaignStore,
 } from './dist/index.js'
 import {
   createGatewayApp,
@@ -212,11 +217,49 @@ const tenderCreditStore =
 const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
   creditStore: tenderCreditStore,
-  campaigns: [
-    { campaignId: 'gw-vercel', placementId: 'gw-vercel', advertiserWallet: 'TenderAdVerce', endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy', line: '🛰️  Ship to prod — one-call Vercel deploy on Shipyard Market', usdcPerImpression: 0.005, remainingImpressions: 100_000, fundedUsdc: 500, targeting: {} },
-    { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderAdEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings, pay-per-call USDC', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {} },
-  ],
+  // Inventory is loaded from the campaign store (below) — the single source of
+  // truth — rather than hardcoded, so /advertise reflects exactly what serves.
 })
+
+// House seed inventory — written to the store once if it's empty, so a fresh
+// deploy has something to auction and /advertise isn't blank. After that, the
+// store (advertiser self-serve at /advertise) is authoritative.
+const SEED_CAMPAIGNS = [
+  { campaignId: 'gw-vercel', placementId: 'gw-vercel', advertiserWallet: 'TenderHouseVercel', endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy', line: '🛰️  Ship to prod — one-call Vercel deploy, pay-per-call USDC', usdcPerImpression: 0.005, remainingImpressions: 100_000, fundedUsdc: 500, targeting: {} },
+  { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderHouseEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings over x402', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {} },
+]
+
+// Advertiser campaign store — the persistent source of truth for self-serve
+// campaigns created at /advertise. Persisted in Supabase (shipyard_campaigns)
+// so they survive serverless cold starts; loaded into the live auction once per
+// instance, and added immediately on the instance that creates them.
+const campaignStore: CampaignStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseCampaignStore({
+        url: process.env.SUPABASE_URL,
+        key: process.env.SUPABASE_SERVICE_KEY,
+        table: process.env.SUPABASE_CAMPAIGNS_TABLE,
+      })
+    : new MemoryCampaignStore()
+
+// Fold persisted campaigns into the gateway auction, once per instance (seeding
+// house inventory first if the store is empty). Cleared on failure to retry.
+let campaignsLoaded: Promise<void> | undefined
+function ensureCampaigns(): Promise<void> {
+  if (!campaignsLoaded) {
+    campaignsLoaded = (async () => {
+      let rows = await campaignStore.list()
+      if (rows.length === 0) {
+        for (const c of SEED_CAMPAIGNS) await campaignStore.create(c).catch(() => {})
+        rows = await campaignStore.list()
+      }
+      for (const c of rows) gatewayTender.addCampaign(c)
+    })().catch(() => {
+      campaignsLoaded = undefined
+    })
+  }
+  return campaignsLoaded
+}
 
 const { candidates, baselineModel } = buildCandidates()
 
@@ -417,6 +460,54 @@ if($('#key').value)load();
 
 // ---------------------------------------------------------------------------
 // The combined app.
+// Advertiser onboarding page — symmetric to /connect. Set a line + x402
+// destination + a per-block bid, and the campaign enters the live first-price
+// auction immediately. Settlement is USDC on Solana (not "Stripe, coming soon").
+const ADVERTISE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise on Shipyard · Tender</title>
+<style>
+:root{--bg:#07090d;--panel:#0e1218;--line:#1c232e;--fg:#e8edf3;--muted:#8b97a6;--accent:#4fd1c5;--accent2:#7c9cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1100px 560px at 72% -12%,#11202b 0%,var(--bg) 55%);color:var(--fg);font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:780px;margin:0 auto;padding:34px 22px 80px}a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
+.pill{display:inline-block;font-size:12px;color:var(--accent);border:1px solid #1f3a3a;background:#0c1614;border-radius:999px;padding:4px 12px;margin-bottom:16px}
+h1{font-size:30px;letter-spacing:-.02em;margin:0 0 6px}.sub{color:var(--muted);margin:0 0 22px;max-width:620px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
+label{display:block;font-size:11px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;background:#04050a;border:1px solid var(--line);border-radius:9px;color:var(--fg);padding:10px 12px;font:14px var(--mono)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
+button{appearance:none;border:0;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:11px 18px;cursor:pointer;margin-top:16px}
+button:disabled{opacity:.5}.note{font-size:13px;color:var(--muted);margin-top:9px}.green{color:var(--green)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td.mono{font-family:var(--mono)}
+</style></head><body><div class="wrap">
+<span class="pill">first-price auction · USDC settlement · agentic clicks</span>
+<h1>Advertise on the wait.</h1>
+<p class="sub">Your line shows in the agent's status bar during inference idle time — never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
+<div class="card">
+  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
+  <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
+  <div class="grid">
+    <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
+    <div><label for="blocks">Blocks (× 1,000 impressions)</label><input id="blocks" value="1"/></div>
+  </div>
+  <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address"/>
+  <button id="go">Launch campaign</button>
+  <div class="note" id="est"></div>
+  <div class="note" id="msg"></div>
+</div>
+<div class="card">
+  <strong>Live inventory</strong> <span class="muted">— what's serving now</span>
+  <table><thead><tr><th>Line</th><th>Bid /imp</th><th>Impressions left</th><th>Funded</th></tr></thead><tbody id="rows"></tbody></table>
+</div>
+<p class="note">Settlement is USDC on Solana via Paybox/x402 — payouts work today, no "coming soon." Consumer side: <a href="/connect">connect your IDE →</a> · <a href="/dashboard/">live dashboard →</a></p>
+<script>
+const $=s=>document.querySelector(s);
+function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';}
+['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
+async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+(c.line||'').replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
+$('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';est();refresh()}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
+refresh();
+</script></div></body></html>`
+
 // ---------------------------------------------------------------------------
 const app = new Hono()
 app.use('*', cors({ origin: '*' }))
@@ -440,9 +531,56 @@ app.post('/api/keys', async (c) => {
   return c.json({ key, userId: account.userId, wallet: account.wallet ?? null, createdAt: account.createdAt })
 })
 
-// Gateway — flush this request's telemetry to Supabase before the function
-// freezes. (The reporter also auto-flushes on its 2s timer during streaming.)
+// Advertiser surface — self-serve sponsored campaigns (the other side of the
+// marketplace). Symmetric to /connect. Registered before the /api/* hub-boot
+// middleware so listing/creating a campaign doesn't replay telemetry.
+const IMPRESSIONS_PER_BLOCK = 1000
+app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
+app.get('/api/campaigns', async (c) => {
+  await ensureCampaigns()
+  const rows = await campaignStore.list().catch(() => [])
+  return c.json({ campaigns: rows })
+})
+app.post('/api/campaigns', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+  // Blocks model (1 block = 1,000 impressions): accept a per-block bid + block
+  // count, or fall back to raw per-impression price + budget.
+  let usdcPerImpression = Number(body.usdcPerImpression)
+  let fundedUsdc = Number(body.fundedUsdc)
+  if (body.bidPerBlockUsdc != null) {
+    const bidPerBlock = Number(body.bidPerBlockUsdc)
+    const blocks = Math.max(1, Math.floor(Number(body.blocks) || 1))
+    usdcPerImpression = bidPerBlock / IMPRESSIONS_PER_BLOCK
+    fundedUsdc = bidPerBlock * blocks
+  }
+  let campaign
+  try {
+    campaign = buildCampaign(
+      {
+        line: typeof body.line === 'string' ? body.line : '',
+        endpointUrl: typeof body.endpointUrl === 'string' ? body.endpointUrl : '',
+        advertiserWallet:
+          (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
+          `TenderSelfServe${randomBytes(12).toString('hex')}`,
+        usdcPerImpression,
+        fundedUsdc,
+        targeting: body.targeting && typeof body.targeting === 'object' ? (body.targeting as Record<string, unknown>) : {},
+      },
+      Date.now(),
+    )
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+  }
+  await campaignStore.create(campaign).catch(() => {})
+  gatewayTender.addCampaign(campaign) // serve immediately on this instance
+  return c.json({ campaign })
+})
+
+// Gateway — ensure advertiser campaigns are loaded into the auction (so a
+// request's wait can be monetized), then flush telemetry to Supabase before the
+// function freezes. (The reporter also auto-flushes on its 2s timer mid-stream.)
 app.use('/v1/*', async (c, next) => {
+  await ensureCampaigns()
   await next()
   keepAlive(reporter.flush())
 })
