@@ -43,6 +43,7 @@ import {
   loadAttestationKey,
   signAttestation,
   accrueSettlement,
+  accrueClick,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -640,6 +641,35 @@ const auctionLog = new AuctionLog()
 // each wallet's inference bill. REQUESTER_SHARE of the impression price accrues.
 const creditLedger = new CreditLedger()
 const REQUESTER_SHARE = Number(process.env.TENDER_REQUESTER_SHARE ?? 0.5)
+const CLICK_MULTIPLIER = Number(process.env.TENDER_CLICK_MULTIPLIER ?? 50)
+
+// Click = call: when the agent/user actually invokes the sponsored x402 endpoint,
+// bill it at CLICK_MULTIPLIER × the impression rate and accrue REQUESTER_SHARE to
+// the request's wallet. The ad and the transaction are the same call (section 6).
+app.post('/api/tender/click', async (c) => {
+  const { sessionId, requestId, placementId } = await c.req.json().catch(() => ({}))
+  const served = auctionLog.get(requestId)
+  if (!served || served.placementId !== placementId) {
+    return c.json({ error: 'no served placement for this request' }, 400)
+  }
+  const session = sessionId ? sessions.get(sessionId) : undefined
+  const { creditedUsd, grossUsdc } = accrueClick({
+    ledger: creditLedger,
+    wallet: session?.address ?? '',
+    requestId,
+    placementId,
+    pricePerImpressionUsdc: served.usdcPerImpression,
+    clickMultiplier: CLICK_MULTIPLIER,
+    requesterShare: REQUESTER_SHARE,
+    at: Date.now(),
+  })
+  return c.json({
+    creditedUsd: round6(creditedUsd),
+    grossUsdc: round6(grossUsdc),
+    endpointUrl: served.endpointUrl,
+    wallet: session ? walletSnapshot(session) : undefined,
+  })
+})
 
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)

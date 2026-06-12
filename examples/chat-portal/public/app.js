@@ -36,6 +36,7 @@ async function init() {
   for (const b of document.querySelectorAll('.infmode-opt')) {
     b.addEventListener('click', () => setInferenceMode(b.dataset.infmode))
   }
+  $('placement-cta')?.addEventListener('click', recordClick)
   $('topup-toggle').addEventListener('click', () => $('topup').classList.toggle('hidden'))
   $('topup').addEventListener('click', (e) => {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
@@ -666,6 +667,7 @@ async function readSSE(stream, onEvent) {
 function renderPlacement(p) {
   const bar = $('placement-bar')
   if (!bar || !p || !p.line) return
+  state.placement = p // for click = call
   $('placement-line').textContent = p.line
   const attest = $('placement-attest')
   if (attest) { attest.textContent = ''; attest.className = 'placement-attest' } // reset; set on attestation
@@ -694,4 +696,28 @@ function renderAttestation(d) {
 
 function clearPlacement() {
   $('placement-bar')?.classList.add('hidden')
+  state.placement = null
+}
+
+// Click = call: invoking the sponsored endpoint bills CLICK_MULTIPLIER × the
+// impression and credits the wallet. We record the click, then let the link open
+// the endpoint (the ad and the transaction are the same call). Non-blocking.
+async function recordClick() {
+  const p = state.placement
+  if (!p) return
+  try {
+    const res = await fetch('/api/tender/click', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: state.sessionId, requestId: p.requestId, placementId: p.placementId }),
+    })
+    const d = await res.json()
+    if (d.wallet) applyWallet(d.wallet)
+    if (d.creditedUsd) {
+      const el = $('placement-attest')
+      if (el) { el.textContent = `✓ clicked · +${fmt(d.creditedUsd)}`; el.className = 'placement-attest ok' }
+    }
+  } catch {
+    /* a failed click record never blocks opening the endpoint */
+  }
 }
