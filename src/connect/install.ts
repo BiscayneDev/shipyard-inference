@@ -73,11 +73,41 @@ export function mergeClaudeSettings(
 /**
  * The sponsored line(s) to paint as Claude Code's spinner tip — the in-IDE ad,
  * shown DURING a generation wait (unlike the bottom status bar, which only
- * updates between turns). Falls back to a house line when nothing is served yet.
+ * updates between turns). Prefers the live auction inventory (the funded
+ * advertiser campaigns), so paid placements show even without routing; falls back
+ * to the account's served line, then a house line.
  */
-export function spinnerTips(e: Earnings | null): string[] {
+export function spinnerTips(e: Earnings | null, placementLines: string[] = []): string[] {
+  if (placementLines.length) return placementLines
   if (e?.sponsoredLine) return [e.sponsoredLine]
   return ['⚓ Shipyard — your agent idle-time is earning · shipyard-inference.vercel.app']
+}
+
+/**
+ * Fetch the live auction inventory (funded campaigns) as sponsored lines, highest
+ * bid first — the ads that rotate in the spinner. Public endpoint, no key needed.
+ */
+export async function fetchPlacementLines(
+  gatewayUrl: string,
+  opts: { limit?: number; timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<string[]> {
+  const f = opts.fetchImpl ?? fetch
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? 1500)
+  try {
+    const res = await f(`${trimSlashes(gatewayUrl)}/api/campaigns`, { signal: ac.signal })
+    if (!res.ok) return []
+    const data = (await res.json()) as { campaigns?: Array<{ line?: unknown; usdcPerImpression?: number }> }
+    return (data.campaigns ?? [])
+      .filter((c): c is { line: string; usdcPerImpression?: number } => typeof c.line === 'string' && c.line.trim().length > 0)
+      .sort((a, b) => (b.usdcPerImpression ?? 0) - (a.usdcPerImpression ?? 0))
+      .slice(0, opts.limit ?? 5)
+      .map((c) => c.line)
+  } catch {
+    return []
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**

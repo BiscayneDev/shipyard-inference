@@ -4,6 +4,7 @@ import {
   mergeClaudeSettings,
   applyShipyardSpinnerTips,
   spinnerTips,
+  fetchPlacementLines,
   issueKey,
   fetchEarnings,
   formatStatusLine,
@@ -59,13 +60,35 @@ test('mergeClaudeSettings: does not clobber an existing status line', () => {
   assert.equal(merged.statusLine?.command, 'my-own')
 })
 
-test('spinnerTips: uses the served sponsored line, else a house fallback', () => {
+test('spinnerTips: prefers auction lines, then served line, then house fallback', () => {
+  // live auction inventory wins
+  assert.deepEqual(spinnerTips(null, ['🛰️ Ship to prod', '⚡ Embeddings']), ['🛰️ Ship to prod', '⚡ Embeddings'])
+  // else the account's served sponsored line
   assert.deepEqual(
-    spinnerTips({ requests: 1, spentUsd: 0, savedUsd: 0, savedPct: 0, kickbacksUsd: 0, sponsoredLine: '🚀 Acme Cloud' }),
+    spinnerTips({ requests: 1, spentUsd: 0, savedUsd: 0, savedPct: 0, kickbacksUsd: 0, sponsoredLine: '🚀 Acme Cloud' }, []),
     ['🚀 Acme Cloud'],
   )
-  assert.equal(spinnerTips(null).length, 1)
-  assert.match(spinnerTips(null)[0], /Shipyard/)
+  // else house
+  assert.equal(spinnerTips(null, []).length, 1)
+  assert.match(spinnerTips(null, [])[0], /Shipyard/)
+})
+
+test('fetchPlacementLines: returns active campaign lines, highest bid first', async () => {
+  const fetchImpl = (async (url: string) => {
+    assert.match(String(url), /\/api\/campaigns$/)
+    return new Response(
+      JSON.stringify({
+        campaigns: [
+          { line: 'cheap', usdcPerImpression: 0.002 },
+          { line: 'pricey', usdcPerImpression: 0.01 },
+          { line: '', usdcPerImpression: 9 },
+        ],
+      }),
+      { status: 200 },
+    )
+  }) as unknown as typeof fetch
+  const lines = await fetchPlacementLines('https://gw/', { fetchImpl })
+  assert.deepEqual(lines, ['pricey', 'cheap'], 'sorted by bid desc, empty lines dropped')
 })
 
 test('applyShipyardSpinnerTips: sets spinnerTipsOverride only, preserves the rest', () => {

@@ -8,6 +8,7 @@ import {
   mergeClaudeSettings,
   applyShipyardSpinnerTips,
   spinnerTips,
+  fetchPlacementLines,
   issueKey,
   fetchEarnings,
   formatStatusLine,
@@ -46,9 +47,12 @@ async function connect(): Promise<void> {
   // (takes over the model). Default leaves the user's model/inference untouched.
   const route = has('--route')
 
-  // Seed the spinner tip (the in-wait ad) with the account's current sponsored
-  // line; the statusline command refreshes it between turns thereafter.
-  const earnings = await fetchEarnings(url, key).catch(() => null)
+  // Seed the spinner tip (the in-wait ad) from the live auction inventory; the
+  // statusline command refreshes it between turns thereafter.
+  const [earnings, lines] = await Promise.all([
+    fetchEarnings(url, key).catch(() => null),
+    fetchPlacementLines(url).catch(() => []),
+  ])
 
   const path = claudeSettingsPath()
   const merged = applyShipyardSpinnerTips(
@@ -58,7 +62,7 @@ async function connect(): Promise<void> {
       statusLineCommand: has('--no-statusline') ? undefined : STATUSLINE_CMD,
       route,
     }),
-    spinnerTips(earnings),
+    spinnerTips(earnings, lines),
   )
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(merged, null, 2) + '\n')
@@ -144,13 +148,13 @@ async function statusline(): Promise<void> {
     process.stdout.write('⚓ Shipyard')
     return
   }
-  const e = await fetchEarnings(url, key)
+  const [e, lines] = await Promise.all([fetchEarnings(url, key), fetchPlacementLines(url).catch(() => [])])
   const line = formatStatusLine(e)
-  // Refresh the spinner tip (the ad shown DURING the next wait) with the current
-  // auction line. Surgical write — only spinnerTipsOverride, never env.
+  // Refresh the spinner tip (the ad shown DURING the next wait) from the live
+  // auction. Surgical write — only spinnerTipsOverride, never env.
   try {
     const sp = claudeSettingsPath()
-    writeFileSync(sp, JSON.stringify(applyShipyardSpinnerTips(readSettings(sp), spinnerTips(e)), null, 2) + '\n')
+    writeFileSync(sp, JSON.stringify(applyShipyardSpinnerTips(readSettings(sp), spinnerTips(e, lines)), null, 2) + '\n')
   } catch {
     /* best effort */
   }
