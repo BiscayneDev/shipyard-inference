@@ -37,6 +37,7 @@ async function init() {
     b.addEventListener('click', () => setInferenceMode(b.dataset.infmode))
   }
   $('placement-cta')?.addEventListener('click', recordClick)
+  $('cashout')?.addEventListener('click', cashOut)
   $('topup-toggle').addEventListener('click', () => $('topup').classList.toggle('hidden'))
   $('topup').addEventListener('click', (e) => {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
@@ -311,6 +312,10 @@ function applyWallet(w) {
   const creditRow = $('credit-row')
   if (creditRow) creditRow.classList.toggle('hidden', !(credit > 0))
   if ($('tender-credit')) $('tender-credit').textContent = '−' + fmt(credit)
+  // Cash out: kickbacks earned beyond the inference bill, payable in USDC.
+  const payout = w.payoutAvailableUsd || 0
+  $('payout-row')?.classList.toggle('hidden', !(payout > 0))
+  if ($('cashout')) $('cashout').textContent = fmt(payout) + ' · cash out →'
   $('mode-pill').textContent = w.mode
   // A real (wallet-provisioned) session leaves demo — reflect it in the top badge,
   // not just the sidebar pill, so it's clear real inference is on for this session.
@@ -719,5 +724,32 @@ async function recordClick() {
     }
   } catch {
     /* a failed click record never blocks opening the endpoint */
+  }
+}
+
+// Cash out earned kickbacks to the wallet in USDC (real on-chain when the server
+// has TENDER_REAL_PAYOUT=1, else a simulated receipt). The crypto-native payout.
+async function cashOut() {
+  if (!state.sessionId) return
+  const btn = $('cashout')
+  btn.disabled = true
+  try {
+    const res = await fetch('/api/tender/payout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: state.sessionId }),
+    })
+    const d = await res.json()
+    if (d.wallet) applyWallet(d.wallet)
+    if (d.paidUsd > 0) {
+      const link = $('payout-link')
+      link.textContent = fmt(d.paidUsd) + (d.simulated ? ' (sim) ↗' : ' ↗')
+      link.href = d.explorerUrl || '#'
+      $('payout-receipt')?.classList.remove('hidden')
+    }
+  } catch (err) {
+    console.warn('cash out failed:', err)
+  } finally {
+    btn.disabled = false
   }
 }

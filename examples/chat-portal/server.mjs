@@ -335,6 +335,18 @@ if (TREASURY && process.env.PAYBOX_CREDENTIAL_ID) {
   console.log(`  settle:    REAL · ${settlementSigner.publicKey} → ${TREASURY} (${SETTLE_NETWORK})`)
 }
 
+// Tender payout — the crypto version of kickbacks.ai's "earnings accrue, Stripe
+// later": here a developer's idle-attention kickbacks pay out in USDC on-chain,
+// now. The operator Paybox wallet is the payout treasury. Real on-chain payout is
+// GATED (TENDER_REAL_PAYOUT=1) so a demo never sends real USDC to a throwaway
+// session address — the default is a simulated receipt (with a tx hash to show).
+const TENDER_REAL_PAYOUT = process.env.TENDER_REAL_PAYOUT === '1'
+let tenderPayoutSigner = settlementSigner
+if (!tenderPayoutSigner && TENDER_REAL_PAYOUT && process.env.PAYBOX_CREDENTIAL_ID) {
+  tenderPayoutSigner = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network: SETTLE_NETWORK })
+}
+if (TENDER_REAL_PAYOUT) console.log(`  payout:    REAL USDC kickbacks on ${SETTLE_NETWORK}`)
+
 // A base58 string shaped like a Solana tx signature (~88 chars). In x402 mode a
 // real settlement returns the on-chain signature; in demo/usepod we mint a
 // realistic stand-in so the receipt UI has a tx hash + explorer link to show.
@@ -358,10 +370,13 @@ function walletSnapshot(session) {
     pendingUsd: round6(session.pendingUsd),
     spentUsd: round6(session.spentUsd),
     savedUsd: round6(session.savedUsd),
-    // Tender idle-attention credit accrued to this wallet, and what's actually
-    // owed after netting it against the inference bill.
+    // Tender idle-attention credit accrued to this wallet, what's owed after
+    // netting it against the inference bill, the surplus available to cash out,
+    // and lifetime USDC paid out.
     tenderCreditUsd: round6(creditLedger.balance(session.address)),
     netOwedUsd: round6(Math.max(0, session.pendingUsd - creditLedger.balance(session.address))),
+    payoutAvailableUsd: round6(Math.max(0, creditLedger.balance(session.address) - session.pendingUsd)),
+    earnedUsd: round6(session.earnedUsd ?? 0),
     messages: session.messages,
     settlements: session.settlements.length,
     realInference: !!session.realInference,
@@ -674,6 +689,54 @@ app.post('/api/tender/click', async (c) => {
     grossUsdc: round6(grossUsdc),
     endpointUrl: served.endpointUrl,
     wallet: session ? walletSnapshot(session) : undefined,
+  })
+})
+
+// Cash out: pay the developer's earned kickbacks to their wallet in USDC. Pays
+// only the SURPLUS — credit beyond the inference they owe (the rest nets against
+// the bill at /api/settle). Real on-chain when TENDER_REAL_PAYOUT=1, else a
+// simulated receipt so a demo never spends real USDC on a throwaway address.
+app.post('/api/tender/payout', async (c) => {
+  const { sessionId } = await c.req.json().catch(() => ({}))
+  const session = sessionId ? sessions.get(sessionId) : undefined
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  const wallet = session.address
+  const surplus = round6(Math.max(0, creditLedger.balance(wallet) - session.pendingUsd))
+  if (surplus <= 0) return c.json({ paidUsd: 0, wallet: walletSnapshot(session) })
+
+  let signature
+  let simulated
+  if (TENDER_REAL_PAYOUT && tenderPayoutSigner) {
+    try {
+      const res = await payboxSettle({
+        signer: tenderPayoutSigner,
+        treasury: wallet,
+        amount: String(Math.round(surplus * 1_000_000)),
+        network: SETTLE_NETWORK,
+        rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+        usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+      })
+      signature = res.signature
+      simulated = false
+    } catch (err) {
+      return c.json(
+        { error: `payout failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) },
+        502,
+      )
+    }
+  } else {
+    signature = mockSignature()
+    simulated = true
+  }
+  creditLedger.consume(wallet, surplus)
+  session.earnedUsd = (session.earnedUsd ?? 0) + surplus
+  reporter?.recordSettlement?.({ userId: session.id, amountUsd: surplus, status: 'settled', network: SETTLE_NETWORK })
+  return c.json({
+    paidUsd: surplus,
+    signature,
+    simulated,
+    explorerUrl: explorerUrl(signature, SETTLE_NETWORK),
+    wallet: walletSnapshot(session),
   })
 })
 

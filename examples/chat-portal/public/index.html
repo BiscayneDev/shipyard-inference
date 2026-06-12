@@ -53,6 +53,14 @@
               <span class="muted">Idle credit</span>
               <span class="mono pos" id="tender-credit">$0.000000</span>
             </div>
+            <div class="wallet-sub hidden" id="payout-row" title="Kickbacks earned beyond your inference bill — cash out to your wallet in USDC">
+              <span class="muted">Earned</span>
+              <button class="btn ghost tiny" id="cashout">$0.000000 · cash out →</button>
+            </div>
+            <div class="wallet-sub hidden" id="payout-receipt">
+              <span class="muted">Paid out</span>
+              <a class="mono pos" id="payout-link" target="_blank" rel="noreferrer noopener"></a>
+            </div>
             <div class="topup hidden" id="topup">
               <button class="btn ghost tiny topup-amt" data-amt="5">+$5</button>
               <button class="btn ghost tiny topup-amt" data-amt="10">+$10</button>
