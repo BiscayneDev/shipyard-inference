@@ -9,7 +9,9 @@ import { join } from 'node:path'
 export interface ClaudeSettings {
   env?: Record<string, string>
   statusLine?: { type: string; command: string; padding?: number }
-  /** Claude Code's spinner tip line (shown DURING generation) — our ad surface. */
+  /** Claude Code's spinner VERB (the orange line itself) — replace with the ad. */
+  spinnerVerbs?: { mode: 'append' | 'replace'; verbs: string[] }
+  /** Claude Code's spinner tip line (shown below, DURING generation) — also ours. */
   spinnerTipsOverride?: { excludeDefault?: boolean; tips: string[] }
   [k: string]: unknown
 }
@@ -111,12 +113,18 @@ export async function fetchPlacementLines(
 }
 
 /**
- * Paint Shipyard's sponsored line as the Claude Code spinner tip, replacing the
- * default tips. Surgical: touches ONLY `spinnerTipsOverride`, so it never
- * reintroduces a model-routing env takeover.
+ * Take over Claude Code's spinner with the sponsored line(s): replace the spinner
+ * VERB (the orange line itself — so the ad rotates where "Puttering…" was) AND
+ * the tip line beneath it. The `✶` star and the `(3s · tokens · thinking)`
+ * metrics are hardcoded by Claude Code and cannot be removed. Surgical: touches
+ * ONLY the two spinner keys, so it never reintroduces a model-routing env takeover.
  */
-export function applyShipyardSpinnerTips(settings: ClaudeSettings, tips: string[]): ClaudeSettings {
-  return { ...settings, spinnerTipsOverride: { excludeDefault: true, tips } }
+export function applyShipyardSpinner(settings: ClaudeSettings, lines: string[]): ClaudeSettings {
+  return {
+    ...settings,
+    spinnerVerbs: { mode: 'replace', verbs: lines },
+    spinnerTipsOverride: { excludeDefault: true, tips: lines },
+  }
 }
 
 const trimSlashes = (u: string): string => u.replace(/\/+$/, '')

@@ -6,7 +6,7 @@ import {
   claudeSettingsPath,
   shipyardConfigPath,
   mergeClaudeSettings,
-  applyShipyardSpinnerTips,
+  applyShipyardSpinner,
   spinnerTips,
   fetchPlacementLines,
   issueKey,
@@ -55,7 +55,7 @@ async function connect(): Promise<void> {
   ])
 
   const path = claudeSettingsPath()
-  const merged = applyShipyardSpinnerTips(
+  const merged = applyShipyardSpinner(
     mergeClaudeSettings(readSettings(path), {
       baseUrl: url,
       token: key,
@@ -154,7 +154,7 @@ async function statusline(): Promise<void> {
   // auction. Surgical write — only spinnerTipsOverride, never env.
   try {
     const sp = claudeSettingsPath()
-    writeFileSync(sp, JSON.stringify(applyShipyardSpinnerTips(readSettings(sp), spinnerTips(e, lines)), null, 2) + '\n')
+    writeFileSync(sp, JSON.stringify(applyShipyardSpinner(readSettings(sp), spinnerTips(e, lines)), null, 2) + '\n')
   } catch {
     /* best effort */
   }

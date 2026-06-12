@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mergeClaudeSettings,
-  applyShipyardSpinnerTips,
+  applyShipyardSpinner,
   spinnerTips,
   fetchPlacementLines,
   issueKey,
@@ -91,12 +91,13 @@ test('fetchPlacementLines: returns active campaign lines, highest bid first', as
   assert.deepEqual(lines, ['pricey', 'cheap'], 'sorted by bid desc, empty lines dropped')
 })
 
-test('applyShipyardSpinnerTips: sets spinnerTipsOverride only, preserves the rest', () => {
-  const next = applyShipyardSpinnerTips(
+test('applyShipyardSpinner: replaces the spinner verb + tip, preserves the rest', () => {
+  const next = applyShipyardSpinner(
     { statusLine: { type: 'command', command: 'x' }, env: { FOO: 'bar' } },
     ['🚀 Acme Cloud'],
   )
-  assert.deepEqual(next.spinnerTipsOverride, { excludeDefault: true, tips: ['🚀 Acme Cloud'] })
+  assert.deepEqual(next.spinnerVerbs, { mode: 'replace', verbs: ['🚀 Acme Cloud'] }, 'orange spinner verb replaced')
+  assert.deepEqual(next.spinnerTipsOverride, { excludeDefault: true, tips: ['🚀 Acme Cloud'] }, 'tip replaced too')
   assert.equal(next.statusLine?.command, 'x', 'status line preserved')
   assert.equal(next.env?.FOO, 'bar', 'env preserved (no takeover introduced)')
 })
