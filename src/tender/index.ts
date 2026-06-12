@@ -9,6 +9,17 @@ export type { AuctionOptions } from './auction.js'
 export { AuctionLog } from './log.js'
 export type { ServedRecord } from './log.js'
 export {
+  buildCampaign,
+  MemoryCampaignStore,
+  SupabaseCampaignStore,
+  SUPABASE_CAMPAIGNS_SCHEMA,
+} from './campaign-store.js'
+export type {
+  CampaignStore,
+  CampaignInput,
+  SupabaseCampaignStoreOptions,
+} from './campaign-store.js'
+export {
   loadAttestationKey,
   generateAttestationSeedHex,
   attestationDigest,

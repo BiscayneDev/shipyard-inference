@@ -16,6 +16,8 @@ import {
   accrueClick,
   sweepCredits,
   usdcToAtomic,
+  buildCampaign,
+  MemoryCampaignStore,
   type Campaign,
   type Placement,
   type TenderRequestContext,
@@ -249,4 +251,27 @@ test('accrueClick: bills CLICK_MULTIPLIER × impression, credits the share', () 
   assert.ok(near(r.grossUsdc, 0.25)) // 0.005 × 50
   assert.ok(near(r.creditedUsd, 0.125)) // 0.25 × 0.50
   assert.ok(near(led.balance('W'), 0.125))
+})
+
+// --- advertiser onboarding -------------------------------------------------
+
+test('buildCampaign: derives impressions from budget/bid and validates input', () => {
+  const c = buildCampaign({ line: 'hi', endpointUrl: 'https://x', advertiserWallet: 'Ad', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1)
+  assert.equal(c.remainingImpressions, 1000) // 5 / 0.005
+  assert.match(c.campaignId, /^cmp_/)
+  assert.match(c.placementId, /^plc_/)
+  assert.throws(() => buildCampaign({ line: 'x'.repeat(81), endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1), /<= 80/)
+  assert.throws(() => buildCampaign({ line: 'x', endpointUrl: '', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1), /endpointUrl/)
+  assert.throws(() => buildCampaign({ line: 'x', endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.0001, fundedUsdc: 5 }, 1), /floor/)
+  assert.throws(() => buildCampaign({ line: 'x', endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 0 }, 1), /fundedUsdc/)
+})
+
+test('MemoryCampaignStore + Auction: a created campaign serves and can win the slot', async () => {
+  const store = new MemoryCampaignStore()
+  const c = buildCampaign({ line: 'top bid', endpointUrl: 'https://x', advertiserWallet: 'Ad', usdcPerImpression: 0.01, fundedUsdc: 1 }, 1)
+  await store.create(c)
+  assert.equal((await store.list()).length, 1)
+  assert.equal((await store.get(c.campaignId))?.line, 'top bid')
+  const a = new Auction(await store.list())
+  assert.equal(a.select(ctx())?.placementId, c.placementId)
 })
