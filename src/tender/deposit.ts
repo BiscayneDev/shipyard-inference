@@ -1,10 +1,26 @@
 import { randomBytes } from 'node:crypto'
 import bs58 from 'bs58'
-// Static import (not the dynamic-optional pattern the rest of the codebase uses
-// for solana): this module runs in the deployed gateway where the deposit rail is
-// always needed, and a static import is what gets reliably traced into the Vercel
-// serverless bundle. @solana/web3.js is a hard dependency for that reason.
-import { Connection, PublicKey } from '@solana/web3.js'
+
+// Verification talks to the Solana JSON-RPC directly over `fetch` — no
+// @solana/web3.js. That keeps the deployed function tiny and, crucially, avoids
+// relying on the serverless bundler to trace a large dependency (a missing trace
+// turns a static import into a boot-time crash). The two calls we need
+// (getSignaturesForAddress, getTransaction jsonParsed) are plain RPC.
+interface RpcSignature { signature: string; err: unknown }
+interface RpcTokenBalance { owner?: string; mint: string; uiTokenAmount: { uiAmount: number | null } }
+interface RpcTransaction { meta: { err: unknown; preTokenBalances?: RpcTokenBalance[]; postTokenBalances?: RpcTokenBalance[] } | null }
+
+async function rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  })
+  if (!res.ok) throw new Error(`solana rpc ${method}: ${res.status}`)
+  const body = (await res.json()) as { result?: T; error?: { message?: string } }
+  if (body.error) throw new Error(`solana rpc ${method}: ${body.error.message ?? 'error'}`)
+  return body.result as T
+}
 
 // Advertiser-side funding for self-serve campaigns: a campaign created at
 // /advertise is born `pending` and only enters the live auction once the
@@ -116,25 +132,25 @@ export async function verifyDeposit(
   reference: string,
   amountUsdc: number,
 ): Promise<DepositStatus> {
-  const connection = new Connection(rpcFor(cfg), 'confirmed')
+  const url = rpcFor(cfg)
   const mint = usdcMintFor(cfg)
-  const treasury = new PublicKey(cfg.treasury).toBase58()
-  const referencePk = new PublicKey(reference)
+  const treasury = cfg.treasury
 
-  const sigs = await connection.getSignaturesForAddress(referencePk, { limit: 25 }, 'confirmed')
-  for (const s of sigs) {
+  const sigs = await rpc<RpcSignature[] | null>(url, 'getSignaturesForAddress', [
+    reference,
+    { limit: 25, commitment: 'confirmed' },
+  ])
+  for (const s of sigs ?? []) {
     if (s.err) continue
-    const tx = await connection.getParsedTransaction(s.signature, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    })
+    const tx = await rpc<RpcTransaction | null>(url, 'getTransaction', [
+      s.signature,
+      { commitment: 'confirmed', maxSupportedTransactionVersion: 0, encoding: 'jsonParsed' },
+    ])
     if (!tx || tx.meta?.err) continue
 
-    const owned = (b: { owner?: string; mint: string }): boolean =>
-      b.owner === treasury && b.mint === mint
-    const sum = (
-      balances: ReadonlyArray<{ owner?: string; mint: string; uiTokenAmount: { uiAmount: number | null } }> | null | undefined,
-    ): number => (balances ?? []).filter(owned).reduce((acc, b) => acc + (b.uiTokenAmount.uiAmount ?? 0), 0)
+    const owned = (b: RpcTokenBalance): boolean => b.owner === treasury && b.mint === mint
+    const sum = (balances: RpcTokenBalance[] | undefined): number =>
+      (balances ?? []).filter(owned).reduce((acc, b) => acc + (b.uiTokenAmount.uiAmount ?? 0), 0)
 
     const delta = sum(tx.meta?.postTokenBalances) - sum(tx.meta?.preTokenBalances)
     // Tiny epsilon for float dust; deposits are exact or larger.
