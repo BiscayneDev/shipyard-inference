@@ -13,6 +13,14 @@ import {
   toOpenAIError,
 } from '../openai-compat/index.js'
 import type { OpenAIChatRequest, OpenAIErrorBody } from '../openai-compat/index.js'
+import {
+  anthropicRequestToChatParams,
+  llmResponseToAnthropicMessage,
+  createAnthropicSSEEncoder,
+  estimateInputTokens,
+  toAnthropicError,
+} from '../anthropic-compat/index.js'
+import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
 import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 
@@ -169,6 +177,82 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toOpenAIError(err)
+      return c.json(errBody, status as 400)
+    }
+  })
+
+  // ── Anthropic Messages API — for Claude Code / Anthropic-SDK agents ────────
+  // Point Claude Code here with ANTHROPIC_BASE_URL=<gateway> (NO /v1 — it
+  // appends /v1/messages). Auth via x-api-key (ANTHROPIC_API_KEY) or Bearer
+  // (ANTHROPIC_AUTH_TOKEN); both resolve a per-user key, same as the OpenAI side.
+  const anthropicAuth = (c: Context): string | undefined => {
+    const bearer = c.req.header('authorization')
+    if (bearer) return bearer
+    const key = c.req.header('x-api-key')
+    return key ? `Bearer ${key}` : undefined
+  }
+  const anthropicAuthError = { type: 'error' as const, error: { type: 'authentication_error', message: 'Invalid API key' } }
+  const anthropicBadJson = { type: 'error' as const, error: { type: 'invalid_request_error', message: 'Invalid JSON body' } }
+
+  app.post('/v1/messages/count_tokens', async (c) => {
+    if (!(await resolveAuth(config, anthropicAuth(c))).ok) return c.json(anthropicAuthError, 401)
+    let body: AnthropicChatRequest
+    try {
+      body = (await c.req.json()) as AnthropicChatRequest
+    } catch {
+      return c.json(anthropicBadJson, 400)
+    }
+    return c.json({ input_tokens: estimateInputTokens(body) })
+  })
+
+  app.post('/v1/messages', async (c) => {
+    const auth = await resolveAuth(config, anthropicAuth(c))
+    if (!auth.ok) return c.json(anthropicAuthError, 401)
+
+    let body: AnthropicChatRequest
+    try {
+      body = (await c.req.json()) as AnthropicChatRequest
+    } catch {
+      return c.json(anthropicBadJson, 400)
+    }
+    if (!body || !Array.isArray(body.messages)) {
+      return c.json({ type: 'error' as const, error: { type: 'invalid_request_error', message: '`messages` is required' } }, 400)
+    }
+
+    const params = anthropicRequestToChatParams(body)
+    if (auth.account?.userId) params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
+    const id = `msg_${randomBytes(12).toString('hex')}`
+    const ctx: RequestContext = {}
+
+    if (body.stream) {
+      return streamSSE(c, async (stream) => {
+        const encoder = createAnthropicSSEEncoder(body.model, id)
+        const controller = new AbortController()
+        stream.onAbort(() => controller.abort())
+        try {
+          await als.run(ctx, async () => {
+            for await (const event of router.chatStream(params, { signal: controller.signal })) {
+              for (const f of encoder.forEvent(event)) {
+                await stream.writeSSE({ event: f.event, data: f.data })
+              }
+            }
+          })
+        } catch (err) {
+          await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
+        }
+      })
+    }
+
+    try {
+      const res = await als.run(ctx, () => router.chat(params))
+      if (exposeCost) {
+        if (ctx.model) c.header('x-shipyard-model', ctx.model)
+        if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
+        if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+      }
+      return c.json(llmResponseToAnthropicMessage(res, body.model, id))
+    } catch (err) {
+      const { status, body: errBody } = toAnthropicError(err)
       return c.json(errBody, status as 400)
     }
   })
