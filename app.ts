@@ -507,7 +507,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{te
 a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:10px 16px}
 .prevcap{font-size:11px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
 .prev{background:#04050a;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:13px/1.7 var(--mono)}
-.prev .pstar{color:var(--accent2)}.prev .pmut{color:var(--muted)}.prev .pad{color:var(--fg)}
+.prev .pstar{color:#e8915f}.prev .pmut{color:var(--muted)}.prev .pverb{color:#e8915f;font-weight:600}
 .snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:24px;border-bottom:1px solid var(--line)}
 .snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
 .snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--fg);text-decoration:none}.snav .lnk a.active{color:var(--fg)}
@@ -519,8 +519,8 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
 <p class="sub">Your line shows in the agent's <strong>spinner</strong> — the "thinking" indicator — during inference waits. Never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
 <div class="card">
   <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="🤖 Try Acme Vector DB — first 1M vectors free"/>
-  <div class="prevcap">Spinner preview — how it renders while the agent thinks</div>
-  <div class="prev" id="prev"><div><span class="pstar">✶</span> <span class="pmut">Working… (3s · ↓ 91 tokens)</span></div><div><span class="pmut">⌑ Tip:</span> <span id="pline" class="pad"></span></div></div>
+  <div class="prevcap">Spinner preview — your line becomes the spinner while the agent thinks</div>
+  <div class="prev" id="prev"><span class="pstar">✶</span> <span id="pline" class="pverb"></span><span class="pmut">… (3s · ↓ 91 tokens · thinking)</span></div>
   <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
   <div class="grid">
     <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
