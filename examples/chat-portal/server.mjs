@@ -44,6 +44,9 @@ import {
   signAttestation,
   accrueSettlement,
   accrueClick,
+  buildCampaign,
+  MemoryCampaignStore,
+  SupabaseCampaignStore,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -606,32 +609,35 @@ app.post('/api/wallet/deposit/submit', async (c) => {
 })
 
 // ── Tender — idle-attention placements on the request wait state ─────────────
-// Seeded campaigns (config-first; no self-serve dashboard in v1). Each line is a
-// marketplace x402 listing; a "click" = the agent actually calling endpointUrl.
-const tenderAuction = new Auction([
+// Campaigns are funded inventory, now ADVERTISER self-serve (POST /api/campaigns,
+// /advertise). The store is the source of truth; the Auction is the live index,
+// hydrated from it at boot. Demo seeds get planted once if the store is empty.
+const SEED_CAMPAIGNS = [
   {
-    campaignId: 'demo-vercel',
-    placementId: 'vercel-deploy',
+    campaignId: 'demo-vercel', placementId: 'vercel-deploy',
     advertiserWallet: 'TenderAdVerce1111111111111111111111111111111',
     endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy',
     line: '🛰️  Ship this to prod — one-call Vercel deploy on Shipyard Market',
-    usdcPerImpression: 0.005,
-    remainingImpressions: 1000,
-    fundedUsdc: 5,
-    targeting: {},
+    usdcPerImpression: 0.005, remainingImpressions: 1000, fundedUsdc: 5, targeting: {},
   },
   {
-    campaignId: 'demo-embed',
-    placementId: 'nomic-embed',
+    campaignId: 'demo-embed', placementId: 'nomic-embed',
     advertiserWallet: 'TenderAdEmbed22222222222222222222222222222222',
     endpointUrl: 'https://api.shipyard.market/x402/nomic-embed',
     line: '⚡  Add semantic search — Nomic embeddings, pay-per-call USDC',
-    usdcPerImpression: 0.002,
-    remainingImpressions: 1000,
-    fundedUsdc: 2,
-    targeting: {},
+    usdcPerImpression: 0.002, remainingImpressions: 1000, fundedUsdc: 2, targeting: {},
   },
-])
+]
+const campaignStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseCampaignStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY, table: process.env.SUPABASE_CAMPAIGNS_TABLE })
+    : new MemoryCampaignStore()
+let storedCampaigns = await campaignStore.list().catch(() => [])
+if (storedCampaigns.length === 0) {
+  for (const c of SEED_CAMPAIGNS) await campaignStore.create(c).catch(() => {})
+  storedCampaigns = SEED_CAMPAIGNS
+}
+const tenderAuction = new Auction(storedCampaigns)
 const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
 // The gateway's dedicated attestation key + the auction log the release gate
 // cross-checks. Set TENDER_SIGNING_KEY (32-byte hex) for a stable, verifiable key.
@@ -670,6 +676,90 @@ app.post('/api/tender/click', async (c) => {
     wallet: session ? walletSnapshot(session) : undefined,
   })
 })
+
+// ── Advertiser onboarding — spin up a sponsored campaign ─────────────────────
+// Symmetric to the consumer's /connect: an advertiser sets a line + x402 listing,
+// a bid, and a budget; the campaign enters the live auction immediately. (Real
+// USDC escrow against the campaign is the production step — modeled here by the
+// declared budget; impressions = budget / bid.)
+const ADVERTISE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise on Shipyard · Tender</title>
+<style>
+:root{--bg:#06070a;--panel:#0c0e14;--hair:rgba(255,255,255,.10);--text:#f3f5fa;--muted:#99a1b3;--accent:#5b8cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:780px;margin:0 auto;padding:40px 22px 80px}h1{font-size:28px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 24px}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin:14px 0}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;background:#04050a;border:1px solid var(--hair);border-radius:9px;color:var(--text);padding:10px 12px;font:14px var(--mono)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
+button{appearance:none;border:0;border-radius:10px;background:var(--accent);color:#fff;font-weight:650;padding:11px 18px;cursor:pointer;margin-top:14px}
+button:disabled{opacity:.5}.note{font-size:13px;color:var(--muted);margin-top:8px}.hidden{display:none}.green{color:var(--green)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--hair)}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+td.mono{font-family:var(--mono)}a{color:var(--accent)}
+</style></head><body><div class="wrap">
+<h1>Advertise on Shipyard</h1>
+<p class="sub">Sponsor the wait. Your line shows during inference idle time; developers get 50% of the spend. First-price auction — highest bid serves first.</p>
+<div class="card">
+  <label for="line">Sponsored line (≤ 80 chars)</label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
+  <label for="url">Marketplace x402 endpoint (the "click" calls this)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
+  <div class="grid">
+    <div><label for="bid">Bid · USDC / impression (min 0.001)</label><input id="bid" value="0.005"/></div>
+    <div><label for="budget">Budget · USDC</label><input id="budget" value="5"/></div>
+  </div>
+  <label for="wallet">Advertiser wallet (optional)</label><input id="wallet" placeholder="Solana address — escrow source"/>
+  <button id="go">Launch campaign</button>
+  <div class="note" id="msg"></div>
+</div>
+<div class="card">
+  <strong>Live inventory</strong> <span class="muted">— what's serving now</span>
+  <table><thead><tr><th>Line</th><th>Bid</th><th>Left</th></tr></thead><tbody id="rows"></tbody></table>
+</div>
+<p class="note">Settlement is USDC on Solana via Paybox/x402. The consumer side: <a href="/">chat portal</a>.</p>
+<script>
+const $=s=>document.querySelector(s);
+async function refresh(){
+  const d=await (await fetch('/api/campaigns')).json();
+  $('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+c.line.replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+c.remainingImpressions+'</td></tr>').join('');
+}
+$('#go').addEventListener('click',async()=>{
+  $('#go').disabled=true;$('#msg').textContent='';
+  try{
+    const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,usdcPerImpression:Number($('#bid').value),fundedUsdc:Number($('#budget').value),advertiserWallet:$('#wallet').value.trim()||undefined})});
+    const d=await r.json();
+    if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed');}
+    else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions+' impressions at $'+d.campaign.usdcPerImpression+' ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';refresh();}
+  }catch(e){$('#msg').textContent='✗ '+e.message}
+  $('#go').disabled=false;
+});
+refresh();
+</script></div></body></html>`
+
+app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
+app.post('/api/campaigns', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  let campaign
+  try {
+    campaign = buildCampaign(
+      {
+        line: body.line,
+        endpointUrl: body.endpointUrl,
+        advertiserWallet:
+          (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
+          `TenderSelfServe${randomBytes(12).toString('hex')}`,
+        usdcPerImpression: Number(body.usdcPerImpression),
+        fundedUsdc: Number(body.fundedUsdc),
+        targeting: body.targeting && typeof body.targeting === 'object' ? body.targeting : {},
+      },
+      Date.now(),
+    )
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+  }
+  await campaignStore.create(campaign).catch(() => {})
+  tenderAuction.addCampaign(campaign) // serve immediately
+  return c.json({ campaign })
+})
+app.get('/api/campaigns', (c) => c.json({ campaigns: tenderAuction.list() }))
 
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
