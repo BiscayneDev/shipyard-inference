@@ -19,6 +19,7 @@ import {
   buildCampaign,
   MemoryCampaignStore,
   GatewayTender,
+  SupabaseCreditStore,
   type Campaign,
   type Placement,
   type TenderRequestContext,
@@ -267,24 +268,51 @@ test('buildCampaign: derives impressions from budget/bid and validates input', (
   assert.throws(() => buildCampaign({ line: 'x', endpointUrl: 'u', advertiserWallet: 'a', usdcPerImpression: 0.005, fundedUsdc: 0 }, 1), /fundedUsdc/)
 })
 
-test('GatewayTender: serve sets the current ad; settle accrues a valid billed impression', () => {
+test('GatewayTender: settle accrues a valid billed impression + sets the durable current ad', async () => {
   let t = 1000
   const gt = new GatewayTender({ campaigns: [campaign({ campaignId: 'c1' })], minWaitMs: 800, now: () => t })
   const p = gt.serve({ requestId: 'r1', surfaceId: 'gateway', userId: 'acct1' })
   assert.ok(p, 'serves a placement')
-  assert.equal(gt.currentLine('acct1'), p!.line, 'remembered as the account current ad')
 
   t = 3000
-  const res = gt.settle({ userId: 'acct1', requestId: 'r1', model: 'm', billedCostUsd: 0.0001, measuredWaitMs: 1200, placement: p!, surfaceId: 'gateway' })
+  const res = await gt.settle({ userId: 'acct1', requestId: 'r1', model: 'm', billedCostUsd: 0.0001, measuredWaitMs: 1200, placement: p!, surfaceId: 'gateway' })
   assert.equal(res.valid, true)
   assert.ok(near(res.creditedUsd, 0.0025)) // 0.5 × 0.005
-  assert.ok(near(gt.balance('acct1'), 0.0025))
+  assert.ok(near(await gt.balance('acct1'), 0.0025))
+  assert.equal(await gt.currentLine('acct1'), p!.line, 'current ad set on the valid impression')
 
   // a $0 (unbilled) request is rejected by the gate — no farming impressions
   const p2 = gt.serve({ requestId: 'r2', surfaceId: 'gateway', userId: 'acct1' })
-  const res2 = gt.settle({ userId: 'acct1', requestId: 'r2', model: 'm', billedCostUsd: 0, measuredWaitMs: 1200, placement: p2!, surfaceId: 'gateway' })
+  const res2 = await gt.settle({ userId: 'acct1', requestId: 'r2', model: 'm', billedCostUsd: 0, measuredWaitMs: 1200, placement: p2!, surfaceId: 'gateway' })
   assert.equal(res2.valid, false)
-  assert.ok(near(gt.balance('acct1'), 0.0025), 'unbilled impression accrues nothing')
+  assert.ok(near(await gt.balance('acct1'), 0.0025), 'unbilled impression accrues nothing')
+})
+
+test('SupabaseCreditStore: accrue inserts, balance sums (aggregate), latestLine reads newest', async () => {
+  const rows: Array<{ account: string; amount_usd: number; line: string; at: number }> = []
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    const u = String(url)
+    if (init?.method === 'POST') {
+      for (const r of JSON.parse(String(init.body))) rows.push(r)
+      return new Response(null, { status: 201 })
+    }
+    const acct = u.match(/account=eq\.([^&]+)/)?.[1]
+    const mine = rows.filter((r) => r.account === acct)
+    if (u.includes('amount_usd.sum()')) {
+      return new Response(JSON.stringify([{ sum: mine.reduce((s, r) => s + r.amount_usd, 0) }]), { status: 200 })
+    }
+    // latestLine: order=at.desc&limit=1
+    const newest = [...mine].sort((a, b) => b.at - a.at)[0]
+    return new Response(JSON.stringify(newest ? [{ line: newest.line }] : []), { status: 200 })
+  }) as unknown as typeof fetch
+
+  const store = new SupabaseCreditStore({ url: 'https://x.supabase.co', key: 'svc', fetch: fetchImpl })
+  await store.accrue({ account: 'a', amountUsd: 0.002, placementId: 'p1', line: 'old ad', requestId: 'r1', at: 1 })
+  await store.accrue({ account: 'a', amountUsd: 0.003, placementId: 'p2', line: 'new ad', requestId: 'r2', at: 2 })
+  await store.accrue({ account: 'b', amountUsd: 9, placementId: 'p9', line: 'other', requestId: 'r9', at: 1 })
+  assert.ok(near(await store.balance('a'), 0.005))
+  assert.equal(await store.latestLine('a'), 'new ad')
+  assert.equal(await store.balance('zzz'), 0)
 })
 
 test('MemoryCampaignStore + Auction: a created campaign serves and can win the slot', async () => {

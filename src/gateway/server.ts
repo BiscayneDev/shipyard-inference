@@ -103,10 +103,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     params: LLMChatParams,
     surfaceId: string,
     source: AsyncIterable<LLMStreamEvent>,
-  ): { stream: AsyncIterable<LLMStreamEvent>; finish: (ctx: RequestContext) => void } {
+  ): { stream: AsyncIterable<LLMStreamEvent>; finish: (ctx: RequestContext) => Promise<void> } {
     const tender = config.tender
-    if (!tender || !account) return { stream: source, finish: () => {} }
-    let placement: { placementId: string; usdcPerImpression: number } | null = null
+    if (!tender || !account) return { stream: source, finish: async () => {} }
+    let placement: { placementId: string; usdcPerImpression: number; line: string } | null = null
     let waitMs: number | undefined
     const observed = observeWaitWindow(
       source,
@@ -126,9 +126,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       },
       { minWaitMs: tender.minWaitMs },
     )
-    const finish = (ctx: RequestContext): void => {
+    const finish = async (ctx: RequestContext): Promise<void> => {
       if (!placement) return
-      tender.settle({
+      await tender.settle({
         userId: account,
         requestId: reqId,
         model: ctx.model ?? params.model ?? 'unknown',
@@ -210,7 +210,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
               }
             }
           })
-          finish(ctx)
+          await finish(ctx)
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
             await stream.writeSSE({
               data: JSON.stringify({
@@ -303,7 +303,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
               }
             }
           })
-          finish(ctx)
+          await finish(ctx)
         } catch (err) {
           await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
         }

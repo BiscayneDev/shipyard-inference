@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import {
   claudeSettingsPath,
   mergeClaudeSettings,
@@ -58,7 +59,35 @@ async function connect(): Promise<void> {
   )
 }
 
+// Claude Code re-renders the status line constantly; cache the result so we hit
+// the gateway at most once per TTL instead of on every render.
+const CACHE_PATH = join(homedir(), '.shipyard', 'statusline.json')
+const CACHE_TTL_MS = 8000
+
+function cachedLine(): string | undefined {
+  try {
+    const c = JSON.parse(readFileSync(CACHE_PATH, 'utf8')) as { at: number; line: string }
+    if (Date.now() - c.at < CACHE_TTL_MS) return c.line
+  } catch {
+    /* no cache */
+  }
+  return undefined
+}
+function writeCache(line: string): void {
+  try {
+    mkdirSync(dirname(CACHE_PATH), { recursive: true })
+    writeFileSync(CACHE_PATH, JSON.stringify({ at: Date.now(), line }))
+  } catch {
+    /* best effort */
+  }
+}
+
 async function statusline(): Promise<void> {
+  const fresh = cachedLine()
+  if (fresh !== undefined) {
+    process.stdout.write(fresh)
+    return
+  }
   // Claude Code runs this with the configured env block in scope; fall back to
   // the settings file if the vars aren't present.
   let url = process.env.ANTHROPIC_BASE_URL
@@ -72,8 +101,9 @@ async function statusline(): Promise<void> {
     process.stdout.write('⚓ Shipyard')
     return
   }
-  const earnings = await fetchEarnings(url, key)
-  process.stdout.write(formatStatusLine(earnings))
+  const line = formatStatusLine(await fetchEarnings(url, key))
+  writeCache(line)
+  process.stdout.write(line)
 }
 
 async function main(): Promise<void> {

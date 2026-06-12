@@ -20,16 +20,16 @@ export interface GatewayTenderHook {
     userId?: string
     userWallet?: string
     agentic?: boolean
-  }): { placementId: string; usdcPerImpression: number } | null
+  }): { placementId: string; usdcPerImpression: number; line: string } | null
   settle(args: {
     userId: string
     requestId: string
     model: string
     billedCostUsd: number
     measuredWaitMs: number
-    placement: { placementId: string; usdcPerImpression: number }
+    placement: { placementId: string; usdcPerImpression: number; line: string }
     surfaceId: string
-  }): unknown
+  }): Promise<unknown>
 }
 
 export interface GatewayConfig {

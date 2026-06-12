@@ -1,16 +1,20 @@
 import { Auction } from './auction.js'
 import { AuctionLog } from './log.js'
-import { CreditLedger } from './ledger.js'
-import { accrueSettlement } from './settle.js'
-import { signAttestation, loadAttestationKey, type TenderAttestationKey } from './attestation.js'
+import { assertValidAttestation, signAttestation, loadAttestationKey, type TenderAttestationKey } from './attestation.js'
+import { MemoryCreditStore, type CreditStore } from './credit-store.js'
 import { TENDER_DEFAULTS, type Campaign, type Placement } from './types.js'
 
 // Wires the Tender engine into the gateway request path, so an agent's own
-// traffic (e.g. Claude Code via /v1/messages) earns kickbacks: on a qualifying
-// wait we auction a placement and remember it as the account's "current" ad; on
-// completion we sign an attestation and accrue REQUESTER_SHARE of the impression
-// to the account — only for a REAL billed request with a real wait. The status
-// line renders `current(account)`. Impressions are honest (attested), not farmed.
+// traffic (Claude Code via /v1/messages) earns kickbacks: on a qualifying wait we
+// auction a placement and remember it; on completion we sign an attestation and —
+// only for a REAL billed request with a real wait — accrue REQUESTER_SHARE of the
+// impression to the account in a DURABLE CreditStore (survives serverless cold
+// starts). The status line renders `currentLine(account)`. Impressions are honest
+// (attested), not farmable.
+//
+// serve() + settle() run in the SAME request invocation, so the served cross-check
+// (AuctionLog) is request-scoped and stays in memory; only the credit ledger needs
+// to persist.
 
 export interface ServeCtx {
   requestId: string
@@ -26,7 +30,7 @@ export interface SettleArgs {
   model: string
   billedCostUsd: number
   measuredWaitMs: number
-  placement: { placementId: string; usdcPerImpression: number }
+  placement: { placementId: string; usdcPerImpression: number; line: string }
   surfaceId: string
 }
 
@@ -35,6 +39,8 @@ export interface GatewayTenderOptions {
   key?: TenderAttestationKey
   minWaitMs?: number
   requesterShare?: number
+  /** Durable per-account kickback ledger. Defaults to in-memory (long-lived only). */
+  creditStore?: CreditStore
   /** Time source (ms). Injectable for tests. Defaults to `Date.now`. */
   now?: () => number
 }
@@ -43,17 +49,17 @@ export class GatewayTender {
   readonly minWaitMs: number
   private readonly auction: Auction
   private readonly log = new AuctionLog()
-  private readonly ledger = new CreditLedger()
+  private readonly credits: CreditStore
   private readonly key: TenderAttestationKey
   private readonly requesterShare: number
   private readonly now: () => number
-  private readonly current = new Map<string, Placement>()
 
   constructor(opts: GatewayTenderOptions = {}) {
     this.auction = new Auction(opts.campaigns ?? [])
     this.key = opts.key ?? loadAttestationKey()
     this.minWaitMs = opts.minWaitMs ?? TENDER_DEFAULTS.MIN_WAIT_MS
     this.requesterShare = opts.requesterShare ?? TENDER_DEFAULTS.REQUESTER_SHARE
+    this.credits = opts.creditStore ?? new MemoryCreditStore()
     this.now = opts.now ?? Date.now
   }
 
@@ -61,7 +67,7 @@ export class GatewayTender {
     this.auction.addCampaign(c)
   }
 
-  /** A wait opened — clear a slot and remember it as this account's current ad. */
+  /** A wait opened — clear a slot and record it served (request-scoped). */
   serve(ctx: ServeCtx): Placement | null {
     const placement = this.auction.select({
       requestId: ctx.requestId,
@@ -72,12 +78,11 @@ export class GatewayTender {
     })
     if (!placement) return null
     this.log.record(placement, this.now())
-    if (ctx.userId) this.current.set(ctx.userId, placement)
     return placement
   }
 
-  /** Request completed — attest the (real, billed) impression and accrue credit. */
-  settle(args: SettleArgs): { creditedUsd: number; valid: boolean } {
+  /** Request completed — attest the (real, billed) impression and persist credit. */
+  async settle(args: SettleArgs): Promise<{ creditedUsd: number; valid: boolean }> {
     const attestation = signAttestation(
       {
         requestId: args.requestId,
@@ -91,25 +96,31 @@ export class GatewayTender {
       },
       this.key,
     )
-    const r = accrueSettlement(attestation, {
+    const gate = assertValidAttestation(attestation, {
       publicKeyHex: this.key.publicKeyHex,
-      ledger: this.ledger,
-      pricePerImpressionUsdc: args.placement.usdcPerImpression,
-      requesterShare: this.requesterShare,
       minWaitMs: this.minWaitMs,
       wasServed: (rid, pid) => this.log.wasServed(rid, pid),
+    })
+    if (!gate.ok) return { creditedUsd: 0, valid: false }
+    const creditedUsd = args.placement.usdcPerImpression * this.requesterShare
+    await this.credits.accrue({
+      account: args.userId,
+      amountUsd: creditedUsd,
+      placementId: args.placement.placementId,
+      line: args.placement.line,
+      requestId: args.requestId,
       at: this.now(),
     })
-    return { creditedUsd: r.requesterShareUsdc, valid: r.status === 'accrued' }
+    return { creditedUsd, valid: true }
   }
 
-  /** Accrued kickback balance for an account. */
-  balance(account: string): number {
-    return this.ledger.balance(account)
+  /** Accrued kickback balance for an account (durable). */
+  balance(account: string): Promise<number> {
+    return this.credits.balance(account)
   }
 
-  /** The sponsored line currently served to an account (for the status line). */
-  currentLine(account: string): string | undefined {
-    return this.current.get(account)?.line
+  /** The sponsored line most recently served to an account (for the status line). */
+  currentLine(account: string): Promise<string | undefined> {
+    return this.credits.latestLine(account)
   }
 }
