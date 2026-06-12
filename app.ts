@@ -505,6 +505,9 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{te
 .qr{display:block;margin-top:12px;border-radius:10px;background:#e8edf3}
 .addr{font-family:var(--mono);font-size:12px;background:#04050a;border:1px solid var(--line);border-radius:8px;padding:8px 10px;word-break:break-all;margin-bottom:6px}
 a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:10px 16px}
+.prevcap{font-size:11px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+.prev{background:#04050a;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:13px/1.7 var(--mono)}
+.prev .pstar{color:var(--accent2)}.prev .pmut{color:var(--muted)}.prev .pad{color:var(--fg)}
 .snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:24px;border-bottom:1px solid var(--line)}
 .snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
 .snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--fg);text-decoration:none}.snav .lnk a.active{color:var(--fg)}
@@ -513,9 +516,11 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
 <nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise" class="active">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <span class="pill">first-price auction · USDC settlement · agentic clicks</span>
 <h1>Advertise on the wait.</h1>
-<p class="sub">Your line shows in the agent's status bar during inference idle time — never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
+<p class="sub">Your line shows in the agent's <strong>spinner</strong> — the "thinking" indicator — during inference waits. Never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
 <div class="card">
-  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
+  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="🤖 Try Acme Vector DB — first 1M vectors free"/>
+  <div class="prevcap">Spinner preview — how it renders while the agent thinks</div>
+  <div class="prev" id="prev"><div><span class="pstar">✶</span> <span class="pmut">Working… (3s · ↓ 91 tokens)</span></div><div><span class="pmut">⌑ Tip:</span> <span id="pline" class="pad"></span></div></div>
   <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
   <div class="grid">
     <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
@@ -538,7 +543,7 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
 <script>
 const $=s=>document.querySelector(s);
 function esc(s){return (s||'').replace(/</g,'&lt;');}
-function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';}
+function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';$('#pline').textContent=$('#line').value||$('#line').placeholder;}
 ['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
 async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+esc(c.line)+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
 let pollTimer=null;
