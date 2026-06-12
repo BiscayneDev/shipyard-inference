@@ -21,7 +21,7 @@ import {
   toAnthropicError,
 } from '../anthropic-compat/index.js'
 import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
-import { observeWaitWindow } from '../tender/wait.js'
+import { TENDER_DEFAULTS } from '../tender/types.js'
 import type { LLMChatParams, LLMStreamEvent } from '../types.js'
 import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
@@ -97,6 +97,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   // ad, shown in their status line); on completion it attests the real, billed
   // impression and accrues the kickback. A no-op without `config.tender` or an
   // attributed account. The content stream passes through untouched.
+  //
+  // The wait we monetize is the WHOLE turn the developer waits for — the full
+  // generation streams over that time (and, in agentic runs, the tool round-trips
+  // between steps). We gate on total turn duration, NOT time-to-first-token: the
+  // gateway routes fast (TTFT is typically sub-perceptual ~200ms), so a
+  // first-token-idle gate would essentially never fire for real agent traffic. A
+  // placement is auctioned once the turn has run past `minWaitMs` (so it can be
+  // shown DURING the wait, not after), and at completion we attest the real total
+  // wait — the `measuredWaitMs >= minWaitMs` gate keeps it honest: a turn that
+  // finishes sub-threshold serves nothing and bills nothing.
   function wrapTender(
     account: string | undefined,
     reqId: string,
@@ -106,39 +116,44 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   ): { stream: AsyncIterable<LLMStreamEvent>; finish: (ctx: RequestContext) => Promise<void> } {
     const tender = config.tender
     if (!tender || !account) return { stream: source, finish: async () => {} }
+    const minWaitMs = tender.minWaitMs ?? TENDER_DEFAULTS.MIN_WAIT_MS
     let placement: { placementId: string; usdcPerImpression: number; line: string } | null = null
-    let waitMs: number | undefined
-    const observed = observeWaitWindow(
-      source,
-      {
-        onWaitWindow: () => {
-          placement = tender.serve({
-            requestId: reqId,
-            surfaceId,
-            userId: account,
-            userWallet: account,
-            agentic: (params.tools?.length ?? 0) > 0,
-          })
-        },
-        onFirstToken: (ms) => {
-          waitMs = ms
-        },
-      },
-      { minWaitMs: tender.minWaitMs },
-    )
+    const startedAt = Date.now()
+    // Open a placement once the developer has been waiting `minWaitMs` for this
+    // turn to stream. The timer only ever signals serve() — it never receives the
+    // content stream, so an ad can't be spliced into the response (the placement
+    // invariant holds by construction).
+    const timer = setTimeout(() => {
+      placement = tender.serve({
+        requestId: reqId,
+        surfaceId,
+        userId: account,
+        userWallet: account,
+        agentic: (params.tools?.length ?? 0) > 0,
+      })
+    }, minWaitMs)
+    // Pass-through: yield every event unchanged, just observe when the turn ends.
+    async function* observed(): AsyncIterable<LLMStreamEvent> {
+      try {
+        for await (const event of source) yield event
+      } finally {
+        clearTimeout(timer)
+      }
+    }
     const finish = async (ctx: RequestContext): Promise<void> => {
+      clearTimeout(timer)
       if (!placement) return
       await tender.settle({
         userId: account,
         requestId: reqId,
         model: ctx.model ?? params.model ?? 'unknown',
         billedCostUsd: ctx.costUsd ?? 0,
-        measuredWaitMs: waitMs ?? 0,
+        measuredWaitMs: Date.now() - startedAt,
         placement,
         surfaceId,
       })
     }
-    return { stream: observed, finish }
+    return { stream: observed(), finish }
   }
 
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
