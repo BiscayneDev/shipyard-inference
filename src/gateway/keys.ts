@@ -117,7 +117,7 @@ export class SupabaseApiKeyStore implements ApiKeyStore {
     if (!opts.url) throw new Error('SupabaseApiKeyStore: `url` is required')
     if (!opts.key) throw new Error('SupabaseApiKeyStore: `key` is required')
     this.base = opts.url.replace(/\/+$/, '') + '/rest/v1'
-    this.table = opts.table ?? 'api_keys'
+    this.table = opts.table ?? 'shipyard_api_keys'
     this.ttl = opts.cacheTtlMs ?? 60_000
     this.fetchImpl = opts.fetch ?? fetch
     this.headers = {

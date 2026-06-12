@@ -102,7 +102,7 @@ export class SupabaseCampaignStore implements CampaignStore {
     if (!opts.url) throw new Error('SupabaseCampaignStore: `url` is required')
     if (!opts.key) throw new Error('SupabaseCampaignStore: `key` is required')
     this.base = opts.url.replace(/\/+$/, '') + '/rest/v1'
-    this.table = opts.table ?? 'campaigns'
+    this.table = opts.table ?? 'shipyard_campaigns'
     this.fetchImpl = opts.fetch ?? fetch
     this.headers = {
       apikey: opts.key,

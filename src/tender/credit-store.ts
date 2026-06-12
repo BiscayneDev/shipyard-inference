@@ -59,7 +59,7 @@ export class SupabaseCreditStore implements CreditStore {
     if (!opts.url) throw new Error('SupabaseCreditStore: `url` is required')
     if (!opts.key) throw new Error('SupabaseCreditStore: `key` is required')
     this.base = opts.url.replace(/\/+$/, '') + '/rest/v1'
-    this.table = opts.table ?? 'tender_credits'
+    this.table = opts.table ?? 'shipyard_tender_credits'
     this.fetchImpl = opts.fetch ?? fetch
     this.headers = {
       apikey: opts.key,
