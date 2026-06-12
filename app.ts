@@ -28,6 +28,7 @@ import {
 } from './dist/index.js'
 import {
   createGatewayApp,
+  resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
   type GatewayConfig,
@@ -192,10 +193,18 @@ const keyStore: ApiKeyStore =
 
 const { candidates, baselineModel } = buildCandidates()
 
+// Price the baseline model (and every routed model) by id, so `request_completed`
+// carries real baselineCostUsd/savedUsd — i.e. provable savings show up in the
+// operator console AND each developer's /me earnings view.
+const pricingOverrides = Object.fromEntries(
+  candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
+)
+
 const gateway = createGatewayApp({
   candidates,
   strategy: costOptimized(),
   baselineModel,
+  pricingOverrides,
   apiKeys: API_KEYS,
   keyStore,
   telemetry: reporter,
@@ -297,6 +306,75 @@ $('#gen').addEventListener('click', async ()=>{
 document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)return;navigator.clipboard.writeText($(b.dataset.copy).textContent);b.textContent='copied';setTimeout(()=>b.textContent='copy',1200)});
 </script></div></body></html>`
 
+// "Your earnings" — a single-developer view of routing savings (live) +
+// idle-attention kickbacks, styled like the operator console. Key-authed.
+const ME_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Your Shipyard earnings</title>
+<style>
+:root{--bg:#0e1014;--panel:#15181f;--panel2:#1b1f28;--border:#262b36;--text:#e7e9ee;--muted:#8b93a3;--accent:#6c8cff;--good:#3ad6a3;--radius:12px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:880px;margin:0 auto;padding:34px 22px 70px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+h1{font-size:22px;margin:0}.sub{color:var(--muted);margin:2px 0 22px;font-size:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+input{flex:1;min-width:240px;background:#0a0c11;border:1px solid var(--border);border-radius:9px;color:var(--text);padding:10px 12px;font:13px var(--mono)}
+button{appearance:none;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:650;padding:10px 16px;cursor:pointer}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:680px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:15px 16px}
+.k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:7px}
+.v{font:600 24px/1 var(--mono)}.v.good{color:var(--good)}.v.accent{color:var(--accent)}
+.sub2{color:var(--muted);font-size:12px;margin-top:5px}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-top:14px}
+.muted{color:var(--muted)}.hidden{display:none}a{color:var(--accent)}
+pre{background:#0a0c11;border:1px solid var(--border);border-radius:9px;padding:11px;font:12px var(--mono);overflow:auto;margin:8px 0 0}
+</style></head><body><div class="wrap">
+<div class="topbar"><h1>Your Shipyard earnings</h1><a href="/connect" class="muted">+ new key</a></div>
+<p class="sub">Routing savings on every call, plus idle-attention kickbacks — credited to your wallet.</p>
+<div class="row">
+  <input id="key" placeholder="sk-shipyard-… (your API key)"/>
+  <button id="load">Load</button>
+</div>
+<div id="out" class="hidden">
+  <section class="kpis">
+    <div class="card"><div class="k">Routing saved</div><div class="v good" id="saved">$0</div><div class="sub2"><span id="savedpct">0</span>% vs baseline</div></div>
+    <div class="card"><div class="k">Spent</div><div class="v" id="spent">$0</div><div class="sub2">actual routed cost</div></div>
+    <div class="card"><div class="k">Idle-attention kickbacks</div><div class="v accent" id="kick">$0</div><div class="sub2" id="kicknote">accrues as you work</div></div>
+    <div class="card"><div class="k">Requests</div><div class="v" id="reqs">0</div><div class="sub2" id="win">last 24h</div></div>
+  </section>
+  <div class="panel">
+    <div class="k">Account</div>
+    <div class="muted" id="acct"></div>
+    <div class="k" style="margin-top:14px">Net inference cost</div>
+    <div class="v" id="net" style="font-size:20px">$0</div>
+    <div class="sub2">spent − kickbacks. Negative means your wait-time more than paid for your inference.</div>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);const f=(n)=>'$'+(Number(n)||0).toFixed(6);
+const url=new URL(location.href);if(url.searchParams.get('key'))$('#key').value=url.searchParams.get('key');
+async function load(){
+  const key=$('#key').value.trim();if(!key)return;
+  $('#load').disabled=true;
+  try{
+    const r=await fetch('/api/me',{headers:{authorization:'Bearer '+key}});
+    if(!r.ok){alert('Could not load — is the key valid?');return}
+    const d=await r.json();
+    $('#saved').textContent=f(d.savedUsd);$('#savedpct').textContent=d.savedPct;
+    $('#spent').textContent=f(d.spentUsd);
+    $('#kick').textContent=f(d.kickbacksUsd);
+    $('#reqs').textContent=d.requests;
+    $('#net').textContent=f((d.spentUsd||0)-(d.kickbacksUsd||0));
+    $('#acct').textContent=d.account.userId+(d.account.wallet?(' · '+d.account.wallet):' · no payout wallet set');
+    if(!d.kickbacksUsd)$('#kicknote').textContent='earn in the chat portal / IDE extension';
+    $('#out').classList.remove('hidden');
+  }finally{$('#load').disabled=false}
+}
+$('#load').addEventListener('click',load);
+if($('#key').value)load();
+</script></div></body></html>`
+
 // ---------------------------------------------------------------------------
 // The combined app.
 // ---------------------------------------------------------------------------
@@ -313,6 +391,7 @@ app.get('/', (c) => c.html(LANDING_HTML))
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
 app.get('/connect', (c) => c.html(CONNECT_HTML))
+app.get('/me', (c) => c.html(ME_HTML))
 app.post('/api/keys', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { wallet?: unknown; label?: unknown }
   const wallet = typeof body.wallet === 'string' && body.wallet.trim() ? body.wallet.trim() : undefined
@@ -334,6 +413,39 @@ app.use('/api/*', async (c, next) => {
   if (store) await hub.boot()
   await next()
 })
+
+// A developer's own earnings — routing savings (live, per-user from the hub) +
+// idle-attention kickbacks. Key-authed; registered after the hub-boot middleware
+// (so it has data) and before the operator mount (so it isn't swallowed).
+app.get('/api/me', async (c) => {
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  if (!auth.ok || !auth.account) {
+    return c.json({ error: 'invalid or missing API key' }, 401)
+  }
+  const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  const windowMs = Number(c.req.query('windowMs') ?? 24 * 60 * 60 * 1000)
+  const row = hub.breakdown('user', windowMs).find((x) => x.key === auth.account!.userId)
+  const spent = row?.actualCostUsd ?? 0
+  const baseline = row?.baselineCostUsd ?? 0
+  const saved = row?.savedUsd ?? 0
+  return c.json({
+    account: {
+      userId: auth.account.userId,
+      wallet: auth.account.wallet ?? null,
+      label: auth.account.label ?? null,
+    },
+    windowMs,
+    requests: row?.requests ?? 0,
+    spentUsd: r6(spent),
+    baselineUsd: r6(baseline),
+    savedUsd: r6(saved),
+    savedPct: baseline > 0 ? Math.round((saved / baseline) * 100) : 0,
+    // Kickbacks accrue on a surface that renders placements (the chat portal
+    // today, the IDE extension next) and unify at payout (increment 4).
+    kickbacksUsd: 0,
+  })
+})
+
 app.route('/', operator)
 
 export default app
