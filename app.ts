@@ -340,7 +340,12 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 .key{color:var(--green)}.muted{color:var(--muted)}.hidden{display:none}
 .copy{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.07);color:var(--muted);font-size:11px;padding:3px 8px;border-radius:6px}
 .note{font-size:13px;color:var(--muted);margin-top:10px}a{color:var(--accent)}
+.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:26px;border-bottom:1px solid var(--hair)}
+.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
+.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
+@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <h1>Connect Shipyard to your IDE</h1>
 <p class="sub">One endpoint for Claude Code, Cursor, Codex &amp; any agent. Routes every request to the cheapest capable model, and your idle wait-time earns kickbacks — both credited to your wallet.</p>
 <div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
@@ -424,7 +429,12 @@ button{appearance:none;border:0;border-radius:9px;background:var(--accent);color
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-top:14px}
 .muted{color:var(--muted)}.hidden{display:none}a{color:var(--accent)}
 pre{background:#0a0c11;border:1px solid var(--border);border-radius:9px;padding:11px;font:12px var(--mono);overflow:auto;margin:8px 0 0}
+.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:22px;border-bottom:1px solid var(--border)}
+.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
+.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
+@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise">Advertise</a><a href="/me" class="active">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <div class="topbar"><h1>Your Shipyard earnings</h1><a href="/connect" class="muted">+ new key</a></div>
 <p class="sub">Routing savings on every call, plus idle-attention kickbacks — credited to your wallet.</p>
 <div class="row">
@@ -495,7 +505,12 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{te
 .qr{display:block;margin-top:12px;border-radius:10px;background:#e8edf3}
 .addr{font-family:var(--mono);font-size:12px;background:#04050a;border:1px solid var(--line);border-radius:8px;padding:8px 10px;word-break:break-all;margin-bottom:6px}
 a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:10px 16px}
+.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:24px;border-bottom:1px solid var(--line)}
+.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
+.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--fg);text-decoration:none}.snav .lnk a.active{color:var(--fg)}
+@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise" class="active">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <span class="pill">first-price auction · USDC settlement · agentic clicks</span>
 <h1>Advertise on the wait.</h1>
 <p class="sub">Your line shows in the agent's status bar during inference idle time — never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
