@@ -347,13 +347,13 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 </style></head><body><div class="wrap">
 <nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">One endpoint for Claude Code, Cursor, Codex &amp; any agent. Routes every request to the cheapest capable model, and your idle wait-time earns kickbacks — both credited to your wallet.</p>
+<p class="sub">Works with Claude Code, Cursor, Codex &amp; any agent. Your idle wait-time earns kickbacks to your wallet — and <strong>your model stays yours</strong>. Routing inference through Shipyard for cheaper calls is optional.</p>
 <div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
-  <strong>Fastest — one command</strong> <span class="muted">— wires Claude Code automatically</span>
+  <strong>Fastest — one command</strong> <span class="muted">— adds the status line, keeps your model</span>
   <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
-  <div class="note">Issues a key, writes <code>~/.claude/settings.json</code>, and adds a live-earnings status line. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> to set a payout wallet.</div>
+  <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> for payouts, or <code>--route</code> to also route inference through Shipyard for savings.</div>
 </div>
-<div class="note" style="text-align:center;margin:6px 0">— or get a key + config manually —</div>
+<div class="note" style="text-align:center;margin:6px 0">— optional: route through Shipyard for cheaper inference —</div>
 <div class="card">
   <div class="row">
     <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
@@ -367,7 +367,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
   <div class="k">Base URL</div>
   <pre><span class="copy" data-copy="#baseurl">copy</span><span id="baseurl"></span></pre>
   <div class="card">
-    <strong>Claude Code</strong> <span class="muted">— route Claude Code through Shipyard (Anthropic Messages API)</span>
+    <strong>Claude Code</strong> <span class="muted">— optional · routes your model through Shipyard (Anthropic Messages API)</span>
     <pre><span class="copy" data-copy="#claude">copy</span><span id="claude"></span></pre>
   </div>
   <div class="card">

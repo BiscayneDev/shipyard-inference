@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   claudeSettingsPath,
+  shipyardConfigPath,
   mergeClaudeSettings,
   issueKey,
   fetchEarnings,
@@ -39,24 +40,48 @@ async function connect(): Promise<void> {
     key = issued.key
   }
 
+  // --route is opt-in: it's the ONLY mode that points Claude Code at the gateway
+  // (takes over the model). Default leaves the user's model/inference untouched.
+  const route = has('--route')
+
   const path = claudeSettingsPath()
   const merged = mergeClaudeSettings(readSettings(path), {
     baseUrl: url,
     token: key,
     statusLineCommand: has('--no-statusline') ? undefined : STATUSLINE_CMD,
+    route,
   })
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(merged, null, 2) + '\n')
 
-  process.stdout.write(
-    `\n✓ Shipyard connected to Claude Code.\n` +
-      `  ${path}\n` +
-      `  ANTHROPIC_BASE_URL = ${url}\n` +
-      `  ANTHROPIC_AUTH_TOKEN = ${key.slice(0, 16)}…\n\n` +
-      `Run \`claude\` — your traffic now routes through Shipyard (cheapest-capable\n` +
-      `model = savings) and your wait-time earns kickbacks.${wallet ? '' : '\n  Tip: re-run with --wallet <addr> to set a payout wallet.'}\n` +
-      `  Earnings: ${url}/me\n`,
-  )
+  // Shipyard's own config — lets the status line show earnings without putting
+  // creds in Claude Code's env (which would route/override the model).
+  const cfgPath = shipyardConfigPath()
+  mkdirSync(dirname(cfgPath), { recursive: true })
+  writeFileSync(cfgPath, JSON.stringify({ url, key }) + '\n', { mode: 0o600 })
+
+  const walletTip = wallet ? '' : '\n  Tip: re-run with --wallet <addr> to set a payout wallet.'
+  if (route) {
+    process.stdout.write(
+      `\n✓ Shipyard connected to Claude Code — routing ON.\n` +
+        `  ${path}\n` +
+        `  ANTHROPIC_BASE_URL = ${url}\n` +
+        `  ANTHROPIC_AUTH_TOKEN = ${key.slice(0, 16)}…\n\n` +
+        `Run \`claude\` — your traffic now routes through Shipyard (cheapest-capable\n` +
+        `model = savings) and your wait-time earns kickbacks.${walletTip}\n` +
+        `  Earnings: ${url}/me\n`,
+    )
+  } else {
+    process.stdout.write(
+      `\n✓ Shipyard connected to Claude Code.\n` +
+        `  ${path}\n\n` +
+        `Your model and inference are UNTOUCHED — Claude Code keeps using your own\n` +
+        `Anthropic key. A live-earnings status line was added; your wait-time can\n` +
+        `earn kickbacks.${walletTip}\n` +
+        `  Want cheaper inference too? Re-run with --route to route through Shipyard.\n` +
+        `  Earnings: ${url}/me\n`,
+    )
+  }
 }
 
 // Claude Code re-renders the status line constantly; cache the result so we hit
@@ -88,10 +113,19 @@ async function statusline(): Promise<void> {
     process.stdout.write(fresh)
     return
   }
-  // Claude Code runs this with the configured env block in scope; fall back to
-  // the settings file if the vars aren't present.
+  // Routing mode puts these in env; otherwise read Shipyard's own config (written
+  // by connect even when we don't route), then fall back to the settings env.
   let url = process.env.ANTHROPIC_BASE_URL
   let key = process.env.ANTHROPIC_AUTH_TOKEN
+  if (!url || !key) {
+    try {
+      const cfg = JSON.parse(readFileSync(shipyardConfigPath(), 'utf8')) as { url?: string; key?: string }
+      url = url ?? cfg.url
+      key = key ?? cfg.key
+    } catch {
+      /* no shipyard config */
+    }
+  }
   if (!url || !key) {
     const s = readSettings(claudeSettingsPath())
     url = url ?? s.env?.ANTHROPIC_BASE_URL
@@ -111,10 +145,12 @@ async function main(): Promise<void> {
   if (cmd === 'connect') return connect()
   if (cmd === 'statusline') return statusline()
   process.stderr.write(
-    'Shipyard Inference — route your agent through Shipyard for cheaper inference + kickbacks.\n\n' +
+    'Shipyard Inference — earn on your agent idle-time; optionally route for cheaper inference.\n\n' +
       'Usage:\n' +
-      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--key <sk-…>] [--no-statusline]\n' +
-      '      Wire Claude Code to route through Shipyard (writes ~/.claude/settings.json).\n' +
+      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--key <sk-…>] [--route] [--no-statusline]\n' +
+      '      Connect Claude Code to Shipyard. By default this adds a live-earnings\n' +
+      '      status line and does NOT change your model. Pass --route to also route\n' +
+      '      inference through Shipyard for cost savings (sets ANTHROPIC_BASE_URL).\n' +
       '  npx shipyard-inference statusline\n' +
       '      Print the live-earnings status line (used by Claude Code).\n',
   )

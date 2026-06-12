@@ -7,16 +7,46 @@ import {
   formatStatusLine,
 } from '../src/connect/install.js'
 
-test('mergeClaudeSettings: sets the Anthropic env, preserves other settings', () => {
+test('mergeClaudeSettings: --route sets the Anthropic env, preserves other settings', () => {
   const merged = mergeClaudeSettings(
     { env: { FOO: 'bar' }, model: 'opus' },
-    { baseUrl: 'https://gw', token: 'sk-shipyard-x', statusLineCommand: 'npx -y shipyard-inference statusline' },
+    { baseUrl: 'https://gw', token: 'sk-shipyard-x', statusLineCommand: 'npx -y shipyard-inference statusline', route: true },
   )
   assert.equal(merged.env?.ANTHROPIC_BASE_URL, 'https://gw')
   assert.equal(merged.env?.ANTHROPIC_AUTH_TOKEN, 'sk-shipyard-x')
   assert.equal(merged.env?.FOO, 'bar', 'existing env preserved')
   assert.equal(merged.model, 'opus', 'other settings preserved')
   assert.equal(merged.statusLine?.command, 'npx -y shipyard-inference statusline')
+})
+
+test('mergeClaudeSettings: default does NOT take over the model (no Anthropic env)', () => {
+  const merged = mergeClaudeSettings(
+    { model: 'opus' },
+    { baseUrl: 'https://gw', token: 'sk-shipyard-x', statusLineCommand: 'npx -y shipyard-inference statusline' },
+  )
+  assert.equal(merged.env?.ANTHROPIC_BASE_URL, undefined)
+  assert.equal(merged.env?.ANTHROPIC_AUTH_TOKEN, undefined)
+  assert.equal(merged.model, 'opus', 'other settings preserved')
+  assert.equal(merged.statusLine?.command, 'npx -y shipyard-inference statusline', 'status line still added')
+})
+
+test('mergeClaudeSettings: default strips a PRIOR Shipyard takeover but keeps the user own env', () => {
+  const merged = mergeClaudeSettings(
+    { env: { FOO: 'bar', ANTHROPIC_BASE_URL: 'https://shipyard-inference.vercel.app', ANTHROPIC_AUTH_TOKEN: 'sk-shipyard-old' } },
+    { baseUrl: 'https://gw', token: 'sk-shipyard-x' },
+  )
+  assert.equal(merged.env?.ANTHROPIC_BASE_URL, undefined, 'shipyard base url removed')
+  assert.equal(merged.env?.ANTHROPIC_AUTH_TOKEN, undefined, 'shipyard token removed')
+  assert.equal(merged.env?.FOO, 'bar', 'user env preserved')
+})
+
+test('mergeClaudeSettings: default leaves a NON-Shipyard Anthropic env alone', () => {
+  const merged = mergeClaudeSettings(
+    { env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com', ANTHROPIC_AUTH_TOKEN: 'sk-ant-user' } },
+    { baseUrl: 'https://gw', token: 'sk-shipyard-x' },
+  )
+  assert.equal(merged.env?.ANTHROPIC_BASE_URL, 'https://api.anthropic.com', 'user base url untouched')
+  assert.equal(merged.env?.ANTHROPIC_AUTH_TOKEN, 'sk-ant-user', 'user token untouched')
 })
 
 test('mergeClaudeSettings: does not clobber an existing status line', () => {

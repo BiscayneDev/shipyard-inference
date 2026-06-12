@@ -18,19 +18,48 @@ export function claudeSettingsPath(): string {
 }
 
 /**
+ * Shipyard's own per-user config (gateway URL + key). The status line reads this
+ * to show earnings WITHOUT putting anything in Claude Code's `env` — because an
+ * `ANTHROPIC_BASE_URL` in `env` would route (take over) the user's model. By
+ * default connecting must NOT do that.
+ */
+export function shipyardConfigPath(): string {
+  return join(homedir(), '.shipyard', 'config.json')
+}
+
+/**
  * Merge Shipyard wiring into a Claude Code settings object WITHOUT clobbering the
- * user's other settings: set the Anthropic base URL + auth token in `env`, and
- * (only if they have none) a Shipyard status line showing live earnings.
+ * user's other settings.
+ *
+ * By DEFAULT this does not touch the model: it adds only a live-earnings status
+ * line (Shipyard reads its key from `shipyardConfigPath()`, not `env`). It also
+ * strips a routing takeover a *prior* connect may have written — but only
+ * Shipyard's own `ANTHROPIC_*` entries, never the user's own.
+ *
+ * Pass `route: true` to opt into routing Claude Code's inference through Shipyard
+ * (the only mode that sets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`).
  */
 export function mergeClaudeSettings(
   existing: ClaudeSettings,
-  opts: { baseUrl: string; token: string; statusLineCommand?: string },
+  opts: { baseUrl: string; token: string; statusLineCommand?: string; route?: boolean },
 ): ClaudeSettings {
   const next: ClaudeSettings = { ...existing }
-  next.env = {
-    ...(existing.env ?? {}),
-    ANTHROPIC_BASE_URL: opts.baseUrl,
-    ANTHROPIC_AUTH_TOKEN: opts.token,
+  if (opts.route) {
+    next.env = {
+      ...(existing.env ?? {}),
+      ANTHROPIC_BASE_URL: opts.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: opts.token,
+    }
+  } else {
+    // No takeover. Remove a routing env Shipyard previously wrote, leaving the
+    // user's own entries (and any non-Shipyard ANTHROPIC_*) intact.
+    const env = { ...(existing.env ?? {}) }
+    if (typeof env.ANTHROPIC_AUTH_TOKEN === 'string' && env.ANTHROPIC_AUTH_TOKEN.startsWith('sk-shipyard-')) {
+      delete env.ANTHROPIC_AUTH_TOKEN
+      if (typeof env.ANTHROPIC_BASE_URL === 'string' && /shipyard/i.test(env.ANTHROPIC_BASE_URL)) delete env.ANTHROPIC_BASE_URL
+    }
+    if (Object.keys(env).length) next.env = env
+    else delete next.env
   }
   // Don't overwrite a status line the user already configured.
   if (opts.statusLineCommand && !existing.statusLine) {
