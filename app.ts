@@ -318,42 +318,95 @@ function keepAlive(p: Promise<unknown>): void {
 }
 
 // ---------------------------------------------------------------------------
+// Shared terminal-vibe design system — one source of truth for every page's
+// chrome. Pages embed ${TERMINAL_FONTS} + <style>${TERMINAL_CSS}</style> and
+// ${navHtml('<id>')} for the consistent top nav.
+// ---------------------------------------------------------------------------
+const TERMINAL_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>`
+
+const TERMINAL_CSS = `
+:root{--bg:#06080c;--bg2:#0a0e15;--panel:#0c1117;--panel2:#10161f;--line:#1a232f;--line2:#283544;--fg:#e9eef5;--muted:#8a97a8;--dim:#586676;--term:#4fe3c1;--term2:#7c9cff;--amber:#f0a868;--green:#5fe0ac;--mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--sans:"Inter",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(900px 520px at 80% -10%,rgba(79,227,193,.09),transparent 60%),radial-gradient(700px 460px at 6% 2%,rgba(124,156,255,.07),transparent 55%),linear-gradient(transparent 0 2px,rgba(255,255,255,.012) 2px 3px);background-size:auto,auto,100% 3px}
+.wrap{max-width:880px;margin:0 auto;padding:0 26px 70px;position:relative;z-index:1}
+a{color:var(--term);text-decoration:none}a:hover{color:var(--fg)}
+.mono{font-family:var(--mono)}.muted{color:var(--muted)}.green{color:var(--green)}.hidden{display:none}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+.tnav{display:flex;align-items:center;justify-content:space-between;padding:20px 0;border-bottom:1px solid var(--line);margin-bottom:30px}
+.tnav .brand{font-family:var(--mono);font-weight:500;font-size:15px;color:var(--fg)}
+.tnav .brand .sig{color:var(--term)}.tnav .brand .dim{color:var(--dim)}
+.tnav .lnk{display:flex;gap:20px;align-items:center}
+.tnav .lnk a{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.tnav .lnk a:hover{color:var(--term)}.tnav .lnk a.active{color:var(--term)}
+@media(max-width:640px){.tnav{flex-direction:column;gap:12px;align-items:flex-start}.tnav .lnk{flex-wrap:wrap;gap:14px}}
+h1{font-size:clamp(28px,4.5vw,38px);line-height:1.08;margin:0 0 10px;letter-spacing:-.03em;font-weight:700}
+h1 .grad{color:var(--term)}
+h2{font-size:clamp(20px,3vw,25px);letter-spacing:-.02em;margin:0 0 6px;font-weight:600}
+.sub{font-size:16.5px;color:var(--muted);margin:0 0 24px;line-height:1.6;max-width:640px}
+.sub em,.sub strong{color:var(--fg);font-style:normal;font-weight:600}
+.lede{color:var(--muted);margin:6px 0 0;max-width:640px}
+.seclabel{display:flex;align-items:center;gap:12px;margin:30px 0 16px}.seclabel::after{content:"";flex:1;height:1px;background:var(--line)}
+.pill{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--term);border:1px solid #1f3a36;background:#0b1714;border-radius:999px;padding:5px 13px;margin-bottom:18px}
+.pill .blip{width:7px;height:7px;border-radius:50%;background:var(--term);box-shadow:0 0 9px var(--term);animation:pulse 2.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px 20px;margin:14px 0}
+.panel .num{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;color:var(--term);margin-bottom:10px}
+.panel h3,.card strong{font-size:15.5px;font-weight:600}
+label{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.08em}
+input,textarea{width:100%;background:#04060a;border:1px solid var(--line2);border-radius:9px;color:var(--fg);padding:11px 12px;font:14px var(--mono)}
+input:focus,textarea:focus{outline:none;border-color:var(--term)}
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}.row>div{flex:1;min-width:200px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
+button{appearance:none;border:1px solid transparent;border-radius:10px;font-family:var(--mono);font-weight:500;font-size:13.5px;padding:12px 18px;cursor:pointer;transition:transform .12s ease,border-color .12s ease;margin-top:16px;background:var(--term);color:#032019;box-shadow:0 0 0 1px rgba(79,227,193,.3)}
+button:hover{transform:translateY(-1px)}button:disabled{opacity:.45;cursor:default;transform:none;box-shadow:none}
+a.btn{display:inline-flex;align-items:center;gap:8px;border-radius:10px;font-family:var(--mono);font-weight:500;font-size:13.5px;padding:11px 17px;border:1px solid var(--line2);color:var(--fg);background:rgba(255,255,255,.02)}
+a.btn:hover{border-color:var(--term);color:var(--term)}
+a.btn.primary{background:var(--term);color:#032019;border-color:transparent}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px;overflow:auto;font:13px/1.6 var(--mono);color:var(--fg);margin:8px 0 0;position:relative}
+code{font-family:var(--mono);color:var(--term)}
+.copy{position:absolute;top:8px;right:8px;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:3px 9px;cursor:pointer;margin:0}.copy:hover{color:var(--term);border-color:var(--term)}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono)}td.mono{font-family:var(--mono)}
+.term{background:var(--panel);border:1px solid var(--line2);border-radius:12px;overflow:hidden;margin-top:14px}
+.term-bar{display:flex;align-items:center;gap:7px;padding:10px 14px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.term-bar .d{width:11px;height:11px;border-radius:50%}.d.r{background:#ff5f57}.d.y{background:#febc2e}.d.g{background:#28c840}
+.term-bar .ttl{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.pr{color:var(--term2)}.ok{color:var(--term)}.am{color:var(--amber)}.mut{color:var(--dim)}.wh{color:var(--fg)}
+footer{color:var(--muted);font-size:13px;padding:34px 0 0;border-top:1px solid var(--line);margin-top:30px;line-height:1.7}
+`
+
+const navHtml = (active: string): string => {
+  const link = (href: string, id: string, label: string): string =>
+    `<a href="${href}"${id === active ? ' class="active"' : ''}>${label}</a>`
+  return `<header class="tnav"><a class="brand" href="/"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</a><div class="lnk">${link('/connect', 'connect', 'connect')}${link('/advertise', 'advertise', 'advertise')}${link('/me', 'me', 'earnings')}${link('/dashboard/', 'dashboard', 'dashboard')}</div></header>`
+}
+
+// ---------------------------------------------------------------------------
 // "Connect your IDE" — self-serve key + copy-paste config for any OpenAI-
 // compatible IDE. Client-rendered so the baseURL tracks the actual deploy host.
 // ---------------------------------------------------------------------------
 const CONNECT_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Connect your IDE · Shipyard Inference</title>
-<style>
-:root{--bg:#06070a;--panel:#0c0e14;--hair:rgba(255,255,255,.10);--text:#f3f5fa;--muted:#99a1b3;--accent:#5b8cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:760px;margin:0 auto;padding:48px 22px 80px}
-h1{font-size:30px;margin:0 0 6px}.sub{color:var(--muted);margin:0 0 28px}
-.card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin:16px 0}
-label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;text-transform:uppercase;letter-spacing:.5px}
-input{width:100%;background:#04050a;border:1px solid var(--hair);border-radius:9px;color:var(--text);padding:11px 12px;font:14px var(--mono)}
-button{appearance:none;border:0;border-radius:10px;background:var(--accent);color:#fff;font-weight:650;padding:11px 18px;cursor:pointer;font-size:15px}
-button:hover{filter:brightness(1.08)}button:disabled{opacity:.5;cursor:default}
-.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}.row>div{flex:1;min-width:200px}
-pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:13px 14px;overflow:auto;font:13px/1.5 var(--mono);color:#d7def0;margin:8px 0 0;position:relative}
-.k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:18px 0 4px}
-.key{color:var(--green)}.muted{color:var(--muted)}.hidden{display:none}
-.copy{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.07);color:var(--muted);font-size:11px;padding:3px 8px;border-radius:6px}
-.note{font-size:13px;color:var(--muted);margin-top:10px}a{color:var(--accent)}
-.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:26px;border-bottom:1px solid var(--hair)}
-.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
-.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
-@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
+${TERMINAL_FONTS}
+<style>${TERMINAL_CSS}
+.wrap{max-width:760px}
+.k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 4px}
+.key{color:var(--green);word-break:break-all}
+.card.hero{border-color:#1f3a36;background:#0b1714}
+.divider{text-align:center;margin:20px 0 6px;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.03em}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
+${navHtml('connect')}
+<span class="pill"><span class="blip"></span> claude code · cursor · codex · any agent</span>
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">Works with Claude Code, Cursor, Codex &amp; any agent. Your idle wait-time earns kickbacks to your wallet — and <strong>your model stays yours</strong>. Routing inference through Shipyard for cheaper calls is optional.</p>
-<div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
+<p class="sub">Your idle wait-time earns USDC kickbacks to your wallet — and <strong>your model stays yours</strong>. Routing through Shipyard for cheaper calls is optional.</p>
+<div class="card hero">
   <strong>Fastest — one command</strong> <span class="muted">— adds the status line, keeps your model</span>
   <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
-  <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> for payouts, or <code>--route</code> to also route inference through Shipyard for savings.</div>
+  <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> for payouts, or <code>--route</code> to also route through Shipyard for savings.</div>
 </div>
-<div class="note" style="text-align:center;margin:6px 0">— optional: route through Shipyard for cheaper inference —</div>
+<div class="divider">— optional · route through Shipyard for cheaper inference —</div>
 <div class="card">
   <div class="row">
     <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
@@ -410,34 +463,22 @@ document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)re
 // idle-attention kickbacks, styled like the operator console. Key-authed.
 const ME_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Your Shipyard earnings</title>
-<style>
-:root{--bg:#0e1014;--panel:#15181f;--panel2:#1b1f28;--border:#262b36;--text:#e7e9ee;--muted:#8b93a3;--accent:#6c8cff;--good:#3ad6a3;--radius:12px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:880px;margin:0 auto;padding:34px 22px 70px}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
-h1{font-size:22px;margin:0}.sub{color:var(--muted);margin:2px 0 22px;font-size:14px}
-.row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
-input{flex:1;min-width:240px;background:#0a0c11;border:1px solid var(--border);border-radius:9px;color:var(--text);padding:10px 12px;font:13px var(--mono)}
-button{appearance:none;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:650;padding:10px 16px;cursor:pointer}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+<title>Your earnings · Shipyard Inference</title>
+${TERMINAL_FONTS}
+<style>${TERMINAL_CSS}
+.k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
 @media(max-width:680px){.kpis{grid-template-columns:repeat(2,1fr)}}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:15px 16px}
-.k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:7px}
-.v{font:600 24px/1 var(--mono)}.v.good{color:var(--good)}.v.accent{color:var(--accent)}
-.sub2{color:var(--muted);font-size:12px;margin-top:5px}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-top:14px}
-.muted{color:var(--muted)}.hidden{display:none}a{color:var(--accent)}
-pre{background:#0a0c11;border:1px solid var(--border);border-radius:9px;padding:11px;font:12px var(--mono);overflow:auto;margin:8px 0 0}
-.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:22px;border-bottom:1px solid var(--border)}
-.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
-.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
-@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
+.kpis .card{margin:0}
+.v{font:600 25px/1 var(--mono);color:var(--fg)}.v.good{color:var(--green)}.v.accent{color:var(--term2)}
+.sub2{color:var(--dim);font-size:12px;margin-top:6px;font-family:var(--mono)}
+.loadrow{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.loadrow input{flex:1;min-width:240px}.loadrow button{margin-top:0}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise">Advertise</a><a href="/me" class="active">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
-<div class="topbar"><h1>Your Shipyard earnings</h1><a href="/connect" class="muted">+ new key</a></div>
+${navHtml('me')}
+<span class="pill"><span class="blip"></span> live · per-key</span>
+<h1>Your earnings</h1>
 <p class="sub">Routing savings on every call, plus idle-attention kickbacks — credited to your wallet.</p>
-<div class="row">
+<div class="loadrow">
   <input id="key" placeholder="sk-shipyard-… (your API key)"/>
   <button id="load">Load</button>
 </div>
@@ -454,6 +495,8 @@ pre{background:#0a0c11;border:1px solid var(--border);border-radius:9px;padding:
     <div class="k" style="margin-top:14px">Net inference cost</div>
     <div class="v" id="net" style="font-size:20px">$0</div>
     <div class="sub2">spent − kickbacks. Negative means your wait-time more than paid for your inference.</div>
+    <div style="margin-top:16px"><button id="claim" disabled>Claim kickbacks → wallet</button></div>
+    <div class="note" id="claimmsg"></div>
   </div>
 </div>
 <script>
@@ -472,10 +515,23 @@ async function load(){
     $('#reqs').textContent=d.requests;
     $('#net').textContent=f((d.spentUsd||0)-(d.kickbacksUsd||0));
     $('#acct').textContent=d.account.userId+(d.account.wallet?(' · '+d.account.wallet):' · no payout wallet set');
-    if(!d.kickbacksUsd)$('#kicknote').textContent='earn in the chat portal / IDE extension';
+    if(!d.kickbacksUsd)$('#kicknote').textContent='accrues on routed, attested traffic';
+    $('#claim').disabled=!(d.kickbacksUsd>0 && d.account.wallet);
+    if(d.kickbacksUsd>0 && !d.account.wallet)$('#claimmsg').textContent='set a payout wallet: reconnect with --wallet <addr>';
     $('#out').classList.remove('hidden');
   }finally{$('#load').disabled=false}
 }
+async function claim(){
+  const key=$('#key').value.trim();if(!key)return;
+  $('#claim').disabled=true;$('#claimmsg').textContent='Sweeping on-chain…';
+  try{
+    const r=await fetch('/api/tender/claim',{method:'POST',headers:{authorization:'Bearer '+key}});
+    const d=await r.json();
+    if(!r.ok){$('#claimmsg').textContent='✗ '+(d.error||'failed');$('#claim').disabled=false;}
+    else{$('#claimmsg').innerHTML='<span class="green">✓ Paid $'+d.amountUsdc+' USDC to '+d.wallet.slice(0,6)+'… · <a target="_blank" href="https://explorer.solana.com/tx/'+d.signature+'?cluster=devnet">view tx ↗</a></span>';load();}
+  }catch(e){$('#claimmsg').textContent='✗ '+e.message;$('#claim').disabled=false;}
+}
+$('#claim').addEventListener('click',claim);
 $('#load').addEventListener('click',load);
 if($('#key').value)load();
 </script></div></body></html>`
@@ -486,37 +542,22 @@ if($('#key').value)load();
 // destination + a per-block bid, and the campaign enters the live first-price
 // auction immediately. Settlement is USDC on Solana (not "Stripe, coming soon").
 const ADVERTISE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise on Shipyard · Tender</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise · Shipyard Tender</title>
+${TERMINAL_FONTS}
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
-<style>
-:root{--bg:#07090d;--panel:#0e1218;--line:#1c232e;--fg:#e8edf3;--muted:#8b97a6;--accent:#4fd1c5;--accent2:#7c9cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1100px 560px at 72% -12%,#11202b 0%,var(--bg) 55%);color:var(--fg);font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
-.wrap{max-width:780px;margin:0 auto;padding:34px 22px 80px}a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
-.pill{display:inline-block;font-size:12px;color:var(--accent);border:1px solid #1f3a3a;background:#0c1614;border-radius:999px;padding:4px 12px;margin-bottom:16px}
-h1{font-size:30px;letter-spacing:-.02em;margin:0 0 6px}.sub{color:var(--muted);margin:0 0 22px;max-width:620px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
-label{display:block;font-size:11px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
-input{width:100%;background:#04050a;border:1px solid var(--line);border-radius:9px;color:var(--fg);padding:10px 12px;font:14px var(--mono)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
-button{appearance:none;border:0;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:11px 18px;cursor:pointer;margin-top:16px}
-button:disabled{opacity:.5}.note{font-size:13px;color:var(--muted);margin-top:9px}.green{color:var(--green)}
-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td.mono{font-family:var(--mono)}
+<style>${TERMINAL_CSS}
+.wrap{max-width:780px}
 .paygrid{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px}.fields{flex:1;min-width:240px}
 .qr{display:block;margin-top:12px;border-radius:10px;background:#e8edf3}
-.addr{font-family:var(--mono);font-size:12px;background:#04050a;border:1px solid var(--line);border-radius:8px;padding:8px 10px;word-break:break-all;margin-bottom:6px}
-a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;background:linear-gradient(95deg,var(--accent),var(--accent2));color:#04130f;font-weight:680;padding:10px 16px}
-.prevcap{font-size:11px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
-.prev{background:#04050a;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:13px/1.7 var(--mono)}
-.prev .pstar{color:#e8915f}.prev .pmut{color:var(--muted)}.prev .pverb{color:#e8915f;font-weight:600}
-.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:24px;border-bottom:1px solid var(--line)}
-.snav .brand{font-weight:700;color:var(--accent);font-size:15px}.snav .brand:hover{text-decoration:none}
-.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--fg);text-decoration:none}.snav .lnk a.active{color:var(--fg)}
-@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
+.addr{font-family:var(--mono);font-size:12px;background:#04060a;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;word-break:break-all;margin-bottom:6px}
+.prevcap{font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.08em}
+.prev{background:#04060a;border:1px solid var(--line2);border-radius:9px;padding:11px 13px;font:13px/1.7 var(--mono)}
+.prev .pstar{color:var(--amber)}.prev .pmut{color:var(--dim)}.prev .pverb{color:var(--amber);font-weight:600}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise" class="active">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
-<span class="pill">first-price auction · USDC settlement · agentic clicks</span>
+${navHtml('advertise')}
+<span class="pill"><span class="blip"></span> first-price auction · USDC settlement · agentic clicks</span>
 <h1>Advertise on the wait.</h1>
-<p class="sub">Your line shows in the agent's <strong>spinner</strong> — the "thinking" indicator — during inference waits. Never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
+<p class="sub">Your line becomes the agent's <strong>spinner</strong> while it thinks — never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint; highest bid serves first.</p>
 <div class="card">
   <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="🤖 Try Acme Vector DB — first 1M vectors free"/>
   <div class="prevcap">Spinner preview — your line becomes the spinner while the agent thinks</div>
@@ -782,6 +823,38 @@ app.get('/api/me', async (c) => {
     kickbacksUsd: r6(await gatewayTender.balance(auth.account.userId)),
     sponsoredLine: (await gatewayTender.currentLine(auth.account.userId)) ?? null,
   })
+})
+
+// Sweep accrued kickbacks on-chain to the account's wallet as USDC. Records a
+// matching debit so the ledger balance nets out (no double-claim). Payout is
+// signed by the gateway's dedicated payout keypair — lazily imported so
+// @solana/web3.js never touches the boot path.
+const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
+app.post('/api/tender/claim', async (c) => {
+  const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
+  const wallet = auth.account.wallet
+  if (!wallet) return c.json({ error: 'no payout wallet on this key — reconnect with --wallet <addr>' }, 400)
+  const balanceUsd = await gatewayTender.balance(auth.account.userId)
+  if (!(balanceUsd >= MIN_CLAIM_USDC)) return c.json({ error: 'nothing to claim yet', balanceUsd: r6(balanceUsd) }, 400)
+
+  let result
+  try {
+    const payout = await import('./dist/tender/payout.js')
+    const cfg = payout.loadPayoutConfig(process.env)
+    if (!cfg) return c.json({ error: 'payouts not configured on this gateway' }, 503)
+    result = await payout.payoutUsdc(cfg, wallet, balanceUsd)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502)
+  }
+
+  // Debit the swept amount (negative accrual) so balance() nets to ~0.
+  await tenderCreditStore
+    .accrue({ account: auth.account.userId, amountUsd: -balanceUsd, placementId: 'payout', line: `payout ${result.signature}`, requestId: result.signature, at: Date.now() })
+    .catch(() => {})
+
+  return c.json({ paid: true, amountUsdc: r6(balanceUsd), wallet, signature: result.signature })
 })
 
 app.route('/', operator)
