@@ -495,6 +495,8 @@ ${navHtml('me')}
     <div class="k" style="margin-top:14px">Net inference cost</div>
     <div class="v" id="net" style="font-size:20px">$0</div>
     <div class="sub2">spent − kickbacks. Negative means your wait-time more than paid for your inference.</div>
+    <div style="margin-top:16px"><button id="claim" disabled>Claim kickbacks → wallet</button></div>
+    <div class="note" id="claimmsg"></div>
   </div>
 </div>
 <script>
@@ -513,10 +515,23 @@ async function load(){
     $('#reqs').textContent=d.requests;
     $('#net').textContent=f((d.spentUsd||0)-(d.kickbacksUsd||0));
     $('#acct').textContent=d.account.userId+(d.account.wallet?(' · '+d.account.wallet):' · no payout wallet set');
-    if(!d.kickbacksUsd)$('#kicknote').textContent='earn in the chat portal / IDE extension';
+    if(!d.kickbacksUsd)$('#kicknote').textContent='accrues on routed, attested traffic';
+    $('#claim').disabled=!(d.kickbacksUsd>0 && d.account.wallet);
+    if(d.kickbacksUsd>0 && !d.account.wallet)$('#claimmsg').textContent='set a payout wallet: reconnect with --wallet <addr>';
     $('#out').classList.remove('hidden');
   }finally{$('#load').disabled=false}
 }
+async function claim(){
+  const key=$('#key').value.trim();if(!key)return;
+  $('#claim').disabled=true;$('#claimmsg').textContent='Sweeping on-chain…';
+  try{
+    const r=await fetch('/api/tender/claim',{method:'POST',headers:{authorization:'Bearer '+key}});
+    const d=await r.json();
+    if(!r.ok){$('#claimmsg').textContent='✗ '+(d.error||'failed');$('#claim').disabled=false;}
+    else{$('#claimmsg').innerHTML='<span class="green">✓ Paid $'+d.amountUsdc+' USDC to '+d.wallet.slice(0,6)+'… · <a target="_blank" href="https://explorer.solana.com/tx/'+d.signature+'?cluster=devnet">view tx ↗</a></span>';load();}
+  }catch(e){$('#claimmsg').textContent='✗ '+e.message;$('#claim').disabled=false;}
+}
+$('#claim').addEventListener('click',claim);
 $('#load').addEventListener('click',load);
 if($('#key').value)load();
 </script></div></body></html>`
@@ -808,6 +823,38 @@ app.get('/api/me', async (c) => {
     kickbacksUsd: r6(await gatewayTender.balance(auth.account.userId)),
     sponsoredLine: (await gatewayTender.currentLine(auth.account.userId)) ?? null,
   })
+})
+
+// Sweep accrued kickbacks on-chain to the account's wallet as USDC. Records a
+// matching debit so the ledger balance nets out (no double-claim). Payout is
+// signed by the gateway's dedicated payout keypair — lazily imported so
+// @solana/web3.js never touches the boot path.
+const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
+app.post('/api/tender/claim', async (c) => {
+  const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
+  const wallet = auth.account.wallet
+  if (!wallet) return c.json({ error: 'no payout wallet on this key — reconnect with --wallet <addr>' }, 400)
+  const balanceUsd = await gatewayTender.balance(auth.account.userId)
+  if (!(balanceUsd >= MIN_CLAIM_USDC)) return c.json({ error: 'nothing to claim yet', balanceUsd: r6(balanceUsd) }, 400)
+
+  let result
+  try {
+    const payout = await import('./dist/tender/payout.js')
+    const cfg = payout.loadPayoutConfig(process.env)
+    if (!cfg) return c.json({ error: 'payouts not configured on this gateway' }, 503)
+    result = await payout.payoutUsdc(cfg, wallet, balanceUsd)
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502)
+  }
+
+  // Debit the swept amount (negative accrual) so balance() nets to ~0.
+  await tenderCreditStore
+    .accrue({ account: auth.account.userId, amountUsd: -balanceUsd, placementId: 'payout', line: `payout ${result.signature}`, requestId: result.signature, at: Date.now() })
+    .catch(() => {})
+
+  return c.json({ paid: true, amountUsdc: r6(balanceUsd), wallet, signature: result.signature })
 })
 
 app.route('/', operator)
