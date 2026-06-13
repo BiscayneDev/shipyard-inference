@@ -42,6 +42,7 @@ import {
   totalPaid,
   usdcToAtomic,
   payboxSettle,
+  payboxSigner,
   keypairSigner,
   type CampaignStore,
   type PayoutRail,
@@ -844,21 +845,30 @@ app.get('/cron/sweep', async (c) => {
   const resolveDestination = (account: string): string | undefined =>
     account === providerAccount ? PROVIDER_PAYOUT_WALLET : wallets.get(account)
 
-  // The on-chain rail: treasury (SOLANA_PAYER_SECRET hot wallet) → destination.
-  // Built only when enabled — otherwise the sweep is report-only.
+  // The on-chain rail: the treasury wallet → destination. Prefer the Paybox-
+  // custodied treasury (PAYBOX_TREASURY_CREDENTIAL_ID — key never leaves Paybox,
+  // signs behind a scoped grant); fall back to a raw devnet hot-wallet secret
+  // (SOLANA_PAYER_SECRET). Built only when enabled — otherwise report-only.
   let rail: PayoutRail | undefined
-  if (SWEEP_ENABLED && process.env.SOLANA_PAYER_SECRET) {
-    const signer = await keypairSigner(process.env.SOLANA_PAYER_SECRET)
-    rail = {
-      transfer: async ({ destination, amountUsd }) =>
-        payboxSettle({
-          signer,
-          treasury: destination, // payboxSettle sends signer's wallet → this address
-          amount: usdcToAtomic(amountUsd),
-          network: SWEEP_NETWORK,
-          rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
-          usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
-        }),
+  if (SWEEP_ENABLED) {
+    const credentialId = process.env.PAYBOX_TREASURY_CREDENTIAL_ID?.trim()
+    const signer = credentialId
+      ? await payboxSigner({ credentialId, network: SWEEP_NETWORK })
+      : process.env.SOLANA_PAYER_SECRET
+        ? await keypairSigner(process.env.SOLANA_PAYER_SECRET)
+        : undefined
+    if (signer) {
+      rail = {
+        transfer: async ({ destination, amountUsd }) =>
+          payboxSettle({
+            signer,
+            treasury: destination, // payboxSettle sends signer's wallet → this address
+            amount: usdcToAtomic(amountUsd),
+            network: SWEEP_NETWORK,
+            rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+            usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+          }),
+      }
     }
   }
 
