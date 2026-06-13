@@ -21,7 +21,10 @@ import {
   buildCampaign,
   MemoryCampaignStore,
   GatewayTender,
+  MemoryCreditStore,
   SupabaseCreditStore,
+  sweepAll,
+  totalPaid,
   isCampaignActive,
   tenderDepositConfig,
   newPaymentReference,
@@ -403,6 +406,102 @@ test('SupabaseCreditStore: accrue inserts, balance sums (aggregate), latestLine 
   assert.ok(near(await store.balance('a'), 0.005))
   assert.equal(await store.latestLine('a'), 'new ad')
   assert.equal(await store.balance('zzz'), 0)
+})
+
+// --- automatic payout sweep -----------------------------------------------
+
+test('MemoryCreditStore: balance is unswept; markSwept settles; unsweptByAccount lists work', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.003, placementId: 'p1', line: 'a', requestId: 'r1', at: 10 })
+  await s.accrue({ account: 'u1', amountUsd: 0.002, placementId: 'p2', line: 'b', requestId: 'r2', at: 20 })
+  await s.accrue({ account: 'provider:T', amountUsd: 0.005, placementId: 'p1', line: 'a', requestId: 'r3', at: 10 })
+  assert.ok(near(await s.balance('u1'), 0.005))
+
+  // A cutoff excludes credits accrued after it (the mid-sweep idempotency guard).
+  const work15 = (await s.unsweptByAccount(15)).find((w) => w.account === 'u1')
+  assert.ok(near(work15?.amountUsd ?? -1, 0.003))
+
+  // Mark only u1's credits up to the cutoff → the at=20 credit survives.
+  assert.ok(near(await s.markSwept('u1', 15), 0.003))
+  assert.ok(near(await s.balance('u1'), 0.002))
+
+  // Full work-list: u1's remaining 0.002 + the provider's 0.005.
+  const work = await s.unsweptByAccount()
+  assert.equal(work.length, 2)
+  assert.ok(near(work.find((w) => w.account === 'provider:T')?.amountUsd ?? -1, 0.005))
+})
+
+test('sweepAll: report-only computes what is owed without paying or marking', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.01, placementId: 'p', line: 'a', requestId: 'r', at: 1 })
+  const res = await sweepAll(s, { resolveDestination: () => 'WalletU1', now: () => 100 })
+  assert.equal(res.length, 1)
+  assert.equal(res[0].status, 'reported')
+  assert.equal(res[0].signature, null)
+  assert.equal(res[0].destination, 'WalletU1')
+  assert.ok(near(await s.balance('u1'), 0.01), 'report-only leaves the balance unswept')
+})
+
+test('sweepAll: live rail pays + marks swept, and skips dust / walletless accounts', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.02, placementId: 'p', line: 'a', requestId: 'r', at: 1 })
+  await s.accrue({ account: 'u2', amountUsd: 0.001, placementId: 'p', line: 'a', requestId: 'r', at: 1 }) // dust
+  await s.accrue({ account: 'u3', amountUsd: 0.05, placementId: 'p', line: 'a', requestId: 'r', at: 1 }) // no wallet
+  const calls: Array<{ destination: string; amountUsd: number }> = []
+  const rail = { transfer: async (a: { destination: string; amountUsd: number }) => { calls.push(a); return { signature: `SIG-${a.destination}` } } }
+  const wallets: Record<string, string | undefined> = { u1: 'WalletU1', u3: undefined }
+  const res = await sweepAll(s, { rail, resolveDestination: (a) => wallets[a], minPayoutUsdc: 0.01, now: () => 100 })
+
+  const by = Object.fromEntries(res.map((r) => [r.account, r]))
+  assert.equal(by.u1.status, 'paid')
+  assert.equal(by.u1.signature, 'SIG-WalletU1')
+  assert.equal(by.u2.status, 'skipped') // below minimum
+  assert.equal(by.u3.status, 'skipped') // no payout wallet
+  assert.equal(calls.length, 1, 'only the qualifying account is paid on-chain')
+  assert.ok(near(await s.balance('u1'), 0), 'paid account is marked swept')
+  assert.ok(near(await s.balance('u3'), 0.05), 'unpaid account is left untouched')
+  assert.ok(near(totalPaid(res), 0.02))
+})
+
+test('SupabaseCreditStore: markSwept settles rows; unsweptByAccount groups the work-list', async () => {
+  const rows: Array<{ account: string; amount_usd: number; at: number; swept: boolean }> = []
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    const u = String(url)
+    const rawAcct = u.match(/account=eq\.([^&]+)/)?.[1]
+    const acct = rawAcct != null ? decodeURIComponent(rawAcct) : undefined
+    if (init?.method === 'POST') {
+      for (const r of JSON.parse(String(init.body))) rows.push({ ...r, swept: false })
+      return new Response(null, { status: 201 })
+    }
+    if (init?.method === 'PATCH') {
+      const before = u.match(/at=lte\.(\d+)/)?.[1]
+      const hit = rows.filter((r) => r.account === acct && !r.swept && (before == null || r.at <= Number(before)))
+      for (const r of hit) r.swept = true
+      return new Response(JSON.stringify(hit.map((r) => ({ amount_usd: r.amount_usd }))), { status: 200 })
+    }
+    // GET: balance (account filter + sum) or grouped work-list (account + sum, no filter)
+    const unswept = rows.filter((r) => !r.swept && (acct == null || r.account === acct))
+    if (u.includes('select=account,amount_usd.sum()')) {
+      const sums = new Map<string, number>()
+      for (const r of unswept) sums.set(r.account, (sums.get(r.account) ?? 0) + r.amount_usd)
+      return new Response(JSON.stringify([...sums].map(([account, sum]) => ({ account, sum }))), { status: 200 })
+    }
+    return new Response(JSON.stringify([{ sum: unswept.reduce((s, r) => s + r.amount_usd, 0) }]), { status: 200 })
+  }) as unknown as typeof fetch
+
+  const store = new SupabaseCreditStore({ url: 'https://x.supabase.co', key: 'svc', fetch: fetchImpl })
+  await store.accrue({ account: 'u1', amountUsd: 0.003, placementId: 'p1', line: 'a', requestId: 'r1', at: 1 })
+  await store.accrue({ account: 'u1', amountUsd: 0.002, placementId: 'p2', line: 'b', requestId: 'r2', at: 2 })
+  await store.accrue({ account: 'provider:T', amountUsd: 0.005, placementId: 'p3', line: 'c', requestId: 'r3', at: 1 })
+  assert.ok(near(await store.balance('u1'), 0.005))
+
+  const work = await store.unsweptByAccount()
+  assert.equal(work.length, 2)
+  assert.ok(near(work.find((w) => w.account === 'u1')?.amountUsd ?? -1, 0.005))
+
+  assert.ok(near(await store.markSwept('u1'), 0.005), 'markSwept returns the settled amount')
+  assert.ok(near(await store.balance('u1'), 0), 'settled rows drop out of the balance')
+  assert.ok(near(await store.balance('provider:T'), 0.005), 'other accounts untouched')
 })
 
 test('MemoryCampaignStore + Auction: a created campaign serves and can win the slot', async () => {

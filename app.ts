@@ -38,7 +38,13 @@ import {
   newPaymentReference,
   buildDepositIntent,
   verifyDeposit,
+  sweepAll,
+  totalPaid,
+  usdcToAtomic,
+  payboxSettle,
+  keypairSigner,
   type CampaignStore,
+  type PayoutRail,
 } from './dist/index.js'
 import {
   createGatewayApp,
@@ -226,16 +232,19 @@ const tenderCreditStore =
 // account when a treasury is set. Unset → no rail (see below).
 const depositConfig = tenderDepositConfig(process.env)
 
+// The account the platform's cut accrues to (same durable ledger as user
+// kickbacks). Defaults to the configured treasury so a deploy with a funding rail
+// tracks the provider take with no extra config. Reserved `provider:` prefix.
+const providerAccount =
+  process.env.TENDER_PROVIDER_ACCOUNT?.trim() ||
+  (depositConfig ? `provider:${depositConfig.treasury}` : undefined)
+
 const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
   creditStore: tenderCreditStore,
-  // The platform's cut of each impression. Accrues to `providerAccount` in the
-  // same durable ledger as user kickbacks; defaults to the configured treasury so
-  // a deploy with a funding rail tracks the provider take with no extra config.
+  // The platform's cut of each impression.
   providerShare: Number(process.env.TENDER_PROVIDER_SHARE ?? TENDER_DEFAULTS.PROVIDER_SHARE),
-  providerAccount:
-    process.env.TENDER_PROVIDER_ACCOUNT?.trim() ||
-    (depositConfig ? `provider:${depositConfig.treasury}` : undefined),
+  providerAccount,
   // Inventory is loaded from the campaign store (below) — the single source of
   // truth — rather than hardcoded, so /advertise reflects exactly what serves.
 })
@@ -806,6 +815,65 @@ app.get('/api/provider', async (c) => {
   }
   const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
   return c.json({ providerCutUsd: r6(await gatewayTender.providerBalance()) })
+})
+
+// Automatic payout sweep — batches accrued, unswept kickbacks out to wallets and
+// the provider cut out to its payout wallet, then marks them settled. Driven by
+// Vercel Cron (see vercel.json), which sends `Authorization: Bearer $CRON_SECRET`;
+// also accepts an operator token for manual runs.
+//
+// SAFE BY DEFAULT: unless SHIPYARD_SWEEP_ENABLED=true AND a treasury signer
+// (SOLANA_PAYER_SECRET) is configured, the sweep runs REPORT-ONLY — it computes
+// what's owed and moves nothing. Network defaults to devnet; set
+// SHIPYARD_SETTLE_NETWORK=mainnet only after verifying a real devnet payout.
+const SWEEP_ENABLED = process.env.SHIPYARD_SWEEP_ENABLED === 'true'
+const SWEEP_NETWORK = (process.env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet') as
+  | 'mainnet'
+  | 'devnet'
+const PROVIDER_PAYOUT_WALLET = process.env.TENDER_PROVIDER_PAYOUT_WALLET?.trim()
+const MIN_PAYOUT_USDC = Number(process.env.TENDER_MIN_PAYOUT_USDC ?? 0.01)
+
+app.get('/cron/sweep', async (c) => {
+  const auth = c.req.header('authorization')
+  const ok = checkBearer(OPERATOR_TOKENS, auth) || checkBearer([process.env.CRON_SECRET ?? ''].filter(Boolean), auth)
+  if (!ok) return c.json({ error: 'unauthorized' }, 401)
+
+  // userId → payout wallet, from the key store. Provider account resolves to its
+  // own payout wallet (or is skipped when none is set — it keeps accruing).
+  const wallets = new Map((await keyStore.listAccounts()).map((a) => [a.userId, a.wallet]))
+  const resolveDestination = (account: string): string | undefined =>
+    account === providerAccount ? PROVIDER_PAYOUT_WALLET : wallets.get(account)
+
+  // The on-chain rail: treasury (SOLANA_PAYER_SECRET hot wallet) → destination.
+  // Built only when enabled — otherwise the sweep is report-only.
+  let rail: PayoutRail | undefined
+  if (SWEEP_ENABLED && process.env.SOLANA_PAYER_SECRET) {
+    const signer = await keypairSigner(process.env.SOLANA_PAYER_SECRET)
+    rail = {
+      transfer: async ({ destination, amountUsd }) =>
+        payboxSettle({
+          signer,
+          treasury: destination, // payboxSettle sends signer's wallet → this address
+          amount: usdcToAtomic(amountUsd),
+          network: SWEEP_NETWORK,
+          rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+          usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+        }),
+    }
+  }
+
+  try {
+    const results = await sweepAll(tenderCreditStore, { rail, resolveDestination, minPayoutUsdc: MIN_PAYOUT_USDC })
+    const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+    return c.json({
+      mode: rail ? `live:${SWEEP_NETWORK}` : 'report-only',
+      accounts: results.length,
+      totalPaidUsd: r6(totalPaid(results)),
+      results: results.map((r) => ({ ...r, amountUsd: r6(r.amountUsd) })),
+    })
+  } catch (err) {
+    return c.json({ error: 'sweep failed', detail: String(err instanceof Error ? err.message : err) }, 500)
+  }
 })
 
 app.route('/', operator)

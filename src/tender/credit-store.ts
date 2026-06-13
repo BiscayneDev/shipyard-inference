@@ -16,24 +16,58 @@ export interface CreditRecord {
 
 export interface CreditStore {
   accrue(rec: CreditRecord): Promise<void>
-  /** Total accrued kickbacks for an account, in USDC. */
+  /** Unswept (still-payable) accrued kickbacks for an account, in USDC. */
   balance(account: string): Promise<number>
   /** The most recently served sponsored line for an account (the "current" ad). */
   latestLine(account: string): Promise<string | undefined>
+  /**
+   * Accounts with a positive unswept balance — the sweep work-list. Pass `before`
+   * (unix ms) to include only credits accrued at-or-before that cutoff; the sweep
+   * driver uses ONE cutoff for both this read and {@link markSwept} so a credit
+   * accrued mid-sweep is neither paid nor marked until the next run.
+   */
+  unsweptByAccount(before?: number): Promise<Array<{ account: string; amountUsd: number }>>
+  /**
+   * Mark an account's unswept credits as swept (optionally only those accrued
+   * at-or-before `before`), settling them so they stop counting toward the
+   * balance. Returns the amount marked, in USDC — the caller pays this on-chain.
+   */
+  markSwept(account: string, before?: number): Promise<number>
 }
 
 /** In-memory store — fine for a long-lived gateway; resets per process. */
 export class MemoryCreditStore implements CreditStore {
-  private readonly recs: CreditRecord[] = []
+  private readonly recs: Array<CreditRecord & { swept: boolean }> = []
   async accrue(rec: CreditRecord): Promise<void> {
-    this.recs.push(rec)
+    this.recs.push({ ...rec, swept: false })
   }
   async balance(account: string): Promise<number> {
-    return this.recs.filter((r) => r.account === account).reduce((s, r) => s + r.amountUsd, 0)
+    return this.recs
+      .filter((r) => r.account === account && !r.swept)
+      .reduce((s, r) => s + r.amountUsd, 0)
   }
   async latestLine(account: string): Promise<string | undefined> {
     for (let i = this.recs.length - 1; i >= 0; i--) if (this.recs[i].account === account) return this.recs[i].line
     return undefined
+  }
+  async unsweptByAccount(before?: number): Promise<Array<{ account: string; amountUsd: number }>> {
+    const sums = new Map<string, number>()
+    for (const r of this.recs) {
+      if (r.swept) continue
+      if (before != null && r.at > before) continue
+      sums.set(r.account, (sums.get(r.account) ?? 0) + r.amountUsd)
+    }
+    return [...sums].filter(([, amt]) => amt > 0).map(([account, amountUsd]) => ({ account, amountUsd }))
+  }
+  async markSwept(account: string, before?: number): Promise<number> {
+    let marked = 0
+    for (const r of this.recs) {
+      if (r.account !== account || r.swept) continue
+      if (before != null && r.at > before) continue
+      r.swept = true
+      marked += r.amountUsd
+    }
+    return marked
   }
 }
 
@@ -81,8 +115,8 @@ export class SupabaseCreditStore implements CreditStore {
 
   async balance(account: string): Promise<number> {
     const acct = encodeURIComponent(account)
-    // Prefer the server-side aggregate sum (one row).
-    const agg = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&select=amount_usd.sum()`, {
+    // Prefer the server-side aggregate sum (one row). Unswept credits only.
+    const agg = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&swept=is.false&select=amount_usd.sum()`, {
       headers: this.headers,
     })
     if (agg.ok) {
@@ -90,10 +124,39 @@ export class SupabaseCreditStore implements CreditStore {
       if (rows[0] && 'sum' in rows[0]) return Number(rows[0].sum ?? 0)
     }
     // Fallback (aggregates disabled on the project): fetch rows and sum.
-    const res = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&select=amount_usd`, {
+    const res = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&swept=is.false&select=amount_usd`, {
       headers: this.headers,
     })
     if (!res.ok) throw new Error(`supabase credit balance failed: ${res.status}`)
+    const rows = (await res.json()) as Array<{ amount_usd: number }>
+    return rows.reduce((s, r) => s + Number(r.amount_usd), 0)
+  }
+
+  async unsweptByAccount(before?: number): Promise<Array<{ account: string; amountUsd: number }>> {
+    // PostgREST groups by the non-aggregated selected column (account).
+    const cutoff = before != null ? `&at=lte.${before}` : ''
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?swept=is.false${cutoff}&select=account,amount_usd.sum()`,
+      { headers: this.headers },
+    )
+    if (!res.ok) throw new Error(`supabase credit unsweptByAccount failed: ${res.status}`)
+    const rows = (await res.json()) as Array<{ account: string; sum?: number | null }>
+    return rows
+      .map((r) => ({ account: r.account, amountUsd: Number(r.sum ?? 0) }))
+      .filter((r) => r.amountUsd > 0)
+  }
+
+  async markSwept(account: string, before?: number): Promise<number> {
+    const acct = encodeURIComponent(account)
+    const cutoff = before != null ? `&at=lte.${before}` : ''
+    // PATCH the matching rows and ask for the affected rows back so we can sum
+    // exactly what was settled (this IS the amount the caller pays out).
+    const res = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&swept=is.false${cutoff}`, {
+      method: 'PATCH',
+      headers: { ...this.headers, prefer: 'return=representation' },
+      body: JSON.stringify({ swept: true }),
+    })
+    if (!res.ok) throw new Error(`supabase credit markSwept failed: ${res.status} ${await res.text().catch(() => '')}`)
     const rows = (await res.json()) as Array<{ amount_usd: number }>
     return rows.reduce((s, r) => s + Number(r.amount_usd), 0)
   }
@@ -107,7 +170,16 @@ export class SupabaseCreditStore implements CreditStore {
   }
 }
 
-/** One-time schema for the durable kickback ledger. */
+/**
+ * One-time schema for the durable kickback ledger. `swept` tracks whether a
+ * credit has been paid out on-chain — balance/sweep read only unswept rows.
+ *
+ * Existing deploys (table created before the sweep column) must run:
+ *   alter table shipyard_tender_credits
+ *     add column if not exists swept boolean not null default false;
+ *   create index if not exists shipyard_tender_credits_unswept_idx
+ *     on shipyard_tender_credits (account) where not swept;
+ */
 export const SUPABASE_TENDER_CREDITS_SCHEMA = `
 create table if not exists shipyard_tender_credits (
   id          bigint generated always as identity primary key,
@@ -116,7 +188,9 @@ create table if not exists shipyard_tender_credits (
   placement_id text  not null,
   line        text   not null,
   request_id  text   not null,
-  at          bigint not null
+  at          bigint not null,
+  swept       boolean not null default false
 );
 create index if not exists shipyard_tender_credits_account_idx on shipyard_tender_credits (account, at desc);
+create index if not exists shipyard_tender_credits_unswept_idx on shipyard_tender_credits (account) where not swept;
 `
