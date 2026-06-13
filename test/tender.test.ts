@@ -6,6 +6,8 @@ import {
   observeWaitWindow,
   matchesTargeting,
   impressionFloorUsdc,
+  splitImpression,
+  TENDER_DEFAULTS,
   loadAttestationKey,
   generateAttestationSeedHex,
   signAttestation,
@@ -198,6 +200,23 @@ test('auction log: records served placement for the gate cross-check', () => {
 
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9
 
+test('splitImpression: splits gross into requester + provider shares', () => {
+  const even = splitImpression(0.005, 0.5, 0.5)
+  assert.ok(near(even.requesterUsdc, 0.0025))
+  assert.ok(near(even.providerUsdc, 0.0025))
+  // Asymmetric, summing < 1.0 (a deliberate margin) is allowed.
+  const skew = splitImpression(0.01, 0.6, 0.3)
+  assert.ok(near(skew.requesterUsdc, 0.006))
+  assert.ok(near(skew.providerUsdc, 0.003))
+  // Shares summing above 1.0 are rejected.
+  assert.throws(() => splitImpression(1, 0.7, 0.5), /<= 1/)
+})
+
+test('TENDER_DEFAULTS: provider share defaults to the impression remainder', () => {
+  assert.equal(TENDER_DEFAULTS.PROVIDER_SHARE, 0.5)
+  assert.equal(TENDER_DEFAULTS.REQUESTER_SHARE + TENDER_DEFAULTS.PROVIDER_SHARE, 1)
+})
+
 test('credit ledger: accrue, balance, partial consume, sweep', () => {
   const led = new CreditLedger()
   led.creditInference('W', 0.003, { requestId: 'r1', placementId: 'p1' }, 1)
@@ -219,6 +238,7 @@ test('accrueSettlement: valid → accrues REQUESTER_SHARE; invalid → nothing',
   })
   assert.equal(ok.status, 'accrued')
   assert.ok(near(ok.requesterShareUsdc, 0.0025)) // 0.5 × 0.005
+  assert.ok(near(ok.providerShareUsdc, 0)) // no providerAccount → no provider accrual
   assert.ok(near(led.balance('W'), 0.0025))
 
   const bad = accrueSettlement(signAttestation(unsigned({ userWallet: 'W', billedCostUsd: 0 }), KEY), {
@@ -226,6 +246,28 @@ test('accrueSettlement: valid → accrues REQUESTER_SHARE; invalid → nothing',
   })
   assert.equal(bad.status, 'rejected')
   assert.ok(near(led.balance('W'), 0.0025), 'rejected attestation accrues nothing')
+})
+
+test('accrueSettlement: provider account accrues the provider cut alongside the requester', () => {
+  const led = new CreditLedger()
+  const ok = accrueSettlement(signAttestation(unsigned({ userWallet: 'W' }), KEY), {
+    publicKeyHex: KEY.publicKeyHex, ledger: led, pricePerImpressionUsdc: 0.005,
+    providerShare: 0.5, providerAccount: 'provider:T', wasServed: () => true, at: 1,
+  })
+  assert.equal(ok.status, 'accrued')
+  assert.ok(near(ok.requesterShareUsdc, 0.0025))
+  assert.ok(near(ok.providerShareUsdc, 0.0025))
+  assert.ok(near(led.balance('W'), 0.0025))
+  assert.ok(near(led.balance('provider:T'), 0.0025))
+
+  // A rejected attestation accrues nothing to the provider either.
+  const bad = accrueSettlement(signAttestation(unsigned({ userWallet: 'W', billedCostUsd: 0 }), KEY), {
+    publicKeyHex: KEY.publicKeyHex, ledger: led, pricePerImpressionUsdc: 0.005,
+    providerShare: 0.5, providerAccount: 'provider:T', wasServed: () => true, at: 2,
+  })
+  assert.equal(bad.status, 'rejected')
+  assert.ok(near(bad.providerShareUsdc, 0))
+  assert.ok(near(led.balance('provider:T'), 0.0025), 'rejected attestation: provider cut unchanged')
 })
 
 test('sweepCredits: batches the balance through the settle rail, then marks swept', async () => {
@@ -259,6 +301,20 @@ test('accrueClick: bills CLICK_MULTIPLIER × impression, credits the share', () 
   assert.ok(near(led.balance('W'), 0.125))
 })
 
+test('accrueClick: splits the click gross with the provider account', () => {
+  const led = new CreditLedger()
+  const r = accrueClick({
+    ledger: led, wallet: 'W', requestId: 'r1', placementId: 'p1',
+    pricePerImpressionUsdc: 0.005, clickMultiplier: 50, requesterShare: 0.5,
+    providerShare: 0.5, providerAccount: 'provider:T', at: 1,
+  })
+  assert.ok(near(r.grossUsdc, 0.25))
+  assert.ok(near(r.creditedUsd, 0.125)) // requester half
+  assert.ok(near(r.providerUsd, 0.125)) // provider half
+  assert.ok(near(led.balance('W'), 0.125))
+  assert.ok(near(led.balance('provider:T'), 0.125))
+})
+
 // --- advertiser onboarding -------------------------------------------------
 
 test('buildCampaign: derives impressions from budget/bid and validates input', () => {
@@ -290,6 +346,36 @@ test('GatewayTender: settle accrues a valid billed impression + sets the durable
   const res2 = await gt.settle({ userId: 'acct1', requestId: 'r2', model: 'm', billedCostUsd: 0, measuredWaitMs: 1200, placement: p2!, surfaceId: 'gateway' })
   assert.equal(res2.valid, false)
   assert.ok(near(await gt.balance('acct1'), 0.0025), 'unbilled impression accrues nothing')
+
+  // No provider account configured → provider balance stays zero.
+  assert.ok(near(await gt.providerBalance(), 0), 'no provider account → no provider cut')
+})
+
+test('GatewayTender: a configured provider account accrues the platform cut', async () => {
+  let t = 1000
+  const gt = new GatewayTender({
+    campaigns: [campaign({ campaignId: 'c1' })], minWaitMs: 800,
+    providerShare: 0.5, providerAccount: 'provider:T', now: () => t,
+  })
+  const p = gt.serve({ requestId: 'r1', surfaceId: 'gateway', userId: 'acct1' })
+  assert.ok(p)
+
+  t = 3000
+  const res = await gt.settle({ userId: 'acct1', requestId: 'r1', model: 'm', billedCostUsd: 0.0001, measuredWaitMs: 1200, placement: p!, surfaceId: 'gateway' })
+  assert.equal(res.valid, true)
+  assert.ok(near(res.creditedUsd, 0.0025)) // requester half
+  assert.ok(near(res.providerUsd, 0.0025)) // provider half
+  assert.ok(near(await gt.balance('acct1'), 0.0025))
+  assert.ok(near(await gt.providerBalance(), 0.0025))
+
+  // A $0 (rejected) request leaves the provider cut untouched — no farming.
+  const p2 = gt.serve({ requestId: 'r2', surfaceId: 'gateway', userId: 'acct1' })
+  await gt.settle({ userId: 'acct1', requestId: 'r2', model: 'm', billedCostUsd: 0, measuredWaitMs: 1200, placement: p2!, surfaceId: 'gateway' })
+  assert.ok(near(await gt.providerBalance(), 0.0025), 'rejected impression: provider cut unchanged')
+})
+
+test('GatewayTender: rejects a misconfigured split at construction', () => {
+  assert.throws(() => new GatewayTender({ requesterShare: 0.7, providerShare: 0.5 }), /<= 1/)
 })
 
 test('SupabaseCreditStore: accrue inserts, balance sums (aggregate), latestLine reads newest', async () => {

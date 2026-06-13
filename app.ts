@@ -27,6 +27,7 @@ import {
   createUsePodProvider,
   costOptimized,
   GatewayTender,
+  TENDER_DEFAULTS,
   MemoryCreditStore,
   SupabaseCreditStore,
   MemoryCampaignStore,
@@ -42,6 +43,7 @@ import {
 import {
   createGatewayApp,
   resolveAuth,
+  checkBearer,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
   type GatewayConfig,
@@ -219,9 +221,21 @@ const tenderCreditStore =
         table: process.env.SUPABASE_TENDER_CREDITS_TABLE,
       })
     : new MemoryCreditStore()
+// Advertiser funding rail config (treasury, network). Declared before the
+// GatewayTender so the provider's cut can default to a `provider:<treasury>`
+// account when a treasury is set. Unset → no rail (see below).
+const depositConfig = tenderDepositConfig(process.env)
+
 const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
   creditStore: tenderCreditStore,
+  // The platform's cut of each impression. Accrues to `providerAccount` in the
+  // same durable ledger as user kickbacks; defaults to the configured treasury so
+  // a deploy with a funding rail tracks the provider take with no extra config.
+  providerShare: Number(process.env.TENDER_PROVIDER_SHARE ?? TENDER_DEFAULTS.PROVIDER_SHARE),
+  providerAccount:
+    process.env.TENDER_PROVIDER_ACCOUNT?.trim() ||
+    (depositConfig ? `provider:${depositConfig.treasury}` : undefined),
   // Inventory is loaded from the campaign store (below) — the single source of
   // truth — rather than hardcoded, so /advertise reflects exactly what serves.
 })
@@ -234,11 +248,10 @@ const SEED_CAMPAIGNS = [
   { campaignId: 'gw-embed', placementId: 'gw-embed', advertiserWallet: 'TenderHouseEmbed', endpointUrl: 'https://api.shipyard.market/x402/nomic-embed', line: '⚡  Add semantic search — Nomic embeddings over x402', usdcPerImpression: 0.002, remainingImpressions: 100_000, fundedUsdc: 200, targeting: {}, status: 'active' as const },
 ]
 
-// Advertiser funding rail: when a treasury is configured, self-serve campaigns
-// are born `pending` and must be paid (USDC on Solana, verified on-chain) before
-// they enter the auction. Unset → no rail, campaigns go live on creation (local
-// dev / demo without a treasury).
-const depositConfig = tenderDepositConfig(process.env)
+// Advertiser funding rail: when a treasury is configured (see `depositConfig`
+// above), self-serve campaigns are born `pending` and must be paid (USDC on
+// Solana, verified on-chain) before they enter the auction. Unset → no rail,
+// campaigns go live on creation (local dev / demo without a treasury).
 
 // Advertiser campaign store — the persistent source of truth for self-serve
 // campaigns created at /advertise. Persisted in Supabase (shipyard_campaigns)
@@ -782,6 +795,17 @@ app.get('/api/me', async (c) => {
     kickbacksUsd: r6(await gatewayTender.balance(auth.account.userId)),
     sponsoredLine: (await gatewayTender.currentLine(auth.account.userId)) ?? null,
   })
+})
+
+// Platform-provider earnings — the cut Tender takes from each impression, accrued
+// in the same durable ledger as user kickbacks. Operator-only (it's the provider's
+// own revenue, not per-user), guarded by the operator token like the console.
+app.get('/api/provider', async (c) => {
+  if (!checkBearer(OPERATOR_TOKENS, c.req.header('authorization'))) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  return c.json({ providerCutUsd: r6(await gatewayTender.providerBalance()) })
 })
 
 app.route('/', operator)

@@ -24,6 +24,8 @@ export const TENDER_DEFAULTS = {
   CLICK_MULTIPLIER: 50,
   /** Fraction of the impression price that accrues to the request's wallet. */
   REQUESTER_SHARE: 0.5,
+  /** Fraction of the impression price that accrues to the platform provider. */
+  PROVIDER_SHARE: 0.5,
   /** Batch sweep cadence, not per-impression on-chain. */
   SETTLEMENT: 'paybox-mpp-session',
   CHAIN: 'solana',
@@ -34,6 +36,27 @@ export const TENDER_DEFAULTS = {
 export const impressionFloorUsdc = (
   cfg: { MIN_BID_USDC: number; IMPRESSIONS_PER_BLOCK: number } = TENDER_DEFAULTS,
 ): number => cfg.MIN_BID_USDC / cfg.IMPRESSIONS_PER_BLOCK
+
+/**
+ * Split an impression's gross price (paid by the advertiser) into the requester's
+ * kickback and the platform provider's cut. The advertiser has already funded the
+ * whole `gross` into campaign escrow; this just decides who the impression revenue
+ * is attributed to. The two shares must not exceed 1.0 (a sum < 1.0 leaves a
+ * deliberate margin — e.g. a discount buffer). Shared by every settlement path so
+ * the live gateway and the lower-level primitives compute identically.
+ */
+export const splitImpression = (
+  gross: number,
+  requesterShare: number = TENDER_DEFAULTS.REQUESTER_SHARE,
+  providerShare: number = TENDER_DEFAULTS.PROVIDER_SHARE,
+): { requesterUsdc: number; providerUsdc: number } => {
+  if (requesterShare + providerShare > 1 + 1e-9) {
+    throw new Error(
+      `tender: requesterShare + providerShare must be <= 1 (got ${requesterShare} + ${providerShare})`,
+    )
+  }
+  return { requesterUsdc: gross * requesterShare, providerUsdc: gross * providerShare }
+}
 
 /** Coarse model tier used for cheap relevance matching (no PII). */
 export type ModelClass = 'frontier' | 'mid' | 'small'
@@ -167,6 +190,8 @@ export interface SettlementResult {
   grossUsdc: number
   /** Share accrued to the requester's wallet, in USDC. */
   requesterShareUsdc: number
+  /** Share accrued to the platform provider's account, in USDC. */
+  providerShareUsdc: number
   userWallet: string
   /** Whether the amounts were accrued (await sweep) vs swept on-chain now. */
   status: 'accrued' | 'swept' | 'rejected'

@@ -1,5 +1,5 @@
 import { assertValidAttestation } from './attestation.js'
-import { TENDER_DEFAULTS } from './types.js'
+import { TENDER_DEFAULTS, splitImpression } from './types.js'
 import type { SettlementResult, UsageAttestation } from './types.js'
 import type { CreditLedger } from './ledger.js'
 
@@ -12,6 +12,13 @@ export interface AccrueOptions {
   pricePerImpressionUsdc: number
   /** Fraction of the price that accrues to the requester (default 0.50). */
   requesterShare?: number
+  /** Fraction of the price that accrues to the provider (default 0.50). */
+  providerShare?: number
+  /**
+   * Account the platform provider's cut accrues to (e.g. `provider:<treasury>`).
+   * Omit to skip provider accrual entirely (back-compat: requester-only).
+   */
+  providerAccount?: string
   minWaitMs?: number
   /** Auction-log cross-check for the gate. */
   wasServed?: (requestId: string, placementId: string) => boolean
@@ -27,7 +34,7 @@ export interface AccrueOptions {
  */
 export function accrueSettlement(att: UsageAttestation, opts: AccrueOptions): SettlementResult {
   const gross = opts.pricePerImpressionUsdc
-  const base: Omit<SettlementResult, 'status' | 'requesterShareUsdc'> = {
+  const base: Omit<SettlementResult, 'status' | 'requesterShareUsdc' | 'providerShareUsdc'> = {
     placementId: att.placementId,
     requestId: att.requestId,
     grossUsdc: gross,
@@ -40,17 +47,19 @@ export function accrueSettlement(att: UsageAttestation, opts: AccrueOptions): Se
     wasServed: opts.wasServed,
   })
   if (!gate.ok) {
-    return { ...base, requesterShareUsdc: 0, status: 'rejected', reason: gate.reason }
+    return { ...base, requesterShareUsdc: 0, providerShareUsdc: 0, status: 'rejected', reason: gate.reason }
   }
 
-  const share = gross * (opts.requesterShare ?? TENDER_DEFAULTS.REQUESTER_SHARE)
-  opts.ledger.creditInference(
-    att.userWallet,
-    share,
-    { requestId: att.requestId, placementId: att.placementId },
-    opts.at,
-  )
-  return { ...base, requesterShareUsdc: share, status: 'accrued' }
+  const { requesterUsdc, providerUsdc } = splitImpression(gross, opts.requesterShare, opts.providerShare)
+  const ref = { requestId: att.requestId, placementId: att.placementId }
+  opts.ledger.creditInference(att.userWallet, requesterUsdc, ref, opts.at)
+  // The provider's cut is just another account in the same ledger — accrued only
+  // when a provider account is configured (otherwise this stays requester-only).
+  const accruedProvider = opts.providerAccount && providerUsdc > 0 ? providerUsdc : 0
+  if (accruedProvider > 0) {
+    opts.ledger.creditInference(opts.providerAccount!, accruedProvider, ref, opts.at)
+  }
+  return { ...base, requesterShareUsdc: requesterUsdc, providerShareUsdc: accruedProvider, status: 'accrued' }
 }
 
 export interface ClickOptions {
@@ -64,25 +73,32 @@ export interface ClickOptions {
   /** Click bills at this × the impression rate (default 50). */
   clickMultiplier?: number
   requesterShare?: number
+  /** Fraction of the click gross that accrues to the provider (default 0.50). */
+  providerShare?: number
+  /** Account the provider's cut accrues to. Omit to skip provider accrual. */
+  providerAccount?: string
   at: number
 }
 
 /**
  * Accrue a CLICK. In an agent context a "click" is the agent actually calling the
  * sponsored x402 endpoint — the ad and the transaction are the same call. It
- * bills at `CLICK_MULTIPLIER` × the impression rate; `REQUESTER_SHARE` of that
- * accrues to the request's wallet, same as an impression. Returns the credit.
+ * bills at `CLICK_MULTIPLIER` × the impression rate, split the same way as an
+ * impression: `REQUESTER_SHARE` to the request's wallet and `PROVIDER_SHARE` to
+ * the provider account (when configured). Returns both credited amounts.
  */
-export function accrueClick(opts: ClickOptions): { creditedUsd: number; grossUsdc: number } {
+export function accrueClick(
+  opts: ClickOptions,
+): { creditedUsd: number; providerUsd: number; grossUsdc: number } {
   const grossUsdc = opts.pricePerImpressionUsdc * (opts.clickMultiplier ?? TENDER_DEFAULTS.CLICK_MULTIPLIER)
-  const creditedUsd = grossUsdc * (opts.requesterShare ?? TENDER_DEFAULTS.REQUESTER_SHARE)
-  opts.ledger.creditInference(
-    opts.wallet,
-    creditedUsd,
-    { requestId: opts.requestId, placementId: opts.placementId },
-    opts.at,
-  )
-  return { creditedUsd, grossUsdc }
+  const { requesterUsdc, providerUsdc } = splitImpression(grossUsdc, opts.requesterShare, opts.providerShare)
+  const ref = { requestId: opts.requestId, placementId: opts.placementId }
+  opts.ledger.creditInference(opts.wallet, requesterUsdc, ref, opts.at)
+  const accruedProvider = opts.providerAccount && providerUsdc > 0 ? providerUsdc : 0
+  if (accruedProvider > 0) {
+    opts.ledger.creditInference(opts.providerAccount!, accruedProvider, ref, opts.at)
+  }
+  return { creditedUsd: requesterUsdc, providerUsd: accruedProvider, grossUsdc }
 }
 
 /** USDC has 6 decimals — convert a dollar amount to atomic units (string). */
