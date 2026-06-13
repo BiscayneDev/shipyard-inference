@@ -25,6 +25,23 @@ export interface CampaignInput {
   paymentReference?: string
 }
 
+/** Normalize a destination URL: lowercase the scheme, default to https://, http(s) only. */
+function normalizeEndpointUrl(raw: string): string {
+  let u = (raw ?? '').trim()
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, (m) => m.toLowerCase())
+  else u = 'https://' + u
+  let parsed: URL
+  try {
+    parsed = new URL(u)
+  } catch {
+    throw new Error('campaign: `endpointUrl` is not a valid URL')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('campaign: `endpointUrl` must be http(s)')
+  }
+  return parsed.toString()
+}
+
 /** Validate advertiser input and mint a Campaign (ids + impressions derived). */
 export function buildCampaign(input: CampaignInput, at: number): Campaign {
   const line = (input.line ?? '').trim()
@@ -44,7 +61,7 @@ export function buildCampaign(input: CampaignInput, at: number): Campaign {
     campaignId: `cmp_${id}`,
     placementId: `plc_${id}`,
     line,
-    endpointUrl: input.endpointUrl.trim(),
+    endpointUrl: normalizeEndpointUrl(input.endpointUrl),
     advertiserWallet: input.advertiserWallet.trim(),
     usdcPerImpression: input.usdcPerImpression,
     remainingImpressions,
