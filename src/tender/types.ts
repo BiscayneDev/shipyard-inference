@@ -124,8 +124,10 @@ export interface Campaign extends Bid {
   status?: 'pending' | 'active'
   /** Solana Pay reference pubkey the funding deposit must carry (self-serve). */
   paymentReference?: string
-  /** Confirmed on-chain deposit signature, once the campaign is funded. */
+  /** Confirmed on-chain deposit signature/tx hash, once the campaign is funded. */
   paidSignature?: string
+  /** Funding chain for the advertiser's deposit. Defaults to `solana`. */
+  chain?: 'solana' | 'base'
   /** Creation time (unix ms). */
   createdAt?: number
 }

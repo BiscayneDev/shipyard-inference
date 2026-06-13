@@ -31,6 +31,12 @@ export {
 } from './deposit.js'
 export type { DepositConfig, DepositIntent, DepositStatus } from './deposit.js'
 export {
+  baseDepositConfig,
+  buildBaseDepositIntent,
+  verifyBaseDeposit,
+} from './deposit-base.js'
+export type { BaseDepositConfig, BaseDepositIntent } from './deposit-base.js'
+export {
   loadAttestationKey,
   generateAttestationSeedHex,
   attestationDigest,

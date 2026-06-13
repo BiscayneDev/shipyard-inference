@@ -23,6 +23,8 @@ export interface CampaignInput {
   status?: 'pending' | 'active'
   /** Solana Pay reference pubkey the funding deposit must carry (self-serve). */
   paymentReference?: string
+  /** Funding chain for the advertiser's deposit. Defaults to `solana`. */
+  chain?: 'solana' | 'base'
 }
 
 /** Validate advertiser input and mint a Campaign (ids + impressions derived). */
@@ -52,6 +54,7 @@ export function buildCampaign(input: CampaignInput, at: number): Campaign {
     targeting: input.targeting ?? {},
     status: input.status ?? 'active',
     paymentReference: input.paymentReference,
+    chain: input.chain ?? 'solana',
     createdAt: at,
   }
 }
@@ -108,6 +111,7 @@ interface CampaignRow {
   status?: 'pending' | 'active' | null
   payment_reference?: string | null
   paid_signature?: string | null
+  chain?: 'solana' | 'base' | null
   created_at?: number | null
 }
 
@@ -145,6 +149,7 @@ export class SupabaseCampaignStore implements CampaignStore {
       status: c.status ?? 'active',
       payment_reference: c.paymentReference ?? null,
       paid_signature: c.paidSignature ?? null,
+      chain: c.chain ?? 'solana',
       created_at: c.createdAt ?? null,
     }
   }
@@ -163,6 +168,7 @@ export class SupabaseCampaignStore implements CampaignStore {
       status: r.status ?? 'active',
       paymentReference: r.payment_reference ?? undefined,
       paidSignature: r.paid_signature ?? undefined,
+      chain: r.chain ?? 'solana',
       createdAt: r.created_at ?? undefined,
     }
   }
@@ -200,6 +206,7 @@ export class SupabaseCampaignStore implements CampaignStore {
       status: 'status',
       paymentReference: 'payment_reference',
       paidSignature: 'paid_signature',
+      chain: 'chain',
       createdAt: 'created_at',
     }
     const row: Record<string, unknown> = {}
@@ -234,11 +241,13 @@ create table if not exists shipyard_campaigns (
   status                text   not null default 'active',
   payment_reference     text,
   paid_signature        text,
+  chain                 text   not null default 'solana',
   created_at            bigint
 );
 -- Self-serve payment columns (idempotent for tables predating them):
 alter table shipyard_campaigns add column if not exists status            text not null default 'active';
 alter table shipyard_campaigns add column if not exists payment_reference text;
 alter table shipyard_campaigns add column if not exists paid_signature    text;
+alter table shipyard_campaigns add column if not exists chain             text not null default 'solana';
 alter table shipyard_campaigns add column if not exists created_at        bigint;
 `

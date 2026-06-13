@@ -670,6 +670,13 @@ test('buildCampaign: defaults to active (back-compat) when no status given', () 
   assert.equal(isCampaignActive(c), true)
 })
 
+test('buildCampaign: chain defaults to solana; base is preserved', () => {
+  const sol = buildCampaign({ line: 'hi', endpointUrl: 'https://x', advertiserWallet: 'Ad', usdcPerImpression: 0.005, fundedUsdc: 5 }, 1)
+  assert.equal(sol.chain, 'solana')
+  const base = buildCampaign({ line: 'hi', endpointUrl: 'https://x', advertiserWallet: '0xabc', usdcPerImpression: 0.005, fundedUsdc: 5, chain: 'base' }, 1)
+  assert.equal(base.chain, 'base')
+})
+
 test('tenderDepositConfig: reads treasury + network from env, undefined without treasury', () => {
   assert.equal(tenderDepositConfig({}), undefined)
   const cfg = tenderDepositConfig({ TENDER_TREASURY_WALLET: 'Trez111', SHIPYARD_SETTLE_NETWORK: 'mainnet' })

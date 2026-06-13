@@ -38,6 +38,9 @@ import {
   newPaymentReference,
   buildDepositIntent,
   verifyDeposit,
+  baseDepositConfig,
+  buildBaseDepositIntent,
+  verifyBaseDeposit,
   sweepAll,
   totalPaid,
   usdcToAtomic,
@@ -250,6 +253,10 @@ const tenderPayoutLog: PayoutLog =
 // GatewayTender so the provider's cut can default to a `provider:<treasury>`
 // account when a treasury is set. Unset → no rail (see below).
 const depositConfig = tenderDepositConfig(process.env)
+// Base (EVM) funding rail, independent of the Solana one. A campaign's chain is
+// inferred from the advertiser's wallet (0x → Base) so either can be funded.
+const baseDeposit = baseDepositConfig(process.env)
+const paymentsEnabled = Boolean(depositConfig) || Boolean(baseDeposit)
 
 // The account the platform's cut accrues to (same durable ledger as user
 // kickbacks). Defaults to the configured treasury so a deploy with a funding rail
@@ -567,7 +574,7 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
     <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
     <div><label for="blocks">Blocks (× 1,000 impressions)</label><input id="blocks" value="1"/></div>
   </div>
-  <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address"/>
+  <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address, or 0x… to fund on Base"/>
   <button id="go">Create campaign</button>
   <div class="note" id="est"></div>
   <div class="note" id="msg"></div>
@@ -649,7 +656,20 @@ async function renderWallets(pay){
   else if(window.solana||(window.phantom&&window.phantom.solana)){var b=payButton('Pay with browser wallet',null);b.addEventListener('click',run(function(){return payWithLegacy(pay);},b));box.appendChild(b);}
   else{box.innerHTML='<span class="muted">No browser wallet detected — scan the QR or send manually.</span>';}
 }
-function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toFixed(2);var h=''
+function showBasePayment(campaign,pay,amt){var h=''
+  +'<div class="note">Send <strong>'+amt+' USDC</strong> on <strong>Base '+pay.network+'</strong> to the treasury below (Coinbase Wallet, MetaMask…), then paste your transaction hash to go live. Campaign <span class="mono">'+esc(campaign.campaignId)+'</span>.</div>'
+  +'<div class="paygrid"><div><a class="btn" id="open" href="'+pay.url+'">Open in wallet (mobile)</a><canvas id="qrc" class="qr" width="200" height="200"></canvas></div>'
+  +'<div class="fields"><label>Treasury · USDC Base '+pay.network+'</label><div class="addr">'+esc(pay.treasury)+'</div>'
+  +'<label>USDC contract</label><div class="addr">'+esc(pay.usdcAddress)+'</div>'
+  +'<label>Amount</label><div class="addr">'+amt+' USDC</div>'
+  +'<label>Transaction hash</label><input id="txhash" placeholder="0x…" style="width:100%"/>'
+  +'<button id="vbtn" style="margin-top:8px">Paid — verify</button></div></div>'
+  +'<div class="note" id="paystatus">Send the USDC, then paste the tx hash and verify.</div>';
+  $('#paybody').innerHTML=h;$('#pay').style.display='block';
+  try{if(typeof QRCode!=='undefined'){QRCode.toCanvas(document.getElementById('qrc'),pay.url,{width:200,margin:1});}}catch(e){}
+  $('#vbtn').addEventListener('click',async function(){var tx=$('#txhash').value.trim();if(!tx){$('#paystatus').textContent='Paste your transaction hash first.';return;}$('#vbtn').disabled=true;$('#paystatus').textContent='⏳ Verifying on Base…';try{var r=await fetch('/api/campaigns/'+campaign.campaignId+'/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({txHash:tx})});var d=await r.json();if(d.status==='active'){$('#paystatus').innerHTML='<span class="green">✓ Confirmed — campaign is live · tx '+String(d.signature||tx).slice(0,10)+'…</span>';refresh();}else if(d.status==='pending'){$('#paystatus').innerHTML='<span style="color:#f6a36b">Not confirmed yet — wait for the tx to mine, then retry.</span>';$('#vbtn').disabled=false;}else{$('#paystatus').innerHTML='<span style="color:#f6a36b">✗ '+esc(d.error||'failed')+'</span>';$('#vbtn').disabled=false;}}catch(e){$('#paystatus').textContent='✗ '+e.message;$('#vbtn').disabled=false;}});
+  $('#pay').scrollIntoView({behavior:'smooth'});}
+function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toFixed(2);if(pay.chain==='base'){return showBasePayment(campaign,pay,amt);}var h=''
   +'<div class="note">Pay <strong>'+amt+' USDC</strong> on <strong>'+pay.network+'</strong> with your wallet below, or scan the QR / send manually. Campaign <span class="mono">'+esc(campaign.campaignId)+'</span> goes live the moment the transfer confirms.</div>'
   +'<div id="wallets" class="note"></div>'
   +'<div class="paygrid"><div><a class="btn" id="open" href="'+pay.url+'">Open in wallet (mobile)</a><canvas id="qrc" class="qr" width="200" height="200"></canvas></div>'
@@ -697,7 +717,7 @@ app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
 app.get('/api/campaigns', async (c) => {
   await ensureCampaigns()
   const rows = await campaignStore.list().catch(() => [])
-  return c.json({ campaigns: rows.filter(isCampaignActive), paymentsEnabled: Boolean(depositConfig) })
+  return c.json({ campaigns: rows.filter(isCampaignActive), paymentsEnabled })
 })
 app.post('/api/campaigns', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
@@ -711,21 +731,34 @@ app.post('/api/campaigns', async (c) => {
     usdcPerImpression = bidPerBlock / IMPRESSIONS_PER_BLOCK
     fundedUsdc = bidPerBlock * blocks
   }
+  const advertiserWallet =
+    (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
+    `TenderSelfServe${randomBytes(12).toString('hex')}`
+  // Chain: explicit `chain` in the body wins; otherwise infer from the wallet
+  // (0x → Base, else Solana). The funding rail for that chain must be configured.
+  const chain: 'solana' | 'base' =
+    body.chain === 'base' || body.chain === 'solana'
+      ? body.chain
+      : isEvmAddress(advertiserWallet)
+        ? 'base'
+        : 'solana'
+  const rail = chain === 'base' ? baseDeposit : depositConfig
+
   let campaign
   try {
     campaign = buildCampaign(
       {
         line: typeof body.line === 'string' ? body.line : '',
         endpointUrl: typeof body.endpointUrl === 'string' ? body.endpointUrl : '',
-        advertiserWallet:
-          (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
-          `TenderSelfServe${randomBytes(12).toString('hex')}`,
+        advertiserWallet,
         usdcPerImpression,
         fundedUsdc,
         targeting: body.targeting && typeof body.targeting === 'object' ? (body.targeting as Record<string, unknown>) : {},
-        // With a treasury configured the campaign must be paid before it serves.
-        status: depositConfig ? 'pending' : 'active',
-        paymentReference: depositConfig ? newPaymentReference() : undefined,
+        chain,
+        // With a funding rail configured for this chain, the campaign must be paid
+        // before it serves; the Solana rail also carries a per-campaign reference.
+        status: rail ? 'pending' : 'active',
+        paymentReference: rail && chain === 'solana' ? newPaymentReference() : undefined,
       },
       Date.now(),
     )
@@ -734,6 +767,11 @@ app.post('/api/campaigns', async (c) => {
   }
   await campaignStore.create(campaign).catch(() => {})
 
+  if (chain === 'base' && baseDeposit) {
+    // EIP-681 intent; the campaign goes live once /verify confirms the tx hash.
+    const payment = buildBaseDepositIntent(baseDeposit, { amountUsdc: campaign.fundedUsdc })
+    return c.json({ campaign, payment: { ...payment, chain: 'base' } })
+  }
   if (depositConfig && campaign.paymentReference) {
     // Hand back the Solana Pay deposit intent; the campaign goes live only once
     // /verify confirms the USDC landed. Do NOT add it to the auction yet.
@@ -743,9 +781,9 @@ app.post('/api/campaigns', async (c) => {
       label: 'Shipyard Tender',
       message: `Fund campaign ${campaign.campaignId}`,
     })
-    return c.json({ campaign, payment })
+    return c.json({ campaign, payment: { ...payment, chain: 'solana' } })
   }
-  gatewayTender.addCampaign(campaign) // no treasury → serve immediately
+  gatewayTender.addCampaign(campaign) // no rail for this chain → serve immediately
   return c.json({ campaign })
 })
 
@@ -753,16 +791,28 @@ app.post('/api/campaigns', async (c) => {
 // treasury (tagged with the campaign's reference) is confirmed, flip the
 // campaign to `active` and add it to the live auction. Idempotent.
 app.post('/api/campaigns/:id/verify', async (c) => {
-  if (!depositConfig) return c.json({ error: 'payments not configured' }, 400)
+  if (!paymentsEnabled) return c.json({ error: 'payments not configured' }, 400)
   const id = c.req.param('id')
   const campaign = await campaignStore.get(id).catch(() => undefined)
   if (!campaign) return c.json({ error: 'campaign not found' }, 404)
   if (isCampaignActive(campaign)) return c.json({ status: 'active', campaign })
-  if (!campaign.paymentReference) return c.json({ error: 'campaign has no payment reference' }, 400)
 
+  // Dispatch verification by the campaign's funding chain. Base correlates the
+  // deposit by tx hash (no Solana-Pay-style reference on EVM), so the advertiser
+  // submits it in the request body.
   let result
   try {
-    result = await verifyDeposit(depositConfig, campaign.paymentReference, campaign.fundedUsdc)
+    if (campaign.chain === 'base') {
+      if (!baseDeposit) return c.json({ error: 'Base payments not configured' }, 400)
+      const body = (await c.req.json().catch(() => ({}))) as { txHash?: unknown }
+      const txHash = typeof body.txHash === 'string' ? body.txHash.trim() : ''
+      if (!txHash) return c.json({ error: 'a Base deposit requires a txHash' }, 400)
+      result = await verifyBaseDeposit(baseDeposit, { txHash, amountUsdc: campaign.fundedUsdc })
+    } else {
+      if (!depositConfig) return c.json({ error: 'Solana payments not configured' }, 400)
+      if (!campaign.paymentReference) return c.json({ error: 'campaign has no payment reference' }, 400)
+      result = await verifyDeposit(depositConfig, campaign.paymentReference, campaign.fundedUsdc)
+    }
   } catch (err) {
     return c.json({ status: 'pending', error: err instanceof Error ? err.message : String(err) }, 502)
   }
