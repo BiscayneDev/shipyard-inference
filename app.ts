@@ -44,6 +44,8 @@ import {
   payboxSettle,
   payboxSigner,
   keypairSigner,
+  baseSettle,
+  isEvmAddress,
   reconcile,
   MemoryPayoutLog,
   SupabasePayoutLog,
@@ -861,29 +863,47 @@ app.get('/cron/sweep', async (c) => {
   const resolveDestination = (account: string): string | undefined =>
     account === providerAccount ? PROVIDER_PAYOUT_WALLET : wallets.get(account)
 
-  // The on-chain rail: the treasury wallet → destination. Prefer the Paybox-
-  // custodied treasury (PAYBOX_TREASURY_CREDENTIAL_ID — key never leaves Paybox,
-  // signs behind a scoped grant); fall back to a raw devnet hot-wallet secret
-  // (SOLANA_PAYER_SECRET). Built only when enabled — otherwise report-only.
+  // The on-chain rail dispatches by recipient address — base58 → Solana, 0x →
+  // Base — so each wallet is paid on its native chain. Built only when enabled.
+  //   Solana leg: Paybox-custodied treasury (PAYBOX_TREASURY_CREDENTIAL_ID — key
+  //     never leaves Paybox), falling back to a raw hot wallet (SOLANA_PAYER_SECRET).
+  //   Base leg: a viem hot wallet (EVM_PAYER_SECRET). Network mirrors the Solana
+  //     setting (mainnet → Base mainnet, otherwise Base Sepolia testnet).
   let rail: PayoutRail | undefined
   if (SWEEP_ENABLED) {
     const credentialId = process.env.PAYBOX_TREASURY_CREDENTIAL_ID?.trim()
-    const signer = credentialId
+    const solSigner = credentialId
       ? await payboxSigner({ credentialId, network: SWEEP_NETWORK })
       : process.env.SOLANA_PAYER_SECRET
         ? await keypairSigner(process.env.SOLANA_PAYER_SECRET)
         : undefined
-    if (signer) {
+    const evmKey = process.env.EVM_PAYER_SECRET?.trim()
+    const baseNetwork = SWEEP_NETWORK === 'mainnet' ? 'mainnet' : 'sepolia'
+    if (solSigner || evmKey) {
       rail = {
-        transfer: async ({ destination, amountUsd }) =>
-          payboxSettle({
-            signer,
+        transfer: async ({ destination, amountUsd }) => {
+          const amount = usdcToAtomic(amountUsd)
+          if (isEvmAddress(destination)) {
+            if (!evmKey) throw new Error('Base payout not configured (set EVM_PAYER_SECRET)')
+            return baseSettle({
+              to: destination,
+              amount,
+              network: baseNetwork,
+              privateKey: evmKey,
+              rpcUrl: process.env.BASE_RPC_URL,
+              usdcAddress: process.env.BASE_USDC_ADDRESS,
+            })
+          }
+          if (!solSigner) throw new Error('Solana payout not configured')
+          return payboxSettle({
+            signer: solSigner,
             treasury: destination, // payboxSettle sends signer's wallet → this address
-            amount: usdcToAtomic(amountUsd),
+            amount,
             network: SWEEP_NETWORK,
             rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
             usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
-          }),
+          })
+        },
       }
     }
   }
