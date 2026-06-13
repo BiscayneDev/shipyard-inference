@@ -44,8 +44,11 @@ import {
   payboxSettle,
   payboxSigner,
   keypairSigner,
+  MemoryPayoutLog,
+  SupabasePayoutLog,
   type CampaignStore,
   type PayoutRail,
+  type PayoutLog,
 } from './dist/index.js'
 import {
   createGatewayApp,
@@ -228,6 +231,18 @@ const tenderCreditStore =
         table: process.env.SUPABASE_TENDER_CREDITS_TABLE,
       })
     : new MemoryCreditStore()
+
+// Durable, append-only log of sent payouts — the reconciliation anchor for the
+// reserve-then-pay sweep (a swept-but-unlogged credit is a reconcilable under-pay).
+const tenderPayoutLog: PayoutLog =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabasePayoutLog({
+        url: process.env.SUPABASE_URL,
+        key: process.env.SUPABASE_SERVICE_KEY,
+        table: process.env.SUPABASE_TENDER_PAYOUTS_TABLE,
+      })
+    : new MemoryPayoutLog()
+
 // Advertiser funding rail config (treasury, network). Declared before the
 // GatewayTender so the provider's cut can default to a `provider:<treasury>`
 // account when a treasury is set. Unset → no rail (see below).
@@ -873,7 +888,7 @@ app.get('/cron/sweep', async (c) => {
   }
 
   try {
-    const results = await sweepAll(tenderCreditStore, { rail, resolveDestination, minPayoutUsdc: MIN_PAYOUT_USDC })
+    const results = await sweepAll(tenderCreditStore, { rail, resolveDestination, payoutLog: tenderPayoutLog, minPayoutUsdc: MIN_PAYOUT_USDC })
     const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
     return c.json({
       mode: rail ? `live:${SWEEP_NETWORK}` : 'report-only',

@@ -25,6 +25,8 @@ import {
   SupabaseCreditStore,
   sweepAll,
   totalPaid,
+  MemoryPayoutLog,
+  SupabasePayoutLog,
   isCampaignActive,
   tenderDepositConfig,
   newPaymentReference,
@@ -461,6 +463,106 @@ test('sweepAll: live rail pays + marks swept, and skips dust / walletless accoun
   assert.ok(near(await s.balance('u1'), 0), 'paid account is marked swept')
   assert.ok(near(await s.balance('u3'), 0.05), 'unpaid account is left untouched')
   assert.ok(near(totalPaid(res), 0.02))
+})
+
+test('MemoryCreditStore: claimUnswept reserves ids; release rolls the reservation back', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.01, placementId: 'p', line: 'a', requestId: 'r1', at: 1 })
+  await s.accrue({ account: 'u1', amountUsd: 0.02, placementId: 'p', line: 'a', requestId: 'r2', at: 2 })
+  const claim = await s.claimUnswept('u1')
+  assert.equal(claim.ids.length, 2)
+  assert.ok(near(claim.amountUsd, 0.03))
+  assert.ok(near(await s.balance('u1'), 0), 'claimed credits leave the payable balance')
+  await s.release(claim.ids)
+  assert.ok(near(await s.balance('u1'), 0.03), 'release restores them for retry')
+})
+
+test('sweepAll: a failed transfer rolls back the reservation (no double-pay; retryable)', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.02, placementId: 'p', line: 'a', requestId: 'r', at: 1 })
+  const failing = { transfer: async () => { throw new Error('rpc down') } }
+  const res = await sweepAll(s, { rail: failing, resolveDestination: () => 'W', now: () => 100 })
+  assert.equal(res[0].status, 'failed')
+  assert.match(res[0].reason ?? '', /rpc down/)
+  assert.ok(near(await s.balance('u1'), 0.02), 'reservation rolled back — balance intact for retry')
+
+  // Retry with a working rail settles it exactly once.
+  const ok = await sweepAll(s, { rail: { transfer: async () => ({ signature: 'SIG' }) }, resolveDestination: () => 'W', now: () => 200 })
+  assert.equal(ok[0].status, 'paid')
+  assert.ok(near(await s.balance('u1'), 0))
+})
+
+test('sweepAll: records a successful payout to the log with the settled credit ids', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.02, placementId: 'p', line: 'a', requestId: 'r', at: 1 })
+  const log = new MemoryPayoutLog()
+  const res = await sweepAll(s, {
+    rail: { transfer: async () => ({ signature: 'SIG1' }) },
+    resolveDestination: () => 'W1', payoutLog: log, now: () => 100,
+  })
+  assert.equal(res[0].status, 'paid')
+  const entries = await log.list()
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].signature, 'SIG1')
+  assert.equal(entries[0].destination, 'W1')
+  assert.ok(near(entries[0].amountUsd, 0.02))
+  assert.equal(entries[0].creditIds.length, 1)
+})
+
+test('SupabaseCreditStore: claimUnswept returns ids; release un-sweeps exactly those', async () => {
+  let seq = 0
+  const rows: Array<{ id: number; account: string; amount_usd: number; at: number; swept: boolean }> = []
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    const u = String(url)
+    if (init?.method === 'POST') {
+      for (const r of JSON.parse(String(init.body))) rows.push({ id: ++seq, ...r, swept: false })
+      return new Response(null, { status: 201 })
+    }
+    if (init?.method === 'PATCH') {
+      const body = JSON.parse(String(init.body))
+      if (body.swept === false) {
+        const ids = new Set((u.match(/id=in\.\(([^)]+)\)/)?.[1] ?? '').split(',').map(Number))
+        for (const r of rows) if (ids.has(r.id)) r.swept = false
+        return new Response(null, { status: 200 })
+      }
+      const acct = decodeURIComponent(u.match(/account=eq\.([^&]+)/)?.[1] ?? '')
+      const before = u.match(/at=lte\.(\d+)/)?.[1]
+      const hit = rows.filter((r) => r.account === acct && !r.swept && (before == null || r.at <= Number(before)))
+      for (const r of hit) r.swept = true
+      return new Response(JSON.stringify(hit.map((r) => ({ id: r.id, amount_usd: r.amount_usd }))), { status: 200 })
+    }
+    const acct = decodeURIComponent(u.match(/account=eq\.([^&]+)/)?.[1] ?? '')
+    const unswept = rows.filter((r) => !r.swept && r.account === acct)
+    return new Response(JSON.stringify([{ sum: unswept.reduce((s, r) => s + r.amount_usd, 0) }]), { status: 200 })
+  }) as unknown as typeof fetch
+
+  const store = new SupabaseCreditStore({ url: 'https://x.supabase.co', key: 'svc', fetch: fetchImpl })
+  await store.accrue({ account: 'provider:T', amountUsd: 0.004, placementId: 'p', line: 'a', requestId: 'r1', at: 1 })
+  await store.accrue({ account: 'provider:T', amountUsd: 0.006, placementId: 'p', line: 'a', requestId: 'r2', at: 2 })
+  const claim = await store.claimUnswept('provider:T')
+  assert.equal(claim.ids.length, 2)
+  assert.ok(near(claim.amountUsd, 0.01))
+  assert.ok(near(await store.balance('provider:T'), 0), 'claimed rows leave the balance')
+  await store.release(claim.ids)
+  assert.ok(near(await store.balance('provider:T'), 0.01), 'release restores the balance')
+})
+
+test('SupabasePayoutLog: record inserts; list reads newest-first', async () => {
+  const rows: Array<{ account: string; destination: string; amount_usd: number; signature: string; credit_ids: number[]; at: number }> = []
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      for (const r of JSON.parse(String(init.body))) rows.push(r)
+      return new Response(null, { status: 201 })
+    }
+    return new Response(JSON.stringify([...rows].sort((a, b) => b.at - a.at)), { status: 200 })
+  }) as unknown as typeof fetch
+  const log = new SupabasePayoutLog({ url: 'https://x.supabase.co', key: 'svc', fetch: fetchImpl })
+  await log.record({ account: 'u1', destination: 'W1', amountUsd: 0.02, signature: 'SIG1', creditIds: [1, 2], at: 10 })
+  await log.record({ account: 'u2', destination: 'W2', amountUsd: 0.05, signature: 'SIG2', creditIds: [3], at: 20 })
+  const list = await log.list()
+  assert.equal(list.length, 2)
+  assert.equal(list[0].signature, 'SIG2') // newest first
+  assert.deepEqual(list[1].creditIds, [1, 2])
 })
 
 test('SupabaseCreditStore: markSwept settles rows; unsweptByAccount groups the work-list', async () => {

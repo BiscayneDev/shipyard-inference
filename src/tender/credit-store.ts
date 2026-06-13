@@ -33,13 +33,23 @@ export interface CreditStore {
    * balance. Returns the amount marked, in USDC — the caller pays this on-chain.
    */
   markSwept(account: string, before?: number): Promise<number>
+  /**
+   * Reserve-before-pay: atomically mark an account's unswept (≤`before`) credits
+   * swept and return their ids + summed USDC. The sweep claims credits BEFORE the
+   * on-chain transfer so a crash can never re-select and re-pay them. On a failed
+   * transfer the caller rolls the reservation back with {@link release}.
+   */
+  claimUnswept(account: string, before?: number): Promise<{ ids: Array<number | string>; amountUsd: number }>
+  /** Un-sweep specific credit ids — rolls back a reservation whose transfer failed. */
+  release(ids: Array<number | string>): Promise<void>
 }
 
 /** In-memory store — fine for a long-lived gateway; resets per process. */
 export class MemoryCreditStore implements CreditStore {
-  private readonly recs: Array<CreditRecord & { swept: boolean }> = []
+  private readonly recs: Array<CreditRecord & { swept: boolean; id: number }> = []
+  private seq = 0
   async accrue(rec: CreditRecord): Promise<void> {
-    this.recs.push({ ...rec, swept: false })
+    this.recs.push({ ...rec, swept: false, id: ++this.seq })
   }
   async balance(account: string): Promise<number> {
     return this.recs
@@ -59,15 +69,24 @@ export class MemoryCreditStore implements CreditStore {
     }
     return [...sums].filter(([, amt]) => amt > 0).map(([account, amountUsd]) => ({ account, amountUsd }))
   }
-  async markSwept(account: string, before?: number): Promise<number> {
-    let marked = 0
+  async claimUnswept(account: string, before?: number): Promise<{ ids: number[]; amountUsd: number }> {
+    const ids: number[] = []
+    let amountUsd = 0
     for (const r of this.recs) {
       if (r.account !== account || r.swept) continue
       if (before != null && r.at > before) continue
       r.swept = true
-      marked += r.amountUsd
+      ids.push(r.id)
+      amountUsd += r.amountUsd
     }
-    return marked
+    return { ids, amountUsd }
+  }
+  async release(ids: Array<number | string>): Promise<void> {
+    const set = new Set(ids.map(Number))
+    for (const r of this.recs) if (set.has(r.id)) r.swept = false
+  }
+  async markSwept(account: string, before?: number): Promise<number> {
+    return (await this.claimUnswept(account, before)).amountUsd
   }
 }
 
@@ -146,19 +165,37 @@ export class SupabaseCreditStore implements CreditStore {
       .filter((r) => r.amountUsd > 0)
   }
 
-  async markSwept(account: string, before?: number): Promise<number> {
+  async claimUnswept(account: string, before?: number): Promise<{ ids: number[]; amountUsd: number }> {
     const acct = encodeURIComponent(account)
     const cutoff = before != null ? `&at=lte.${before}` : ''
-    // PATCH the matching rows and ask for the affected rows back so we can sum
-    // exactly what was settled (this IS the amount the caller pays out).
-    const res = await this.fetchImpl(`${this.base}/${this.table}?account=eq.${acct}&swept=is.false${cutoff}`, {
+    // PATCH the matching rows and ask for the affected rows (id + amount) back, so
+    // the caller can pay exactly what was reserved and roll back by id on failure.
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?account=eq.${acct}&swept=is.false${cutoff}&select=id,amount_usd`,
+      {
+        method: 'PATCH',
+        headers: { ...this.headers, prefer: 'return=representation' },
+        body: JSON.stringify({ swept: true }),
+      },
+    )
+    if (!res.ok) throw new Error(`supabase credit claimUnswept failed: ${res.status} ${await res.text().catch(() => '')}`)
+    const rows = (await res.json()) as Array<{ id: number; amount_usd: number }>
+    return { ids: rows.map((r) => r.id), amountUsd: rows.reduce((s, r) => s + Number(r.amount_usd), 0) }
+  }
+
+  async release(ids: Array<number | string>): Promise<void> {
+    if (ids.length === 0) return
+    const list = ids.map((id) => encodeURIComponent(String(id))).join(',')
+    const res = await this.fetchImpl(`${this.base}/${this.table}?id=in.(${list})`, {
       method: 'PATCH',
-      headers: { ...this.headers, prefer: 'return=representation' },
-      body: JSON.stringify({ swept: true }),
+      headers: { ...this.headers, prefer: 'return=minimal' },
+      body: JSON.stringify({ swept: false }),
     })
-    if (!res.ok) throw new Error(`supabase credit markSwept failed: ${res.status} ${await res.text().catch(() => '')}`)
-    const rows = (await res.json()) as Array<{ amount_usd: number }>
-    return rows.reduce((s, r) => s + Number(r.amount_usd), 0)
+    if (!res.ok) throw new Error(`supabase credit release failed: ${res.status} ${await res.text().catch(() => '')}`)
+  }
+
+  async markSwept(account: string, before?: number): Promise<number> {
+    return (await this.claimUnswept(account, before)).amountUsd
   }
 
   async latestLine(account: string): Promise<string | undefined> {

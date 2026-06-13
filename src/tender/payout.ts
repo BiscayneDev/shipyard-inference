@@ -18,6 +18,7 @@
 // idempotency key; see TODO).
 
 import type { CreditStore } from './credit-store.js'
+import type { PayoutLog } from './payout-log.js'
 
 /** The on-chain transfer primitive — treasury → `destination`. Inject `payboxSettle`. */
 export interface PayoutRail {
@@ -29,14 +30,15 @@ export interface PayoutResult {
   /** Resolved payout wallet, or null when none could be resolved. */
   destination: string | null
   amountUsd: number
-  /** On-chain signature when paid; null when reported/skipped. */
+  /** On-chain signature when paid; null when reported/skipped/failed. */
   signature: string | null
   /**
    * `paid` — transferred on-chain and marked swept.
    * `reported` — would pay, but no rail wired (report-only); NOT marked.
    * `skipped` — below the minimum, or no destination wallet; NOT marked.
+   * `failed` — the transfer threw; the reservation was rolled back, retried next run.
    */
-  status: 'paid' | 'reported' | 'skipped'
+  status: 'paid' | 'reported' | 'skipped' | 'failed'
   reason?: string
 }
 
@@ -45,6 +47,8 @@ export interface SweepOptions {
   rail?: PayoutRail
   /** Resolve an account id to its payout wallet. Return undefined to skip the account. */
   resolveDestination: (account: string) => string | undefined | Promise<string | undefined>
+  /** Append-only audit/reconciliation log — a successful payout is recorded here. Optional. */
+  payoutLog?: PayoutLog
   /** Don't sweep dust — skip accounts below this unswept balance (USDC). Default 0. */
   minPayoutUsdc?: number
   /** Time source (ms). Injectable for tests. Defaults to `Date.now`. */
@@ -52,14 +56,20 @@ export interface SweepOptions {
 }
 
 /**
- * Sweep every account with an unswept balance: resolve its destination, transfer
- * the balance on-chain (or report it when no rail is wired), then mark it settled.
- * Returns one {@link PayoutResult} per account considered.
+ * Sweep every account with an unswept balance: resolve its destination, RESERVE
+ * its credits (mark swept up front so a crash can never re-select and re-pay
+ * them), transfer the reserved amount on-chain, then record the signature. If the
+ * transfer throws, the reservation is rolled back by credit id so it retries next
+ * run. With no rail wired the sweep is report-only (computes, reserves nothing,
+ * sends nothing). Returns one {@link PayoutResult} per account considered.
+ *
+ * Guarantee: no double-pay. A crash between reserve and record leaves credits
+ * swept-but-unlogged (an under-pay), which the payout log surfaces for reconcile.
  */
 export async function sweepAll(store: CreditStore, opts: SweepOptions): Promise<PayoutResult[]> {
   const now = opts.now ?? Date.now
   const min = opts.minPayoutUsdc ?? 0
-  // One cutoff for the whole sweep — see the idempotency note above.
+  // One cutoff for the whole sweep — credits accrued mid-sweep roll to next run.
   const before = now()
   const work = await store.unsweptByAccount(before)
   const results: PayoutResult[] = []
@@ -75,14 +85,33 @@ export async function sweepAll(store: CreditStore, opts: SweepOptions): Promise<
       continue
     }
     if (!opts.rail) {
-      // Report-only: leave the credit unswept so it pays out once a rail is live.
-      results.push({ account, destination, amountUsd, signature: null, status: 'reported' })
+      // Report-only: don't reserve, leave the credit payable for when a rail is live.
+      results.push({ account, destination, amountUsd, status: 'reported', signature: null })
       continue
     }
-    const { signature } = await opts.rail.transfer({ destination, amountUsd })
-    // Mark only the rows we read (<= before) — concurrent accruals roll to next run.
-    await store.markSwept(account, before)
-    results.push({ account, destination, amountUsd, signature, status: 'paid' })
+    // Reserve BEFORE paying: these credits leave the work-list immediately, so no
+    // run — this one or a later one after a crash — can pay them twice.
+    const { ids, amountUsd: claimed } = await store.claimUnswept(account, before)
+    if (ids.length === 0) {
+      results.push({ account, destination, amountUsd: 0, signature: null, status: 'skipped', reason: 'already settled' })
+      continue
+    }
+    try {
+      const { signature } = await opts.rail.transfer({ destination, amountUsd: claimed })
+      await opts.payoutLog?.record({ account, destination, amountUsd: claimed, signature, creditIds: ids, at: before })
+      results.push({ account, destination, amountUsd: claimed, signature, status: 'paid' })
+    } catch (err) {
+      // The transfer failed — undo the reservation so the credits are retried.
+      await store.release(ids)
+      results.push({
+        account,
+        destination,
+        amountUsd: claimed,
+        signature: null,
+        status: 'failed',
+        reason: String(err instanceof Error ? err.message : err),
+      })
+    }
   }
   return results
 }

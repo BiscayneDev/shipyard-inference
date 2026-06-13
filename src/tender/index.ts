@@ -49,3 +49,5 @@ export { accrueSettlement, accrueClick, sweepCredits, usdcToAtomic } from './set
 export type { AccrueOptions, ClickOptions, SweepDeps, SweepResult } from './settle.js'
 export { sweepAll, totalPaid } from './payout.js'
 export type { PayoutRail, PayoutResult, SweepOptions } from './payout.js'
+export { MemoryPayoutLog, SupabasePayoutLog, SUPABASE_TENDER_PAYOUTS_SCHEMA } from './payout-log.js'
+export type { PayoutLog, PayoutLogEntry, SupabasePayoutLogOptions } from './payout-log.js'
