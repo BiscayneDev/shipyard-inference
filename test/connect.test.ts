@@ -91,13 +91,13 @@ test('fetchPlacementLines: returns active campaign lines, highest bid first', as
   assert.deepEqual(lines, ['pricey', 'cheap'], 'sorted by bid desc, empty lines dropped')
 })
 
-test('applyShipyardSpinner: replaces the spinner verb + tip, preserves the rest', () => {
+test('applyShipyardSpinner: ad on the verb line ONLY (never the tip), preserves the rest', () => {
   const next = applyShipyardSpinner(
-    { statusLine: { type: 'command', command: 'x' }, env: { FOO: 'bar' } },
+    { statusLine: { type: 'command', command: 'x' }, env: { FOO: 'bar' }, spinnerTipsOverride: { excludeDefault: true, tips: ['old'] } },
     ['🚀 Acme Cloud'],
   )
   assert.deepEqual(next.spinnerVerbs, { mode: 'replace', verbs: ['🚀 Acme Cloud'] }, 'orange spinner verb replaced')
-  assert.deepEqual(next.spinnerTipsOverride, { excludeDefault: true, tips: ['🚀 Acme Cloud'] }, 'tip replaced too')
+  assert.equal(next.spinnerTipsOverride, undefined, 'tip override cleared — ad is not on both lines')
   assert.equal(next.statusLine?.command, 'x', 'status line preserved')
   assert.equal(next.env?.FOO, 'bar', 'env preserved (no takeover introduced)')
 })

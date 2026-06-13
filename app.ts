@@ -559,9 +559,10 @@ ${navHtml('advertise')}
 <h1>Advertise on the wait.</h1>
 <p class="sub">Your line becomes the agent's <strong>spinner</strong> while it thinks — never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint; highest bid serves first.</p>
 <div class="card">
-  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="🤖 Try Acme Vector DB — first 1M vectors free"/>
+  <label for="logo">Logo <span class="muted">— a glyph/emoji that leads your line (optional)</span></label><input id="logo" maxlength="4" placeholder="🟨" style="max-width:120px"/>
+  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="Try Acme Vector DB — first 1M vectors free"/>
   <div class="prevcap">Spinner preview — your line becomes the spinner while the agent thinks</div>
-  <div class="prev" id="prev"><span class="pstar">✶</span> <span id="pline" class="pverb"></span><span class="pmut">… (3s · ↓ 91 tokens · thinking)</span></div>
+  <div class="prev" id="prev"><span class="pstar">✶</span> <span id="plogo" class="pverb"></span><span id="pline" class="pverb"></span><span class="pmut">… (3s · ↓ 91 tokens · thinking)</span></div>
   <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
   <div class="grid">
     <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
@@ -584,8 +585,8 @@ ${navHtml('advertise')}
 <script>
 const $=s=>document.querySelector(s);
 function esc(s){return (s||'').replace(/</g,'&lt;');}
-function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';$('#pline').textContent=$('#line').value||$('#line').placeholder;}
-['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
+function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';var lg=$('#logo').value.trim();$('#plogo').textContent=lg?lg+' ':'';$('#pline').textContent=$('#line').value||$('#line').placeholder;}
+['#bid','#blocks','#line','#logo'].forEach(s=>$(s).addEventListener('input',est));est();
 async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+esc(c.line)+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
 let pollTimer=null;
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
@@ -661,7 +662,7 @@ function showPayment(campaign,pay){stopPoll();var amt=Number(pay.amountUsdc).toF
   try{if(typeof QRCode!=='undefined'){QRCode.toCanvas(document.getElementById('qrc'),pay.url,{width:200,margin:1});}}catch(e){}
   renderWallets(pay);
   poll(campaign.campaignId);$('#pay').scrollIntoView({behavior:'smooth'});}
-$('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else if(d.payment){$('#msg').innerHTML='<span class="green">✓ Campaign created — fund it below to go live.</span>';showPayment(d.campaign,d.payment);}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';est();refresh();}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
+$('#go').addEventListener('click',async()=>{$('#go').disabled=true;$('#msg').textContent='';try{const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:(($('#logo').value.trim()?$('#logo').value.trim()+' ':'')+$('#line').value),endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});const d=await r.json();if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed')}else if(d.payment){$('#msg').innerHTML='<span class="green">✓ Campaign created — fund it below to go live.</span>';showPayment(d.campaign,d.payment);}else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions.toLocaleString()+' impressions at $'+d.campaign.usdcPerImpression+' /imp ('+d.campaign.campaignId+')</span>';$('#logo').value='';$('#line').value='';$('#url').value='';est();refresh();}}catch(e){$('#msg').textContent='✗ '+e.message}$('#go').disabled=false;});
 refresh();
 </script></div></body></html>`
 

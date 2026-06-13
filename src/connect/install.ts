@@ -114,17 +114,16 @@ export async function fetchPlacementLines(
 
 /**
  * Take over Claude Code's spinner with the sponsored line(s): replace the spinner
- * VERB (the orange line itself — so the ad rotates where "Puttering…" was) AND
- * the tip line beneath it. The `✶` star and the `(3s · tokens · thinking)`
- * metrics are hardcoded by Claude Code and cannot be removed. Surgical: touches
- * ONLY the two spinner keys, so it never reintroduces a model-routing env takeover.
+ * VERB (the orange line itself — so the ad rotates where "Puttering…" was). The
+ * ad lives ONLY on that one line — Claude's own tip line is left alone so the ad
+ * never appears twice. The `✶` star and the `(3s · tokens · thinking)` metrics
+ * are hardcoded by Claude Code and cannot be removed. Surgical: touches only
+ * `spinnerVerbs`, and clears any prior `spinnerTipsOverride` Shipyard wrote.
  */
 export function applyShipyardSpinner(settings: ClaudeSettings, lines: string[]): ClaudeSettings {
-  return {
-    ...settings,
-    spinnerVerbs: { mode: 'replace', verbs: lines },
-    spinnerTipsOverride: { excludeDefault: true, tips: lines },
-  }
+  const next: ClaudeSettings = { ...settings, spinnerVerbs: { mode: 'replace', verbs: lines } }
+  delete next.spinnerTipsOverride // ad belongs on the verb line only — never both
+  return next
 }
 
 const trimSlashes = (u: string): string => u.replace(/\/+$/, '')
