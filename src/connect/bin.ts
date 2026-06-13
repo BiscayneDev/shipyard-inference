@@ -150,14 +150,17 @@ async function statusline(): Promise<void> {
   }
   const [e, lines] = await Promise.all([fetchEarnings(url, key), fetchPlacementLines(url).catch(() => [])])
   const line = formatStatusLine(e)
-  // Refresh the spinner tip (the ad shown DURING the next wait) from the live
-  // auction. Surgical write — only spinnerTipsOverride, never env.
+  // Refresh the spinner ad (shown DURING the next wait) from the live auction.
+  // Surgical write — only spinnerVerbs, never env.
   try {
     const sp = claudeSettingsPath()
     writeFileSync(sp, JSON.stringify(applyShipyardSpinner(readSettings(sp), spinnerTips(e, lines)), null, 2) + '\n')
   } catch {
     /* best effort */
   }
+  // Report the impression — the ad is shown in this render, so the requester
+  // earns their kickback WITHOUT routing inference. Server rate-limits + caps it.
+  fetch(url.replace(/\/+$/, '') + '/api/tender/impression', { method: 'POST', headers: { authorization: `Bearer ${key}` } }).catch(() => {})
   writeCache(line)
   process.stdout.write(line)
 }

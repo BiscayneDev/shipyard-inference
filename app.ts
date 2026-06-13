@@ -587,7 +587,8 @@ const $=s=>document.querySelector(s);
 function esc(s){return (s||'').replace(/</g,'&lt;');}
 function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';var lg=$('#logo').value.trim();$('#plogo').textContent=lg?lg+' ':'';$('#pline').textContent=$('#line').value||$('#line').placeholder;}
 ['#bid','#blocks','#line','#logo'].forEach(s=>$(s).addEventListener('input',est));est();
-async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+esc(c.line)+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>').join('');}
+function safeUrl(u){u=String(u||'');return /^https?:\/\//i.test(u)?u.replace(/"/g,'%22'):'';}
+async function refresh(){const d=await(await fetch('/api/campaigns')).json();$('#rows').innerHTML=(d.campaigns||[]).map(function(c){var u=safeUrl(c.endpointUrl);var label=esc(c.line);var cell=u?('<a href="'+u+'" target="_blank" rel="noopener">'+label+' ↗</a>'):label;return '<tr><td>'+cell+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">'+(c.remainingImpressions||0).toLocaleString()+'</td><td class="mono">$'+Number(c.fundedUsdc||0).toFixed(2)+'</td></tr>';}).join('');}
 let pollTimer=null;
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 function poll(id){stopPoll();pollTimer=setInterval(async function(){try{const r=await fetch('/api/campaigns/'+id+'/verify',{method:'POST'});const d=await r.json();if(d.status==='active'){stopPoll();$('#paystatus').innerHTML='<span class="green">✓ Payment confirmed — campaign is live'+(d.signature?(' · tx '+d.signature.slice(0,10)+'…'):'')+'</span>';refresh();}}catch(e){}},4000);}
@@ -830,6 +831,44 @@ app.get('/api/me', async (c) => {
 // matching debit so the ledger balance nets out (no double-claim). Payout is
 // signed by the gateway's dedicated payout keypair — lazily imported so
 // @solana/web3.js never touches the boot path.
+// Report a spinner impression — the ad was shown during a wait. Accrues the
+// requester's 50% against the served (top-bid) campaign's funded budget, WITHOUT
+// routing inference: the impression happens in the IDE's spinner regardless of
+// where inference runs. Anti-abuse: per-account rate limit + the advertiser
+// budget cap (payouts can never exceed funded inventory). Softer than the routed
+// attestation, which stays as a stronger signal when a user does route.
+const IMPRESSION_MIN_MS = Number(process.env.TENDER_IMPRESSION_MIN_MS ?? 5000)
+const REQUESTER_SHARE = 0.5
+const lastImpressionAt = new Map<string, number>()
+app.post('/api/tender/impression', async (c) => {
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
+  const acct = auth.account.userId
+  const now = Date.now()
+  if (now - (lastImpressionAt.get(acct) ?? 0) < IMPRESSION_MIN_MS) return c.json({ accrued: 0, throttled: true })
+  await ensureCampaigns()
+  const live = (await campaignStore.list().catch(() => []))
+    .filter(isCampaignActive)
+    .filter((x) => (x.remainingImpressions ?? 0) > 0)
+    .sort((a, b) => b.usdcPerImpression - a.usdcPerImpression) // first-price: highest bid serves
+  const camp = live[0]
+  if (!camp) return c.json({ accrued: 0, reason: 'no funded inventory' })
+  lastImpressionAt.set(acct, now)
+  const share = camp.usdcPerImpression * REQUESTER_SHARE
+  await tenderCreditStore
+    .accrue({ account: acct, amountUsd: share, placementId: camp.placementId, line: camp.line, requestId: `imp_${now}`, at: now })
+    .catch(() => {})
+  // Draw down the advertiser's funded budget (the hard cap on total payouts).
+  await campaignStore
+    .update(camp.campaignId, {
+      remainingImpressions: (camp.remainingImpressions ?? 1) - 1,
+      fundedUsdc: Math.max(0, (camp.fundedUsdc ?? 0) - camp.usdcPerImpression),
+    })
+    .catch(() => {})
+  const r6i = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  return c.json({ accrued: r6i(share), line: camp.line, campaignId: camp.campaignId })
+})
+
 const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
 app.post('/api/tender/claim', async (c) => {
   const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
