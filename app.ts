@@ -831,6 +831,44 @@ app.get('/api/me', async (c) => {
 // matching debit so the ledger balance nets out (no double-claim). Payout is
 // signed by the gateway's dedicated payout keypair — lazily imported so
 // @solana/web3.js never touches the boot path.
+// Report a spinner impression — the ad was shown during a wait. Accrues the
+// requester's 50% against the served (top-bid) campaign's funded budget, WITHOUT
+// routing inference: the impression happens in the IDE's spinner regardless of
+// where inference runs. Anti-abuse: per-account rate limit + the advertiser
+// budget cap (payouts can never exceed funded inventory). Softer than the routed
+// attestation, which stays as a stronger signal when a user does route.
+const IMPRESSION_MIN_MS = Number(process.env.TENDER_IMPRESSION_MIN_MS ?? 5000)
+const REQUESTER_SHARE = 0.5
+const lastImpressionAt = new Map<string, number>()
+app.post('/api/tender/impression', async (c) => {
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
+  const acct = auth.account.userId
+  const now = Date.now()
+  if (now - (lastImpressionAt.get(acct) ?? 0) < IMPRESSION_MIN_MS) return c.json({ accrued: 0, throttled: true })
+  await ensureCampaigns()
+  const live = (await campaignStore.list().catch(() => []))
+    .filter(isCampaignActive)
+    .filter((x) => (x.remainingImpressions ?? 0) > 0)
+    .sort((a, b) => b.usdcPerImpression - a.usdcPerImpression) // first-price: highest bid serves
+  const camp = live[0]
+  if (!camp) return c.json({ accrued: 0, reason: 'no funded inventory' })
+  lastImpressionAt.set(acct, now)
+  const share = camp.usdcPerImpression * REQUESTER_SHARE
+  await tenderCreditStore
+    .accrue({ account: acct, amountUsd: share, placementId: camp.placementId, line: camp.line, requestId: `imp_${now}`, at: now })
+    .catch(() => {})
+  // Draw down the advertiser's funded budget (the hard cap on total payouts).
+  await campaignStore
+    .update(camp.campaignId, {
+      remainingImpressions: (camp.remainingImpressions ?? 1) - 1,
+      fundedUsdc: Math.max(0, (camp.fundedUsdc ?? 0) - camp.usdcPerImpression),
+    })
+    .catch(() => {})
+  const r6i = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+  return c.json({ accrued: r6i(share), line: camp.line, campaignId: camp.campaignId })
+})
+
 const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
 app.post('/api/tender/claim', async (c) => {
   const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
