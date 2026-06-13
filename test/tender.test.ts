@@ -25,6 +25,7 @@ import {
   SupabaseCreditStore,
   sweepAll,
   totalPaid,
+  reconcile,
   MemoryPayoutLog,
   SupabasePayoutLog,
   isCampaignActive,
@@ -545,6 +546,27 @@ test('SupabaseCreditStore: claimUnswept returns ids; release un-sweeps exactly t
   assert.ok(near(await store.balance('provider:T'), 0), 'claimed rows leave the balance')
   await store.release(claim.ids)
   assert.ok(near(await store.balance('provider:T'), 0.01), 'release restores the balance')
+})
+
+test('reconcile: clean after a logged sweep; flags swept-but-unlogged credits', async () => {
+  const s = new MemoryCreditStore()
+  await s.accrue({ account: 'u1', amountUsd: 0.02, placementId: 'p', line: 'a', requestId: 'r', at: 1 })
+  const log = new MemoryPayoutLog()
+
+  // A proper sweep logs what it settles → nothing to reconcile.
+  await sweepAll(s, { rail: { transfer: async () => ({ signature: 'SIG' }) }, resolveDestination: () => 'W', payoutLog: log, now: () => 100 })
+  const clean = await reconcile(s, log)
+  assert.equal(clean.ok, true)
+  assert.equal(clean.unreconciledCount, 0)
+
+  // Simulate a reserve-then-crash: credits claimed (swept) but never logged.
+  await s.accrue({ account: 'u2', amountUsd: 0.03, placementId: 'p', line: 'a', requestId: 'r2', at: 2 })
+  await s.claimUnswept('u2') // marks swept, no payout-log entry
+  const report = await reconcile(s, log)
+  assert.equal(report.ok, false)
+  assert.equal(report.unreconciledCount, 1)
+  assert.ok(near(report.unreconciledUsd, 0.03))
+  assert.equal(report.items[0].account, 'u2')
 })
 
 test('SupabasePayoutLog: record inserts; list reads newest-first', async () => {

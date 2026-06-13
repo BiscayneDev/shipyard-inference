@@ -44,6 +44,7 @@ import {
   payboxSettle,
   payboxSigner,
   keypairSigner,
+  reconcile,
   MemoryPayoutLog,
   SupabasePayoutLog,
   type CampaignStore,
@@ -898,6 +899,23 @@ app.get('/cron/sweep', async (c) => {
     })
   } catch (err) {
     return c.json({ error: 'sweep failed', detail: String(err instanceof Error ? err.message : err) }, 500)
+  }
+})
+
+// Reconciliation — cross-checks swept credits against the payout log and surfaces
+// any swept-but-unlogged credit (a reserve-then-crash under-pay; never a
+// double-pay). Read-only. Same guard as the sweep; bound the scan with ?windowMs.
+app.get('/cron/reconcile', async (c) => {
+  const auth = c.req.header('authorization')
+  const ok = checkBearer(OPERATOR_TOKENS, auth) || checkBearer([process.env.CRON_SECRET ?? ''].filter(Boolean), auth)
+  if (!ok) return c.json({ error: 'unauthorized' }, 401)
+  const windowMs = Number(c.req.query('windowMs') ?? 30 * 24 * 60 * 60 * 1000)
+  try {
+    const report = await reconcile(tenderCreditStore, tenderPayoutLog, { since: Date.now() - windowMs })
+    const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
+    return c.json({ ...report, unreconciledUsd: r6(report.unreconciledUsd), windowMs })
+  } catch (err) {
+    return c.json({ error: 'reconcile failed', detail: String(err instanceof Error ? err.message : err) }, 500)
   }
 })
 

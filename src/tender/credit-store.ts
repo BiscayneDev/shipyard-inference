@@ -42,6 +42,12 @@ export interface CreditStore {
   claimUnswept(account: string, before?: number): Promise<{ ids: Array<number | string>; amountUsd: number }>
   /** Un-sweep specific credit ids — rolls back a reservation whose transfer failed. */
   release(ids: Array<number | string>): Promise<void>
+  /**
+   * Swept credit rows (optionally only those accrued at-or-after `since`), for
+   * reconciling against the payout log — a swept credit whose id was never logged
+   * is an under-pay (a reserve-but-unrecorded crash) to investigate.
+   */
+  sweptCredits(since?: number): Promise<Array<{ id: number | string; account: string; amountUsd: number; at: number }>>
 }
 
 /** In-memory store — fine for a long-lived gateway; resets per process. */
@@ -84,6 +90,11 @@ export class MemoryCreditStore implements CreditStore {
   async release(ids: Array<number | string>): Promise<void> {
     const set = new Set(ids.map(Number))
     for (const r of this.recs) if (set.has(r.id)) r.swept = false
+  }
+  async sweptCredits(since?: number): Promise<Array<{ id: number; account: string; amountUsd: number; at: number }>> {
+    return this.recs
+      .filter((r) => r.swept && (since == null || r.at >= since))
+      .map((r) => ({ id: r.id, account: r.account, amountUsd: r.amountUsd, at: r.at }))
   }
   async markSwept(account: string, before?: number): Promise<number> {
     return (await this.claimUnswept(account, before)).amountUsd
@@ -196,6 +207,17 @@ export class SupabaseCreditStore implements CreditStore {
 
   async markSwept(account: string, before?: number): Promise<number> {
     return (await this.claimUnswept(account, before)).amountUsd
+  }
+
+  async sweptCredits(since?: number): Promise<Array<{ id: number; account: string; amountUsd: number; at: number }>> {
+    const cutoff = since != null ? `&at=gte.${since}` : ''
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?swept=is.true${cutoff}&select=id,account,amount_usd,at`,
+      { headers: this.headers },
+    )
+    if (!res.ok) throw new Error(`supabase credit sweptCredits failed: ${res.status}`)
+    const rows = (await res.json()) as Array<{ id: number; account: string; amount_usd: number; at: number }>
+    return rows.map((r) => ({ id: r.id, account: r.account, amountUsd: Number(r.amount_usd), at: r.at }))
   }
 
   async latestLine(account: string): Promise<string | undefined> {

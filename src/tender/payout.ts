@@ -119,3 +119,40 @@ export async function sweepAll(store: CreditStore, opts: SweepOptions): Promise<
 /** Total USDC paid out in a sweep (sum of `paid` results). */
 export const totalPaid = (results: PayoutResult[]): number =>
   results.filter((r) => r.status === 'paid').reduce((s, r) => s + r.amountUsd, 0)
+
+export interface ReconcileItem {
+  id: number | string
+  account: string
+  amountUsd: number
+  at: number
+}
+
+export interface ReconcileReport {
+  /** True when every swept credit has a matching payout-log entry. */
+  ok: boolean
+  unreconciledCount: number
+  /** Total USDC of swept-but-unlogged credits (potential under-pays). */
+  unreconciledUsd: number
+  /** The offending swept credits — settle/refund or confirm on-chain manually. */
+  items: ReconcileItem[]
+}
+
+/**
+ * Cross-check swept credits against the payout log: any credit marked swept whose
+ * id was never recorded as paid is an under-pay (a reserve-then-crash gap from the
+ * sweep) to investigate. This is the safe-failure side of reserve-then-pay — the
+ * money is never double-sent, but a crash can strand a credit swept-but-unpaid;
+ * this surfaces exactly those. Bound the scan with `since` (unix ms).
+ */
+export async function reconcile(
+  store: CreditStore,
+  payoutLog: PayoutLog,
+  opts: { since?: number } = {},
+): Promise<ReconcileReport> {
+  const swept = await store.sweptCredits(opts.since)
+  const logged = new Set<string>()
+  for (const e of await payoutLog.list()) for (const id of e.creditIds) logged.add(String(id))
+  const items = swept.filter((c) => !logged.has(String(c.id)))
+  const unreconciledUsd = items.reduce((s, c) => s + c.amountUsd, 0)
+  return { ok: items.length === 0, unreconciledCount: items.length, unreconciledUsd, items }
+}
