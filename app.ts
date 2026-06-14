@@ -395,7 +395,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 </style></head><body><div class="wrap">
 <nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">Works with Claude Code, Cursor, Codex &amp; any agent. Your idle wait-time earns kickbacks to your wallet — and <strong>your model stays yours</strong>. Routing inference through Shipyard for cheaper calls is optional.</p>
+<p class="sub">Works with Claude Code, Cursor, Codex &amp; any agent. Your idle wait-time earns kickbacks — paid in USDC on <strong>Solana and Base</strong> — to your wallet, and <strong>your model stays yours</strong>. Routing inference through Shipyard for cheaper calls is optional.</p>
 <div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
   <strong>Fastest — one command</strong> <span class="muted">— adds the status line, keeps your model</span>
   <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
@@ -404,7 +404,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 <div class="note" style="text-align:center;margin:6px 0">— optional: route through Shipyard for cheaper inference —</div>
 <div class="card">
   <div class="row">
-    <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
+    <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana or Base (0x) address — where rebates + kickbacks settle"/></div>
     <div style="flex:0"><button id="gen">Generate key</button></div>
   </div>
   <div class="note">No signup. The key is shown once — copy it now. It ties your IDE traffic to your wallet.</div>
@@ -580,7 +580,7 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
   <div class="note" id="msg"></div>
 </div>
 <div class="card" id="pay" style="display:none">
-  <strong>Fund with USDC</strong> <span class="muted">— pay the deposit and the campaign goes live automatically</span>
+  <strong>Fund with USDC</strong> <span class="muted">— on Solana or Base; pay the deposit and the campaign goes live automatically</span>
   <div id="paybody"></div>
 </div>
 <div class="card">
