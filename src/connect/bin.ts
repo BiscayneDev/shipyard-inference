@@ -148,7 +148,16 @@ async function statusline(): Promise<void> {
     process.stdout.write('⚓ Shipyard')
     return
   }
-  const [e, lines] = await Promise.all([fetchEarnings(url, key), fetchPlacementLines(url).catch(() => [])])
+  // Report the impression in the SAME awaited batch as the earnings fetch — the
+  // ad is shown in this render, so the requester earns WITHOUT routing inference.
+  // It MUST be awaited (concurrently, so no added latency): a fire-and-forget
+  // fetch gets killed when this short-lived CLI process exits, so it never sends.
+  // Server rate-limits + caps it.
+  const [e, lines] = await Promise.all([
+    fetchEarnings(url, key),
+    fetchPlacementLines(url).catch(() => []),
+    fetch(url.replace(/\/+$/, '') + '/api/tender/impression', { method: 'POST', headers: { authorization: `Bearer ${key}` } }).catch(() => null),
+  ])
   const line = formatStatusLine(e)
   // Refresh the spinner ad (shown DURING the next wait) from the live auction.
   // Surgical write — only spinnerVerbs, never env.
@@ -158,9 +167,6 @@ async function statusline(): Promise<void> {
   } catch {
     /* best effort */
   }
-  // Report the impression — the ad is shown in this render, so the requester
-  // earns their kickback WITHOUT routing inference. Server rate-limits + caps it.
-  fetch(url.replace(/\/+$/, '') + '/api/tender/impression', { method: 'POST', headers: { authorization: `Bearer ${key}` } }).catch(() => {})
   writeCache(line)
   process.stdout.write(line)
 }
