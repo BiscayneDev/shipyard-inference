@@ -41,6 +41,7 @@ compression, and OpenRouter are all ready.
 | -------------------------------------- | ------------- |
 | `AnthropicProvider` / `OpenAIProvider` | ✅ Ready       |
 | `createUsePodProvider()`               | ✅ Ready       |
+| `createUsePodCandidate()` (auto catalog) | ✅ Ready     |
 | `createNousProvider()` (Hermes)        | ✅ Ready       |
 | `createOpenRouterProvider()`           | ✅ Ready       |
 | `Router` / `costOptimized()`           | ✅ Ready       |
@@ -194,6 +195,39 @@ await router.chat({ system: 'You are helpful.', messages: [{ role: 'user', conte
 
 `maxPrice*` set per-request ceilings (USDC microunits / 1M tokens). `depositUsdc`
 requires the optional peer `@coral-xyz/anchor`.
+
+#### Let the Router pick the right UsePod model
+
+The snippet above gives UsePod no model catalog, so `costOptimized`/`autoTier`
+can't rank it — it only works via a pinned model or as a failover target.
+**`createUsePodCandidate()`** fixes that: it reads UsePod's live catalog from
+`GET /v1/models`, selects the **best model per tier** (economy / standard /
+frontier) across the marketplace — open-weight commodities (Llama, Qwen,
+DeepSeek, Mistral, GLM) *and* frontier (`gpt-5.5`, Claude, Gemini) — and returns
+a ready `ProviderCandidate`. If the listing can't be read (an unfunded token, an
+outage) it falls back to a curated best-per-tier catalog, so the candidate is
+always routable.
+
+```ts
+import { createUsePodCandidate, Router, costOptimized } from 'shipyard-inference'
+
+// Discovers /v1/models, classifies into tiers, picks the best per tier.
+const usepod = await createUsePodCandidate({ token: process.env.USEPOD_TOKEN })
+
+const router = new Router({
+  candidates: [usepod],
+  strategy: costOptimized(),
+  autoTier: true, // cheapest model that's *good enough* per request
+})
+await router.chat({ system: 'You are helpful.', messages: [{ role: 'user', content: 'Hi' }], tools: [] })
+```
+
+A trivial prompt routes to the economy open-weight model; a large or
+tool-heavy one auto-tiers up to standard/frontier. Override the per-tier choice
+with `prefer` (e.g. `{ frontier: ['claude-opus-4-5'] }`), pin an explicit
+`models[]` to skip discovery, or set `discover: false` to use the curated
+catalog only. Prices attached to each model are the *centralized cap* — the
+marketplace only ever charges less — so cost-ranking is conservative and honest.
 
 > ⚠️ `depositUsdc` follows UsePod's documented Anchor flow but is **unverified
 > against mainnet** here — do a small real deposit and confirm it credits before

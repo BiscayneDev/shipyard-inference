@@ -36,6 +36,17 @@ import {
   buildUsePodDepositTx,
   submitSolanaTransaction,
   usePodBalance,
+  observeWaitWindow,
+  Auction,
+  AuctionLog,
+  CreditLedger,
+  loadAttestationKey,
+  signAttestation,
+  accrueSettlement,
+  accrueClick,
+  buildCampaign,
+  MemoryCampaignStore,
+  SupabaseCampaignStore,
 } from 'shipyard-inference'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -90,7 +101,7 @@ function mockProvider() {
 // pricing metadata (what `costOptimized` ranks on and the savings baseline is
 // priced against) — but never a raw provider key. Wallet-funded, end to end.
 // ---------------------------------------------------------------------------
-async function buildInference() {
+async function buildProductionInference() {
   // Mode — Paybox x402 (advanced): pay for inference *per request* over x402,
   // from a non-custodial Paybox wallet, against a true x402 inference endpoint.
   // This is the ONLY mode that needs an x402 endpoint — most setups don't. The
@@ -161,8 +172,16 @@ async function buildInference() {
     }
   }
 
-  // Mode A — demo (default): mock provider, two tiers so routing + savings have
-  // something to show. Recognizably a stub; bills nothing.
+  // No production backend configured (no x402 endpoint, no Paybox-funded UsePod,
+  // no USEPOD_TOKEN). The portal still runs — Demo mode is always available.
+  return null
+}
+
+// Mode A — demo: a built-in mock provider, two tiers so routing + savings have
+// something to show. Recognizably a stub; bills nothing. ALWAYS available, so the
+// portal can offer a Demo ⇄ Production toggle (default Demo — no real spend until
+// you flip).
+function buildDemoInference() {
   const models = [
     { model: 'shipyard-economy', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 128000, tier: 'economy', capabilities: ['tools'] },
     { model: 'shipyard-standard', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
@@ -176,35 +195,14 @@ async function buildInference() {
   }
 }
 
-const inference = await buildInference()
-const BASELINE_MODEL = process.env.PORTAL_BASELINE_MODEL ?? inference.baselineModel
-
-// model id -> candidate id, so a pinned pick routes to the provider that serves it.
-const modelToCandidate = new Map()
-for (const c of inference.candidates) {
-  for (const m of c.models ?? []) modelToCandidate.set(m.model, c.id)
-}
-
-// The flat catalog the picker renders (plus the synthetic "auto" entry).
-const modelCatalog = [
-  { id: 'auto', label: 'Auto — cheapest capable', provider: 'shipyard', tier: 'auto' },
-  ...inference.candidates.flatMap((c) =>
-    (c.models ?? []).map((m) => ({
-      id: m.model,
-      label: m.model,
-      provider: c.id,
-      tier: m.tier,
-      inputCostPerMTok: m.inputCostPerMTok,
-      outputCostPerMTok: m.outputCostPerMTok,
-    })),
-  ),
-]
-
-// Pricing the Router can look up by model id. The baseline is priced via this
-// table (not the candidate `models[]`), so the savings model must live here too.
-const pricingOverrides = Object.fromEntries(
-  inference.candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
-)
+// Build BOTH inference backends so the portal can switch at runtime: a mock demo
+// backend (always) and the real production backend (when env configures one). The
+// UI toggles per request; default is Demo — no real spend until you flip. The
+// `inference` alias is the production backing for funding/settlement/network.
+const prodInference = await buildProductionInference()
+const demoInference = buildDemoInference()
+const productionAvailable = Boolean(prodInference)
+const inference = prodInference ?? demoInference
 
 // Per-request telemetry capture (model/provider/cost/savings) without a global
 // race — mirrors the gateway's AsyncLocalStorage approach.
@@ -239,13 +237,42 @@ function routerOnEvent(event) {
   }
 }
 
-const router = new Router({
-  candidates: inference.candidates,
-  strategy: costOptimized(),
-  baselineModel: BASELINE_MODEL,
-  pricingOverrides,
-  onEvent: routerOnEvent,
-})
+// One self-contained runtime per backend: its router, the catalog the picker
+// renders, pricing for the savings baseline, and the model→candidate pin map.
+function buildRuntime(inf) {
+  const baselineModel = process.env.PORTAL_BASELINE_MODEL ?? inf.baselineModel
+  const modelToCandidate = new Map()
+  for (const c of inf.candidates) for (const m of c.models ?? []) modelToCandidate.set(m.model, c.id)
+  const modelCatalog = [
+    { id: 'auto', label: 'Auto — cheapest capable', provider: 'shipyard', tier: 'auto' },
+    ...inf.candidates.flatMap((c) =>
+      (c.models ?? []).map((m) => ({
+        id: m.model,
+        label: m.model,
+        provider: c.id,
+        tier: m.tier,
+        inputCostPerMTok: m.inputCostPerMTok,
+        outputCostPerMTok: m.outputCostPerMTok,
+      })),
+    ),
+  ]
+  const pricingOverrides = Object.fromEntries(
+    inf.candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
+  )
+  const router = new Router({
+    candidates: inf.candidates,
+    strategy: costOptimized(),
+    baselineModel,
+    pricingOverrides,
+    onEvent: routerOnEvent,
+  })
+  return { mode: inf.mode, baselineModel, modelToCandidate, modelCatalog, router }
+}
+
+const demoRT = buildRuntime(demoInference)
+const prodRT = prodInference ? buildRuntime(prodInference) : null
+// Map the UI toggle ('demo' | 'production') to a runtime; default Demo.
+const runtimeFor = (m) => (m === 'production' && prodRT ? prodRT : demoRT)
 
 // Catalog of models a per-session UsePod token serves (bring-your-own-wallet).
 const USEPOD_SESSION_MODELS = [
@@ -308,6 +335,18 @@ if (TREASURY && process.env.PAYBOX_CREDENTIAL_ID) {
   console.log(`  settle:    REAL · ${settlementSigner.publicKey} → ${TREASURY} (${SETTLE_NETWORK})`)
 }
 
+// Tender payout — the crypto version of kickbacks.ai's "earnings accrue, Stripe
+// later": here a developer's idle-attention kickbacks pay out in USDC on-chain,
+// now. The operator Paybox wallet is the payout treasury. Real on-chain payout is
+// GATED (TENDER_REAL_PAYOUT=1) so a demo never sends real USDC to a throwaway
+// session address — the default is a simulated receipt (with a tx hash to show).
+const TENDER_REAL_PAYOUT = process.env.TENDER_REAL_PAYOUT === '1'
+let tenderPayoutSigner = settlementSigner
+if (!tenderPayoutSigner && TENDER_REAL_PAYOUT && process.env.PAYBOX_CREDENTIAL_ID) {
+  tenderPayoutSigner = await payboxSigner({ credentialId: process.env.PAYBOX_CREDENTIAL_ID, network: SETTLE_NETWORK })
+}
+if (TENDER_REAL_PAYOUT) console.log(`  payout:    REAL USDC kickbacks on ${SETTLE_NETWORK}`)
+
 // A base58 string shaped like a Solana tx signature (~88 chars). In x402 mode a
 // real settlement returns the on-chain signature; in demo/usepod we mint a
 // realistic stand-in so the receipt UI has a tx hash + explorer link to show.
@@ -331,6 +370,13 @@ function walletSnapshot(session) {
     pendingUsd: round6(session.pendingUsd),
     spentUsd: round6(session.spentUsd),
     savedUsd: round6(session.savedUsd),
+    // Tender idle-attention credit accrued to this wallet, what's owed after
+    // netting it against the inference bill, the surplus available to cash out,
+    // and lifetime USDC paid out.
+    tenderCreditUsd: round6(creditLedger.balance(session.address)),
+    netOwedUsd: round6(Math.max(0, session.pendingUsd - creditLedger.balance(session.address))),
+    payoutAvailableUsd: round6(Math.max(0, creditLedger.balance(session.address) - session.pendingUsd)),
+    earnedUsd: round6(session.earnedUsd ?? 0),
     messages: session.messages,
     settlements: session.settlements.length,
     realInference: !!session.realInference,
@@ -342,15 +388,20 @@ function walletSnapshot(session) {
 const app = new Hono()
 app.use('/api/*', cors())
 
-app.get('/api/models', (c) =>
-  c.json({
-    models: modelCatalog,
-    baselineModel: BASELINE_MODEL,
-    mode: inference.mode,
+app.get('/api/models', (c) => {
+  // The picker + savings baseline are per inference mode (?mode=demo|production).
+  const wantProd = c.req.query('mode') === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+  return c.json({
+    models: rt.modelCatalog,
+    baselineModel: rt.baselineModel,
+    inferenceMode: wantProd ? 'production' : 'demo', // the toggle state served
+    backend: rt.mode, // demo | usepod | paybox — what actually serves
+    productionAvailable,
     network: inference.network,
     payer: inference.payer,
-  }),
-)
+  })
+})
 
 app.post('/api/wallet/connect', async (c) => {
   const body = await c.req.json().catch(() => ({}))
@@ -411,8 +462,17 @@ app.post('/api/settle', async (c) => {
   const session = sessions.get(sessionId)
   if (!session) return c.json({ error: 'unknown session' }, 404)
 
-  const amount = round6(session.pendingUsd)
-  if (amount <= 0) return c.json({ settled: 0, wallet: walletSnapshot(session) })
+  // Net the idle-attention credit against the inference bill — the user settles
+  // only what's left after Tender revenue. If credit covers it, nothing moves
+  // on-chain (the "never top up your agent" effect).
+  const pending = session.pendingUsd
+  const creditApplied = Math.min(pending, creditLedger.balance(session.address))
+  const amount = round6(Math.max(0, pending - creditApplied))
+  if (amount <= 0) {
+    if (creditApplied > 0) creditLedger.consume(session.address, creditApplied)
+    session.pendingUsd = 0
+    return c.json({ settled: 0, creditApplied: round6(creditApplied), wallet: walletSnapshot(session) })
+  }
 
   // Real meter-then-settle (Dock's proven path): move the metered USDC on-chain
   // from the Paybox wallet to the treasury. Only on success do we clear pending
@@ -445,6 +505,7 @@ app.post('/api/settle', async (c) => {
     simulated = true
   }
 
+  if (creditApplied > 0) creditLedger.consume(session.address, creditApplied)
   session.balanceUsd = Math.max(0, session.balanceUsd - amount)
   session.spentUsd += amount
   session.pendingUsd = 0
@@ -562,26 +623,315 @@ app.post('/api/wallet/deposit/submit', async (c) => {
   }
 })
 
+// ── Tender — idle-attention placements on the request wait state ─────────────
+// Campaigns are funded inventory, now ADVERTISER self-serve (POST /api/campaigns,
+// /advertise). The store is the source of truth; the Auction is the live index,
+// hydrated from it at boot. Demo seeds get planted once if the store is empty.
+const SEED_CAMPAIGNS = [
+  {
+    campaignId: 'demo-vercel', placementId: 'vercel-deploy',
+    advertiserWallet: 'TenderAdVerce1111111111111111111111111111111',
+    endpointUrl: 'https://api.shipyard.market/x402/vercel-deploy',
+    line: '🛰️  Ship this to prod — one-call Vercel deploy on Shipyard Market',
+    usdcPerImpression: 0.005, remainingImpressions: 1000, fundedUsdc: 5, targeting: {},
+  },
+  {
+    campaignId: 'demo-embed', placementId: 'nomic-embed',
+    advertiserWallet: 'TenderAdEmbed22222222222222222222222222222222',
+    endpointUrl: 'https://api.shipyard.market/x402/nomic-embed',
+    line: '⚡  Add semantic search — Nomic embeddings, pay-per-call USDC',
+    usdcPerImpression: 0.002, remainingImpressions: 1000, fundedUsdc: 2, targeting: {},
+  },
+]
+const campaignStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseCampaignStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY, table: process.env.SUPABASE_CAMPAIGNS_TABLE })
+    : new MemoryCampaignStore()
+let storedCampaigns = await campaignStore.list().catch(() => [])
+if (storedCampaigns.length === 0) {
+  for (const c of SEED_CAMPAIGNS) await campaignStore.create(c).catch(() => {})
+  storedCampaigns = SEED_CAMPAIGNS
+}
+const tenderAuction = new Auction(storedCampaigns)
+const TENDER_MIN_WAIT_MS = Number(process.env.TENDER_MIN_WAIT_MS ?? 800)
+
+// Advertiser escrow drawdown — the gross an advertiser actually spends, billed
+// only on VALID (attested) impressions/clicks. Keyed by placementId. The
+// developer gets REQUESTER_SHARE of this; the platform keeps the spread. (Real
+// on-chain escrow deposit from the advertiser is the same payboxSettle rail,
+// deferred until advertisers connect wallets — here the budget is the escrow.)
+const campaignSpend = new Map() // placementId -> { grossUsd, impressions, clicks }
+function recordSpend(placementId, grossUsd, kind) {
+  const s = campaignSpend.get(placementId) ?? { grossUsd: 0, impressions: 0, clicks: 0 }
+  s.grossUsd += grossUsd
+  if (kind === 'click') s.clicks += 1
+  else s.impressions += 1
+  campaignSpend.set(placementId, s)
+}
+// The gateway's dedicated attestation key + the auction log the release gate
+// cross-checks. Set TENDER_SIGNING_KEY (32-byte hex) for a stable, verifiable key.
+const tenderKey = loadAttestationKey()
+const auctionLog = new AuctionLog()
+// The credit ledger Tender writes into — idle-attention revenue, netted against
+// each wallet's inference bill. REQUESTER_SHARE of the impression price accrues.
+const creditLedger = new CreditLedger()
+const REQUESTER_SHARE = Number(process.env.TENDER_REQUESTER_SHARE ?? 0.5)
+const CLICK_MULTIPLIER = Number(process.env.TENDER_CLICK_MULTIPLIER ?? 50)
+
+// Click = call: when the agent/user actually invokes the sponsored x402 endpoint,
+// bill it at CLICK_MULTIPLIER × the impression rate and accrue REQUESTER_SHARE to
+// the request's wallet. The ad and the transaction are the same call (section 6).
+app.post('/api/tender/click', async (c) => {
+  const { sessionId, requestId, placementId } = await c.req.json().catch(() => ({}))
+  const served = auctionLog.get(requestId)
+  if (!served || served.placementId !== placementId) {
+    return c.json({ error: 'no served placement for this request' }, 400)
+  }
+  const session = sessionId ? sessions.get(sessionId) : undefined
+  const { creditedUsd, grossUsdc } = accrueClick({
+    ledger: creditLedger,
+    wallet: session?.address ?? '',
+    requestId,
+    placementId,
+    pricePerImpressionUsdc: served.usdcPerImpression,
+    clickMultiplier: CLICK_MULTIPLIER,
+    requesterShare: REQUESTER_SHARE,
+    at: Date.now(),
+  })
+  recordSpend(placementId, grossUsdc, 'click') // advertiser pays the click gross
+  return c.json({
+    creditedUsd: round6(creditedUsd),
+    grossUsdc: round6(grossUsdc),
+    endpointUrl: served.endpointUrl,
+    wallet: session ? walletSnapshot(session) : undefined,
+  })
+})
+
+// Cash out: pay the developer's earned kickbacks to their wallet in USDC. Pays
+// only the SURPLUS — credit beyond the inference they owe (the rest nets against
+// the bill at /api/settle). Real on-chain when TENDER_REAL_PAYOUT=1, else a
+// simulated receipt so a demo never spends real USDC on a throwaway address.
+app.post('/api/tender/payout', async (c) => {
+  const { sessionId } = await c.req.json().catch(() => ({}))
+  const session = sessionId ? sessions.get(sessionId) : undefined
+  if (!session) return c.json({ error: 'unknown session' }, 404)
+  const wallet = session.address
+  const surplus = round6(Math.max(0, creditLedger.balance(wallet) - session.pendingUsd))
+  if (surplus <= 0) return c.json({ paidUsd: 0, wallet: walletSnapshot(session) })
+
+  let signature
+  let simulated
+  if (TENDER_REAL_PAYOUT && tenderPayoutSigner) {
+    try {
+      const res = await payboxSettle({
+        signer: tenderPayoutSigner,
+        treasury: wallet,
+        amount: String(Math.round(surplus * 1_000_000)),
+        network: SETTLE_NETWORK,
+        rpcUrl: process.env.SHIPYARD_SETTLE_RPC_URL,
+        usdcMint: process.env.SHIPYARD_SETTLE_USDC_MINT,
+      })
+      signature = res.signature
+      simulated = false
+    } catch (err) {
+      return c.json(
+        { error: `payout failed: ${err instanceof Error ? err.message : String(err)}`, wallet: walletSnapshot(session) },
+        502,
+      )
+    }
+  } else {
+    signature = mockSignature()
+    simulated = true
+  }
+  creditLedger.consume(wallet, surplus)
+  session.earnedUsd = (session.earnedUsd ?? 0) + surplus
+  reporter?.recordSettlement?.({ userId: session.id, amountUsd: surplus, status: 'settled', network: SETTLE_NETWORK })
+  return c.json({
+    paidUsd: surplus,
+    signature,
+    simulated,
+    explorerUrl: explorerUrl(signature, SETTLE_NETWORK),
+    wallet: walletSnapshot(session),
+  })
+})
+
+// ── Advertiser onboarding — spin up a sponsored campaign ─────────────────────
+// Symmetric to the consumer's /connect: an advertiser sets a line + x402 listing,
+// a bid, and a budget; the campaign enters the live auction immediately. (Real
+// USDC escrow against the campaign is the production step — modeled here by the
+// declared budget; impressions = budget / bid.)
+const ADVERTISE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/><title>Advertise on Shipyard · Tender</title>
+<style>
+:root{--bg:#06070a;--panel:#0c0e14;--hair:rgba(255,255,255,.10);--text:#f3f5fa;--muted:#99a1b3;--accent:#5b8cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:780px;margin:0 auto;padding:40px 22px 80px}h1{font-size:28px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 24px}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin:14px 0}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;background:#04050a;border:1px solid var(--hair);border-radius:9px;color:var(--text);padding:10px 12px;font:14px var(--mono)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
+button{appearance:none;border:0;border-radius:10px;background:var(--accent);color:#fff;font-weight:650;padding:11px 18px;cursor:pointer;margin-top:14px}
+button:disabled{opacity:.5}.note{font-size:13px;color:var(--muted);margin-top:8px}.hidden{display:none}.green{color:var(--green)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--hair)}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+td.mono{font-family:var(--mono)}a{color:var(--accent)}
+</style></head><body><div class="wrap">
+<h1>Advertise on Shipyard</h1>
+<p class="sub">Sponsor the wait. Your line shows during inference idle time; developers get 50% of the spend. First-price auction — highest bid serves first.</p>
+<div class="card">
+  <label for="line">Creative — the sponsored line <span id="cc" class="muted"></span></label><input id="line" maxlength="80" placeholder="⚡ Try Acme Vector DB — first 1M vectors free"/>
+  <label for="url">Destination — your x402 endpoint (a "click" calls it)</label><input id="url" placeholder="https://api.shipyard.market/x402/your-listing"/>
+  <div class="grid">
+    <div><label for="bid">Bid · USDC per 1,000 impressions</label><input id="bid" value="5"/></div>
+    <div><label for="blocks">Blocks (× 1,000 impressions)</label><input id="blocks" value="1"/></div>
+  </div>
+  <label for="wallet">Advertiser wallet (optional · escrow source)</label><input id="wallet" placeholder="Solana address"/>
+  <button id="go">Launch campaign</button>
+  <div class="note" id="est"></div>
+  <div class="note" id="msg"></div>
+</div>
+<div class="card">
+  <strong>Live inventory</strong> <span class="muted">— what's serving now</span>
+  <table><thead><tr><th>Line</th><th>Bid</th><th>Spent</th><th>Budget left</th></tr></thead><tbody id="rows"></tbody></table>
+</div>
+<p class="note">Settlement is USDC on Solana via Paybox/x402. The consumer side: <a href="/">chat portal</a>.</p>
+<script>
+const $=s=>document.querySelector(s);
+function est(){const b=Number($('#bid').value)||0,n=Math.max(1,Math.floor(Number($('#blocks').value)||1));$('#cc').textContent=$('#line').value.length+'/80';$('#est').textContent=b>0?('= '+(n*1000).toLocaleString()+' impressions · $'+(b*n).toFixed(2)+' total · highest bid serves first'):'';}
+['#bid','#blocks','#line'].forEach(s=>$(s).addEventListener('input',est));est();
+async function refresh(){
+  const d=await (await fetch('/api/campaigns')).json();
+  $('#rows').innerHTML=(d.campaigns||[]).map(c=>'<tr><td>'+c.line.replace(/</g,'&lt;')+'</td><td class="mono">$'+c.usdcPerImpression+'</td><td class="mono">$'+(c.spentUsd||0).toFixed(4)+'</td><td class="mono">$'+(c.remainingBudgetUsd!=null?c.remainingBudgetUsd:c.fundedUsdc).toFixed(2)+'</td></tr>').join('');
+}
+$('#go').addEventListener('click',async()=>{
+  $('#go').disabled=true;$('#msg').textContent='';
+  try{
+    const r=await fetch('/api/campaigns',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('#line').value,endpointUrl:$('#url').value,bidPerBlockUsdc:Number($('#bid').value),blocks:Number($('#blocks').value),advertiserWallet:$('#wallet').value.trim()||undefined})});
+    const d=await r.json();
+    if(!r.ok){$('#msg').textContent='✗ '+(d.error||'failed');}
+    else{$('#msg').innerHTML='<span class="green">✓ Live — '+d.campaign.remainingImpressions+' impressions at $'+d.campaign.usdcPerImpression+' ('+d.campaign.campaignId+')</span>';$('#line').value='';$('#url').value='';refresh();}
+  }catch(e){$('#msg').textContent='✗ '+e.message}
+  $('#go').disabled=false;
+});
+refresh();
+</script></div></body></html>`
+
+app.get('/advertise', (c) => c.html(ADVERTISE_HTML))
+const IMPRESSIONS_PER_BLOCK = 1000
+app.post('/api/campaigns', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  // Blocks model (kickbacks-style): 1 block = 1,000 impressions. Accept a
+  // per-block bid + block count, or fall back to raw per-impression + budget.
+  let usdcPerImpression = Number(body.usdcPerImpression)
+  let fundedUsdc = Number(body.fundedUsdc)
+  if (body.bidPerBlockUsdc != null) {
+    const bidPerBlock = Number(body.bidPerBlockUsdc)
+    const blocks = Math.max(1, Math.floor(Number(body.blocks) || 1))
+    usdcPerImpression = bidPerBlock / IMPRESSIONS_PER_BLOCK
+    fundedUsdc = bidPerBlock * blocks
+  }
+  let campaign
+  try {
+    campaign = buildCampaign(
+      {
+        line: body.line,
+        endpointUrl: body.endpointUrl,
+        advertiserWallet:
+          (typeof body.advertiserWallet === 'string' && body.advertiserWallet.trim()) ||
+          `TenderSelfServe${randomBytes(12).toString('hex')}`,
+        usdcPerImpression,
+        fundedUsdc,
+        targeting: body.targeting && typeof body.targeting === 'object' ? body.targeting : {},
+      },
+      Date.now(),
+    )
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+  }
+  await campaignStore.create(campaign).catch(() => {})
+  tenderAuction.addCampaign(campaign) // serve immediately
+  return c.json({ campaign })
+})
+app.get('/api/campaigns', (c) =>
+  c.json({
+    campaigns: tenderAuction.list().map((cm) => {
+      const s = campaignSpend.get(cm.placementId) ?? { grossUsd: 0, impressions: 0, clicks: 0 }
+      return {
+        ...cm,
+        spentUsd: round6(s.grossUsd),
+        remainingBudgetUsd: round6(Math.max(0, cm.fundedUsdc - s.grossUsd)),
+        impressions: s.impressions,
+        clicks: s.clicks,
+      }
+    }),
+  }),
+)
+
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !Array.isArray(body.messages)) {
     return c.json({ error: '`messages` is required' }, 400)
   }
 
-  const params = toChatParams(body)
+  // Inference mode toggle (default Demo). Production routes to the real backend
+  // when one is configured; otherwise it falls back to Demo.
+  const wantProd = body.mode === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+  const params = toChatParams(body, rt.modelToCandidate)
   const session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (session) params.metadata = { userId: session.id }
-  // Bring-your-own-wallet sessions route through the user's own UsePod token.
-  const activeRouter = session?.usepod?.router ?? router
+  // Production bring-your-own-wallet sessions route through the user's own UsePod
+  // token; otherwise the selected mode's shared router.
+  const activeRouter = wantProd ? (session?.usepod?.router ?? rt.router) : rt.router
 
   return streamSSE(c, async (stream) => {
     const controller = new AbortController()
     stream.onAbort(() => controller.abort())
     const ctx = {}
+    let servedPlacement // the placement shown for this request, if any
+    let measuredWaitMs // the real wait (ms) the placement was metered against
+
+    // Tender — a thin portal surface. It paints a won placement into UI chrome
+    // via a side-channel SSE event; it is NEVER spliced into the `delta` stream
+    // (the placement invariant). The wait observer below holds no stream writer.
+    const requestId = `req-${randomBytes(8).toString('hex')}`
+    const surface = {
+      id: 'portal-ide',
+      async render(placement) {
+        await stream.writeSSE({ event: 'placement', data: JSON.stringify(placement) })
+      },
+      async clear(rid) {
+        await stream.writeSSE({ event: 'placement_clear', data: JSON.stringify({ requestId: rid }) })
+      },
+    }
+    const tenderCtx = {
+      requestId,
+      surfaceId: surface.id,
+      model: body.model && body.model !== 'auto' ? body.model : undefined,
+      agentic: Array.isArray(body.tools) && body.tools.length > 0,
+      userWallet: session?.address,
+      userId: session?.id,
+    }
 
     try {
       await als.run(ctx, async () => {
-        for await (const event of activeRouter.chatStream(params, { signal: controller.signal })) {
+        const observed = observeWaitWindow(
+          activeRouter.chatStream(params, { signal: controller.signal }),
+          {
+            onWaitWindow: async () => {
+              const placement = tenderAuction.select(tenderCtx)
+              if (!placement) return
+              servedPlacement = placement
+              auctionLog.record(placement, Date.now()) // for the gate's served cross-check
+              await surface.render(placement, tenderCtx)
+            },
+            // meter() — the gateway's measured wait the payout scales to.
+            onFirstToken: (ms) => {
+              measuredWaitMs = ms
+            },
+          },
+          { minWaitMs: TENDER_MIN_WAIT_MS },
+        )
+        for await (const event of observed) {
           if (event.type === 'text_delta') {
             await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: event.text }) })
           }
@@ -606,6 +956,45 @@ app.post('/api/chat', async (c) => {
         session.messages += 1
       }
 
+      // Tender attestation + credit accrual. Built before `meta` so the wallet
+      // snapshot reflects the new credit. accrueSettlement runs the release gate
+      // (the moat) and, only on a valid attestation, accrues REQUESTER_SHARE of
+      // the impression price to the request's wallet as an inference credit.
+      let attEvent
+      if (servedPlacement) {
+        const attestation = signAttestation(
+          {
+            requestId,
+            model: ctx.model ?? rt.mode,
+            billedCostUsd: actual ?? 0,
+            measuredWaitMs: measuredWaitMs ?? 0,
+            surfaceId: surface.id,
+            userWallet: session?.address ?? '',
+            placementId: servedPlacement.placementId,
+            issuedAt: Date.now(),
+          },
+          tenderKey,
+        )
+        const settlement = accrueSettlement(attestation, {
+          publicKeyHex: tenderKey.publicKeyHex,
+          ledger: creditLedger,
+          pricePerImpressionUsdc: servedPlacement.usdcPerImpression,
+          requesterShare: REQUESTER_SHARE,
+          minWaitMs: TENDER_MIN_WAIT_MS,
+          wasServed: (rid, pid) => auctionLog.wasServed(rid, pid),
+          at: Date.now(),
+        })
+        if (settlement.status === 'accrued') {
+          recordSpend(servedPlacement.placementId, settlement.grossUsdc, 'impression')
+        }
+        attEvent = {
+          attestation,
+          valid: settlement.status === 'accrued',
+          reason: settlement.reason,
+          creditedUsd: settlement.requesterShareUsdc,
+        }
+      }
+
       await stream.writeSSE({
         event: 'meta',
         data: JSON.stringify({
@@ -619,6 +1008,13 @@ app.post('/api/chat', async (c) => {
           wallet: session ? walletSnapshot(session) : undefined,
         }),
       })
+
+      // The signed attestation rides the side channel (proof-of-impression + the
+      // credit it earned). This is what settlement released against.
+      if (attEvent) {
+        await stream.writeSSE({ event: 'attestation', data: JSON.stringify(attEvent) })
+      }
+
       await stream.writeSSE({ event: 'done', data: '[DONE]' })
     } catch (err) {
       await stream.writeSSE({
@@ -632,7 +1028,7 @@ app.post('/api/chat', async (c) => {
 
 // Convert the browser's OpenAI-ish payload into LLMChatParams. System messages
 // fold into `system`; a non-"auto" model pins to the candidate that serves it.
-function toChatParams(body) {
+function toChatParams(body, modelToCandidate) {
   const system = []
   const messages = []
   for (const m of body.messages) {
@@ -688,8 +1084,18 @@ const MODE_NOTE = {
 }
 serve({ fetch: app.fetch, port: PORT })
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
-console.log(`  inference: ${inference.mode}  (${MODE_NOTE[inference.mode] ?? ''})`)
-if (inference.mode === 'paybox') {
-  console.log(`  paybox:    ${inference.payer} · ${inference.network}`)
+console.log(
+  `  inference: demo (mock)` +
+    (productionAvailable
+      ? ` ⇄ ${prodInference.mode} (production) — UI toggle, default demo`
+      : ` only — production not configured`),
+)
+if (productionAvailable) console.log(`             production: ${MODE_NOTE[prodInference.mode] ?? ''}`)
+if (prodInference?.mode === 'paybox') {
+  console.log(`  paybox:    ${prodInference.payer} · ${prodInference.network}`)
 }
-console.log(`  baseline:  ${BASELINE_MODEL} · margin: ${(MARGIN * 100).toFixed(0)}%`)
+console.log(`  baseline:  ${demoRT.baselineModel} (demo) · margin: ${(MARGIN * 100).toFixed(0)}%`)
+console.log(
+  `  tender:    attest key ${tenderKey.publicKeyHex.slice(0, 16)}…` +
+    (tenderKey.ephemeral ? '  ⚠ ephemeral — set TENDER_SIGNING_KEY for a stable key' : ''),
+)

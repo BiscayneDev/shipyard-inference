@@ -1,6 +1,6 @@
 {
   "name": "shipyard-inference",
-  "version": "0.14.0",
+  "version": "0.20.0",
   "description": "The always-available inference layer for the Shipyard stack: streaming, cost-aware routing, x402-on-Solana payments, and a drop-in OpenAI-compatible gateway over Anthropic, OpenAI, UsePod, and Nous/Hermes.",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,6 +20,7 @@
     }
   },
   "bin": {
+    "shipyard-inference": "./dist/connect/bin.js",
     "shipyard-gateway": "./dist/gateway/bin.js",
     "shipyard-operator": "./dist/operator/bin.js"
   },
@@ -34,6 +35,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx test/*.test.ts",
     "clean": "rm -rf dist",
+    "build:web": "node scripts/build-web.mjs",
+    "vercel-build": "npm run build && npm run build:web",
     "prepublishOnly": "npm run clean && npm run build",
     "build:portal-wallet": "esbuild examples/chat-portal/public/src/wallet.js --bundle --format=iife --target=es2020 --minify --outfile=examples/chat-portal/public/wallet-bundle.js"
   },
@@ -66,6 +69,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
+    "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "~1.95.0",
+    "bs58": "^5.0.0",
     "openai": "^6.32.0"
   },
   "peerDependencies": {
@@ -100,13 +106,14 @@
     "@coral-xyz/anchor": "^0.32.1",
     "@hono/node-server": "^2.0.4",
     "@paybox-sh/sdk": "^0.1.0",
-    "@solana/spl-token": "^0.4.0",
-    "@solana/web3.js": "^1.95.0",
     "@types/node": "^20",
     "@vercel/functions": "^3.7.0",
     "esbuild": "^0.28.0",
     "hono": "^4.12.25",
     "tsx": "^4.19.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "uuid": "8.3.2"
   }
 }
