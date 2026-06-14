@@ -450,7 +450,7 @@ pre{background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:1
 .snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
 @media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect" class="active">Connect</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a><a href="/tender">Tender</a><a href="/dashboard/">Dashboard</a></div></nav>
 <h1>Connect Shipyard to your IDE</h1>
 <p class="sub">Works with Claude Code, Cursor, Codex &amp; any agent. Your idle wait-time earns kickbacks — paid in USDC on <strong>Solana and Base</strong> — to your wallet, and <strong>your model stays yours</strong>. Routing inference through Shipyard for cheaper calls is optional.</p>
 <div class="card" style="border-color:color-mix(in srgb,var(--green) 40%,transparent)">
@@ -539,7 +539,7 @@ pre{background:#0a0c11;border:1px solid var(--border);border-radius:9px;padding:
 .snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
 @media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise">Advertise</a><a href="/me" class="active">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise">Advertise</a><a href="/me" class="active">Earnings</a><a href="/tender">Tender</a><a href="/dashboard/">Dashboard</a></div></nav>
 <div class="topbar"><h1>Your Shipyard earnings</h1><a href="/connect" class="muted">+ new key</a></div>
 <p class="sub">Routing savings on every call, plus idle-attention kickbacks — credited to your wallet.</p>
 <div class="row">
@@ -618,7 +618,7 @@ a.btn{display:inline-block;text-decoration:none;text-align:center;border-radius:
 .snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--fg);text-decoration:none}.snav .lnk a.active{color:var(--fg)}
 @media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
 </style></head><body><div class="wrap">
-<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise" class="active">Advertise</a><a href="/me">Earnings</a><a href="/dashboard/">Dashboard</a></div></nav>
+<nav class="snav"><a class="brand" href="/">⚓ shipyard · inference</a><div class="lnk"><a href="/connect">Connect</a><a href="/advertise" class="active">Advertise</a><a href="/me">Earnings</a><a href="/tender">Tender</a><a href="/dashboard/">Dashboard</a></div></nav>
 <span class="pill">first-price auction · USDC settlement · agentic clicks</span>
 <h1>Advertise on the wait.</h1>
 <p class="sub">Your line shows in the agent's <strong>spinner</strong> — the "thinking" indicator — during inference waits. Never in the prompt, never in context. Developers keep <strong>50%</strong> of every dollar. A "click" is an agent actually calling your x402 endpoint. Highest bid serves first.</p>
