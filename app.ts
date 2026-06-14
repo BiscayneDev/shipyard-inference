@@ -369,6 +369,63 @@ function keepAlive(p: Promise<unknown>): void {
 // "Connect your IDE" — self-serve key + copy-paste config for any OpenAI-
 // compatible IDE. Client-rendered so the baseURL tracks the actual deploy host.
 // ---------------------------------------------------------------------------
+// Tender's own landing — Tender is a distinct product (idle-attention
+// monetization) that happens to ride on the gateway; it gets its own story rather
+// than crowding the Shipyard Inference landing at `/`.
+const TENDER_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Tender — get paid for the wait</title>
+<meta name="description" content="Tender turns the idle moment during AI inference into income: the spinner is auctioned as one sponsored line, settled in USDC on Solana and Base. Developers keep 50%."/>
+<style>
+:root{--bg:#06070a;--panel:#0c0e14;--hair:rgba(255,255,255,.10);--text:#f3f5fa;--muted:#99a1b3;--accent:#5b8cff;--green:#2fe0ac;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:48px 22px 80px}
+h1{font-size:34px;margin:0 0 8px;letter-spacing:-.5px}.sub{color:var(--muted);margin:0 0 28px;font-size:16px}
+h3{margin:0 0 6px;font-size:17px}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin:16px 0}
+.cols{display:flex;gap:16px;flex-wrap:wrap}.cols>.card{flex:1;min-width:260px;margin:0}
+.muted{color:var(--muted)}.green{color:var(--green)}a{color:var(--accent)}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
+.btn{display:inline-block;margin-top:12px;background:var(--accent);color:#fff;font-weight:650;padding:10px 16px;border-radius:10px;font-size:14px}.btn:hover{filter:brightness(1.08);text-decoration:none}
+.btn.ghost{background:transparent;border:1px solid var(--hair);color:var(--text)}
+.prev{font:14px var(--mono);background:#04050a;border:1px solid var(--hair);border-radius:10px;padding:12px 14px;color:#d7def0;margin:18px 0 6px}
+.pstar{color:var(--green)}.pverb{color:var(--text)}.pmut{color:var(--muted)}
+.chips{margin-top:8px}.chip{display:inline-block;font-size:12px;color:var(--muted);border:1px solid var(--hair);border-radius:999px;padding:3px 10px;margin:0 6px 6px 0}
+.snav{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px;margin-bottom:26px;border-bottom:1px solid var(--hair)}
+.snav .brand{font-weight:700;color:var(--green);font-size:15px}.snav .brand:hover{text-decoration:none}
+.snav .lnk a{color:var(--muted);margin-left:18px;font-size:14px}.snav .lnk a:hover{color:var(--text);text-decoration:none}.snav .lnk a.active{color:var(--text)}
+@media(max-width:560px){.snav{flex-direction:column;align-items:flex-start;gap:10px}.snav .lnk a{margin:0 16px 0 0}}
+</style></head><body><div class="wrap">
+<nav class="snav"><a class="brand" href="/tender">✶ tender</a><div class="lnk"><a href="/tender" class="active">Overview</a><a href="/connect">Earn</a><a href="/advertise">Advertise</a><a href="/me">Earnings</a></div></nav>
+<h1>Get paid for the wait.</h1>
+<p class="sub">Every AI inference has an idle moment — the spinner, the "thinking" indicator. Tender auctions that moment as a single sponsored line and settles it in USDC. The attention you were already spending becomes income.</p>
+<div class="prev"><span class="pstar">✶</span> <span class="pverb">🛰️ Ship to prod — one-call Vercel deploy, pay-per-call USDC</span> <span class="pmut">… (3s · ↓ 91 tokens · thinking)</span></div>
+<p class="note">That line renders in the spinner only — <strong>never in your prompt, never in the model's context, never in the response.</strong> It rides a side channel, structurally outside the context window.</p>
+
+<div class="cols">
+  <div class="card">
+    <h3>Developers earn</h3>
+    <p class="muted">Your agent's idle wait-time is real attention. Tender pays you <strong class="green">50%</strong> of every sponsored impression it serves, accrued as you work and swept to your wallet automatically.</p>
+    <p class="muted">Paid in USDC on <strong>Solana</strong> (default) and <strong>Base</strong>. Your model and inference are untouched.</p>
+    <a class="btn" href="/connect">Connect your IDE →</a>
+  </div>
+  <div class="card">
+    <h3>Advertisers bid</h3>
+    <p class="muted">Reach agentic attention in a first-price auction. Fund a campaign with USDC and set one line; the highest bid serves. Pay per impression — or per <em>click</em>, when an agent actually calls your x402 endpoint.</p>
+    <p class="muted">Fund on <strong>Solana</strong> or <strong>Base</strong>. Campaigns go live the moment the deposit confirms.</p>
+    <a class="btn ghost" href="/advertise">Create a campaign →</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Settled in USDC — today</h3>
+  <p class="muted">Payouts are real now, not "coming soon." Kickbacks accrue per attested impression and settle to your wallet in USDC — direct on-chain transfers on Solana and Base, batched automatically. Advertiser clicks ride x402 on the endpoints they promote.</p>
+  <div class="chips"><span class="chip">USDC · Solana</span><span class="chip">USDC · Base</span><span class="chip">50% to developers</span><span class="chip">attested impressions</span><span class="chip">never in-context</span></div>
+</div>
+
+<p class="note">Tender layers onto any OpenAI-compatible gateway. It runs on <a href="/">Shipyard Inference →</a>, the cost-routing gateway — but the earn story is its own. Track your balance on the <a href="/me">earnings page →</a>.</p>
+</div></body></html>`
+
 const CONNECT_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Connect your IDE · Shipyard Inference</title>
@@ -698,6 +755,7 @@ app.get('/', (c) => c.html(LANDING_HTML))
 // Consumer surface — the "connect your IDE" page + self-serve key issuance.
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
+app.get('/tender', (c) => c.html(TENDER_HTML))
 app.get('/connect', (c) => c.html(CONNECT_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.post('/api/keys', async (c) => {
