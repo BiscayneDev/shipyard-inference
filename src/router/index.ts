@@ -31,6 +31,7 @@ export type {
 } from './usage.js'
 export { isCapable } from './capabilities.js'
 export { estimateInputTokens } from './estimate.js'
+export { classify, mergeRoutingHints } from './classify.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
 export { backoffDelayMs, retryAfterMs, nextRetryDelayMs } from './retry.js'
 export type { RetryPolicy } from './retry.js'

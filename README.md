@@ -291,6 +291,47 @@ const openrouter = createOpenRouterProvider({ apiKey: process.env.OPENROUTER_API
 > is authoritative, with `pricingOverrides` in between. It ranks candidates, it
 > does not bill.
 
+## Request classification & ad-inventory signal
+
+A `Router` can classify each request from its **envelope alone** — tool
+signatures, message count, requested output, volume — **never the message
+content**. This is the layer that both auto-tunes routing *and* emits the
+ad-inventory signal a spinner UI can target.
+
+```ts
+import { classify } from 'shipyard-inference'
+
+const { hints, ad } = classify({
+  system: 'You are a coding agent.',
+  messages: [{ role: 'user', content: 'fix the failing test' }],
+  tools: [
+    { name: 'read_file', description: '', inputSchema: {} },
+    { name: 'bash', description: '', inputSchema: {} },
+  ],
+})
+// ad   → { loopCategory: 'coding', loopTier: 'long' }
+// hints → { tier: 'standard', minContextWindow: … }   ← derived, never overrides yours
+```
+
+- **`ad.loopCategory`** ∈ `coding | research | writing | data | chat` — derived
+  from the *toolset fingerprint* (which is re-sent on every call of an agent
+  loop, so the category is stable across the loop without any session
+  tracking). This is the advertiser's targeting key: placement on long-running
+  coding/research loops, not fine-grained intent.
+- **`ad.loopTier`** ∈ `short | long` — how much spinner inventory the loop is
+  likely to generate. A coarse prior today; the per-category latency/output
+  distribution accrues in `MemoryUsageRecorder.totals().perCategory` to refine
+  it over time.
+
+Turn on auto-routing to fold the derived `hints` into selection
+(`new Router({ candidates, autoRoute: true })`) — **caller-supplied
+`routingHints` always win per field**, so it never overrides an explicit
+choice. The signal rides the existing `request_completed`/`classified` events,
+and the gateway surfaces it as `x-shipyard-loop-category` /
+`x-shipyard-loop-tier` headers (and the streaming `x_shipyard` trailer), gated
+by `exposeAdSignal`. shipyard emits the signal; selecting and serving the ad is
+the downstream layer's job — no message content ever leaves the envelope.
+
 ## Caching & compression
 
 Both cut token spend and are off by default. **Caching** dedupes repeated work; a

@@ -20,12 +20,17 @@ interface RequestContext {
   model?: string
   provider?: string
   costUsd?: number
+  loopCategory?: string
+  loopTier?: string
 }
 
 const als = new AsyncLocalStorage<RequestContext>()
 
 function capture(ctx: RequestContext, event: RouterEvent): void {
-  if (event.type === 'route_selected') {
+  if (event.type === 'classified') {
+    ctx.loopCategory = event.loopCategory
+    ctx.loopTier = event.loopTier
+  } else if (event.type === 'route_selected') {
     ctx.provider = event.candidateId
     if (event.model) ctx.model = event.model
   } else if (event.type === 'request_completed') {
@@ -69,6 +74,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     pricingOverrides: config.pricingOverrides,
     cache: config.cache,
     usageRecorder: config.usageRecorder,
+    autoRoute: config.autoRoute !== false,
     onEvent: (event) => {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)
@@ -77,6 +83,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   const exposeCost = config.exposeCostHeaders !== false
+  const exposeAd = config.exposeAdSignal !== false
   const app = new Hono()
 
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
@@ -135,12 +142,18 @@ export function createGatewayApp(config: GatewayConfig): Hono {
               }
             }
           })
+          const trailer: Record<string, unknown> = {}
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
-            await stream.writeSSE({
-              data: JSON.stringify({
-                x_shipyard: { model: ctx.model, provider: ctx.provider, costUsd: ctx.costUsd },
-              }),
-            })
+            trailer.model = ctx.model
+            trailer.provider = ctx.provider
+            trailer.costUsd = ctx.costUsd
+          }
+          if (exposeAd && ctx.loopCategory) {
+            trailer.loopCategory = ctx.loopCategory
+            trailer.loopTier = ctx.loopTier
+          }
+          if (Object.keys(trailer).length > 0) {
+            await stream.writeSSE({ data: JSON.stringify({ x_shipyard: trailer }) })
           }
           await stream.writeSSE({ data: '[DONE]' })
         } catch (err) {
@@ -156,6 +169,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
         if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+      }
+      if (exposeAd && ctx.loopCategory) {
+        c.header('x-shipyard-loop-category', ctx.loopCategory)
+        if (ctx.loopTier) c.header('x-shipyard-loop-tier', ctx.loopTier)
       }
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {

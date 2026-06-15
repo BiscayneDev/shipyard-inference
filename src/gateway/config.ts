@@ -26,6 +26,16 @@ export interface GatewayConfig {
   models?: GatewayModel[]
   /** Emit `x-shipyard-*` cost headers / trailer. Default true. */
   exposeCostHeaders?: boolean
+  /**
+   * Apply the envelope classifier's derived routing hints (auto-tier loops the
+   * caller didn't hand-tune; caller hints win). Default true at the gateway.
+   */
+  autoRoute?: boolean
+  /**
+   * Emit `x-shipyard-loop-category` / `x-shipyard-loop-tier` headers / trailer
+   * — the ad-inventory signal the spinner reads. Default true.
+   */
+  exposeAdSignal?: boolean
   /** Port for `startGateway`. Default 8787. */
   port?: number
 }

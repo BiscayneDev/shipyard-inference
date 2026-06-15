@@ -52,6 +52,29 @@ export interface RoutingHints {
   tags?: string[]
 }
 
+/**
+ * Coarse, structural classification of the *kind* of agent loop a request
+ * belongs to — derived from the request envelope (tool signatures, volume),
+ * never from message content. This is the ad-inventory targeting key:
+ * advertisers buy placement on long-running loops (coding / research) rather
+ * than fine-grained intent. See {@link AdSignal} and `classify`.
+ */
+export type LoopCategory = 'coding' | 'research' | 'writing' | 'data' | 'chat'
+
+/** Predicted spinner-inventory size for a loop: `long` loops generate more impressions. */
+export type LoopTier = 'short' | 'long'
+
+/**
+ * The ad-inventory signal a `Router` emits per request, computed from the
+ * envelope only (no message content read). Consumed by the spinner/ad layer to
+ * decide whether — and what — to show; shipyard emits the signal, it does not
+ * select or serve ads.
+ */
+export interface AdSignal {
+  loopCategory: LoopCategory
+  loopTier: LoopTier
+}
+
 export interface LLMChatParams {
   system: string
   messages: ChatMessage[]

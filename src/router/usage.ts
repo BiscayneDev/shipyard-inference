@@ -1,4 +1,4 @@
-import type { UsageInfo } from '../types.js'
+import type { UsageInfo, LoopCategory, LoopTier } from '../types.js'
 
 /** One completed request, as handed to a `UsageRecorder`. */
 export interface UsageRecord {
@@ -15,6 +15,10 @@ export interface UsageRecord {
   latencyMs: number
   /** Unix-ms timestamp the request completed. */
   at: number
+  /** Envelope-classified loop category, when classification ran. */
+  loopCategory?: LoopCategory
+  /** Envelope-classified loop length tier, when classification ran. */
+  loopTier?: LoopTier
 }
 
 /**
@@ -35,6 +39,8 @@ export interface UsageModelTotals {
   baselineCostUsd: number
   /** Total saved vs baseline (`baselineCostUsd − costUsd` over those requests). */
   savedUsd: number
+  /** Summed wall-clock latency; `latencyMs / requests` is the mean loop time. */
+  latencyMs: number
 }
 
 export interface UsageTotals extends UsageModelTotals {
@@ -42,6 +48,12 @@ export interface UsageTotals extends UsageModelTotals {
   perModel: Record<string, UsageModelTotals>
   /** Per-user breakdown, keyed by `userId` (records without a userId are omitted). */
   perUser: Record<string, UsageModelTotals>
+  /**
+   * Per-loop-category breakdown, keyed by `loopCategory` (records without a
+   * category are omitted). The `latencyMs`/`outputTokens` here are the learned
+   * basis for sizing ad inventory per category over time.
+   */
+  perCategory: Record<string, UsageModelTotals>
 }
 
 function emptyTotals(): UsageModelTotals {
@@ -52,6 +64,7 @@ function emptyTotals(): UsageModelTotals {
     costUsd: 0,
     baselineCostUsd: 0,
     savedUsd: 0,
+    latencyMs: 0,
   }
 }
 
@@ -64,6 +77,7 @@ export class MemoryUsageRecorder implements UsageRecorder {
   private overall = emptyTotals()
   private byModel = new Map<string, UsageModelTotals>()
   private byUser = new Map<string, UsageModelTotals>()
+  private byCategory = new Map<string, UsageModelTotals>()
 
   record(record: UsageRecord): void {
     const inputTokens = record.usage?.inputTokens ?? 0
@@ -81,6 +95,7 @@ export class MemoryUsageRecorder implements UsageRecorder {
       t.costUsd += cost
       t.baselineCostUsd += baseline
       t.savedUsd += saved
+      t.latencyMs += record.latencyMs
     }
 
     add(this.overall)
@@ -95,6 +110,12 @@ export class MemoryUsageRecorder implements UsageRecorder {
       add(user)
       this.byUser.set(record.userId, user)
     }
+
+    if (record.loopCategory !== undefined) {
+      const category = this.byCategory.get(record.loopCategory) ?? emptyTotals()
+      add(category)
+      this.byCategory.set(record.loopCategory, category)
+    }
   }
 
   totals(): UsageTotals {
@@ -102,12 +123,15 @@ export class MemoryUsageRecorder implements UsageRecorder {
     for (const [model, totals] of this.byModel) perModel[model] = { ...totals }
     const perUser: Record<string, UsageModelTotals> = {}
     for (const [user, totals] of this.byUser) perUser[user] = { ...totals }
-    return { ...this.overall, perModel, perUser }
+    const perCategory: Record<string, UsageModelTotals> = {}
+    for (const [category, totals] of this.byCategory) perCategory[category] = { ...totals }
+    return { ...this.overall, perModel, perUser, perCategory }
   }
 
   reset(): void {
     this.overall = emptyTotals()
     this.byModel.clear()
     this.byUser.clear()
+    this.byCategory.clear()
   }
 }

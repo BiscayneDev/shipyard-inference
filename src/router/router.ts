@@ -5,7 +5,11 @@ import type {
   UsageInfo,
   LLMStreamEvent,
   LLMStreamOptions,
+  AdSignal,
+  LoopCategory,
+  LoopTier,
 } from '../types.js'
+import { classify, mergeRoutingHints } from './classify.js'
 import type { ModelMetadata, ProviderCandidate } from './candidates.js'
 import type { CacheStore } from './cache.js'
 import { cacheKey } from './cache.js'
@@ -25,6 +29,14 @@ import {
 export type RouterEvent =
   | { type: 'cache_hit'; key: string }
   | { type: 'cache_miss'; key: string }
+  | {
+      /** The envelope classifier ran. Emitted once per request, before routing. */
+      type: 'classified'
+      loopCategory: LoopCategory
+      loopTier: LoopTier
+      /** Whether the derived routing hints were applied (`autoRoute`). */
+      autoRouted: boolean
+    }
   | {
       type: 'route_selected'
       candidateId: string
@@ -56,6 +68,10 @@ export type RouterEvent =
       savedUsd?: number
       userId?: string
       latencyMs: number
+      /** Envelope-classified loop category for this request, when classification ran. */
+      loopCategory?: LoopCategory
+      /** Envelope-classified loop length tier, when classification ran. */
+      loopTier?: LoopTier
     }
 
 export interface RouterOptions {
@@ -86,6 +102,13 @@ export interface RouterOptions {
   retry?: RetryPolicy
   /** Max number of candidates to try. Defaults to "try them all". */
   maxRetries?: number
+  /**
+   * Apply the envelope classifier's derived `RoutingHints` to each request, so
+   * the router auto-tiers loops the caller didn't hand-tune (caller-supplied
+   * hints always win). Off by default — existing routing is unchanged. The
+   * ad-inventory signal is emitted regardless (it never alters routing).
+   */
+  autoRoute?: boolean
 }
 
 /**
@@ -110,10 +133,11 @@ export class Router implements LLMProvider {
 
   async chat(params: LLMChatParams): Promise<LLMResponse> {
     const compressed = this.opts.compress ? await this.opts.compress(params) : params
+    const { params: routed, ad } = this.classifyAndRoute(compressed)
 
-    const key = this.opts.cache ? cacheKey(compressed) : undefined
+    const key = this.opts.cache ? cacheKey(routed) : undefined
     if (this.opts.cache && key) {
-      const hit = await this.opts.cache.get(compressed)
+      const hit = await this.opts.cache.get(routed)
       if (hit) {
         this.emit({ type: 'cache_hit', key })
         return hit
@@ -121,7 +145,7 @@ export class Router implements LLMProvider {
       this.emit({ type: 'cache_miss', key })
     }
 
-    const decisions = this.plan(compressed)
+    const decisions = this.plan(routed)
     if (decisions.length === 0) {
       throw new NoCapableModelError(
         '[shipyard-inference] No candidate model satisfies the routing hints',
@@ -146,10 +170,10 @@ export class Router implements LLMProvider {
         const startedAt = performance.now()
         try {
           const res = await decision.candidate.provider.chat({
-            ...compressed,
-            model: decision.model ?? compressed.model,
+            ...routed,
+            model: decision.model ?? routed.model,
           })
-          if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
+          if (this.opts.cache && key) await this.opts.cache.set(routed, res)
           this.emit({
             type: 'route_success',
             candidateId: decision.candidate.id,
@@ -160,7 +184,8 @@ export class Router implements LLMProvider {
             decision,
             res.usage,
             performance.now() - startedAt,
-            compressed.metadata?.userId,
+            routed.metadata?.userId,
+            ad,
           )
           return res
         } catch (error) {
@@ -209,10 +234,11 @@ export class Router implements LLMProvider {
     opts?: LLMStreamOptions,
   ): AsyncIterable<LLMStreamEvent> {
     const compressed = this.opts.compress ? await this.opts.compress(params) : params
+    const { params: routed, ad } = this.classifyAndRoute(compressed)
 
-    const key = this.opts.cache ? cacheKey(compressed) : undefined
+    const key = this.opts.cache ? cacheKey(routed) : undefined
     if (this.opts.cache && key) {
-      const hit = await this.opts.cache.get(compressed)
+      const hit = await this.opts.cache.get(routed)
       if (hit) {
         this.emit({ type: 'cache_hit', key })
         yield* responseToStream(hit)
@@ -221,7 +247,7 @@ export class Router implements LLMProvider {
       this.emit({ type: 'cache_miss', key })
     }
 
-    const decisions = this.plan(compressed)
+    const decisions = this.plan(routed)
     if (decisions.length === 0) {
       throw new NoCapableModelError(
         '[shipyard-inference] No candidate model satisfies the routing hints',
@@ -246,9 +272,9 @@ export class Router implements LLMProvider {
       for (;;) {
         const startedAt = performance.now()
         try {
-          for await (const event of this.streamFromDecision(decision, compressed, opts)) {
+          for await (const event of this.streamFromDecision(decision, routed, opts)) {
             if (event.type === 'done') {
-              if (this.opts.cache && key) await this.opts.cache.set(compressed, event.response)
+              if (this.opts.cache && key) await this.opts.cache.set(routed, event.response)
               this.emit({
                 type: 'route_success',
                 candidateId: decision.candidate.id,
@@ -259,7 +285,8 @@ export class Router implements LLMProvider {
                 decision,
                 event.response.usage,
                 performance.now() - startedAt,
-                compressed.metadata?.userId,
+                routed.metadata?.userId,
+                ad,
               )
             } else {
               committed = true
@@ -313,6 +340,26 @@ export class Router implements LLMProvider {
       yield* provider.chatStream(chatParams, opts)
     } else {
       yield* responseToStream(await provider.chat(chatParams))
+    }
+  }
+
+  /**
+   * Run the envelope classifier once: emit the `classified` event, optionally
+   * fold the derived routing hints into the request (`autoRoute`, caller hints
+   * winning), and return the request to route plus the ad-inventory signal.
+   */
+  private classifyAndRoute(params: LLMChatParams): { params: LLMChatParams; ad: AdSignal } {
+    const { hints, ad } = classify(params)
+    this.emit({
+      type: 'classified',
+      loopCategory: ad.loopCategory,
+      loopTier: ad.loopTier,
+      autoRouted: this.opts.autoRoute === true,
+    })
+    if (!this.opts.autoRoute) return { params, ad }
+    return {
+      params: { ...params, routingHints: mergeRoutingHints(params.routingHints, hints) },
+      ad,
     }
   }
 
@@ -375,6 +422,7 @@ export class Router implements LLMProvider {
     usage: UsageInfo | undefined,
     latencyMs: number,
     userId?: string,
+    ad?: AdSignal,
   ): void {
     const meta =
       decision.meta ??
@@ -402,6 +450,8 @@ export class Router implements LLMProvider {
       savedUsd,
       userId,
       latencyMs,
+      loopCategory: ad?.loopCategory,
+      loopTier: ad?.loopTier,
     })
     this.opts.usageRecorder?.record({
       candidateId: decision.candidate.id,
@@ -413,6 +463,8 @@ export class Router implements LLMProvider {
       userId,
       latencyMs,
       at: Date.now(),
+      loopCategory: ad?.loopCategory,
+      loopTier: ad?.loopTier,
     })
   }
 }
