@@ -65,7 +65,13 @@ export interface LLMChatParams {
    * attribute cost/savings per end user). Read only by `Router`'s usage
    * recorder; ignored by leaf providers.
    */
-  metadata?: { userId?: string } & Record<string, unknown>
+  metadata?: {
+    userId?: string
+    tenantId?: string
+    projectId?: string
+    apiKeyId?: string
+    apiKeyLabel?: string
+  } & Record<string, unknown>
 }
 
 /** Token accounting for a single completion, when the upstream reports it. */

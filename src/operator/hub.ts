@@ -16,6 +16,8 @@ import type {
   Overview,
   RequestEvent,
   RoutingHealth,
+  SavingsSnapshot,
+  SlaSummary,
   StoredEvent,
   TelemetryEvent,
   TimeseriesBucket,
@@ -36,6 +38,65 @@ export interface TelemetryHubOptions {
 }
 
 const HOUR = 3_600_000
+
+export interface SavingsSnapshotInput {
+  tenantId: string
+  projectId?: string
+  windowMs: number
+  at: number
+  overview: Overview
+}
+
+export function buildSavingsSnapshot(input: SavingsSnapshotInput): SavingsSnapshot {
+  const { overview } = input
+  return {
+    kind: 'savings_snapshot',
+    at: input.at,
+    tenantId: input.tenantId,
+    projectId: input.projectId,
+    windowMs: input.windowMs,
+    requests: overview.requests,
+    inputTokens: overview.inputTokens,
+    outputTokens: overview.outputTokens,
+    actualCostUsd: overview.actualCostUsd,
+    baselineCostUsd: overview.baselineCostUsd,
+    savedUsd: overview.savedUsd,
+    savingsPct: overview.savingsPct,
+    revenueUsd: overview.revenueUsd,
+    marginUsd: overview.marginUsd,
+    marginPct: overview.marginPct,
+    users: overview.users,
+    sources: overview.sources,
+  }
+}
+
+export interface SlaSummaryInput {
+  tenantId: string
+  projectId?: string
+  windowMs: number
+  at: number
+  overview: Overview
+}
+
+export function buildSlaSummary(input: SlaSummaryInput): SlaSummary {
+  const { overview } = input
+  const successRatePct = Math.max(0, 100 - overview.errorRate * 100)
+  return {
+    kind: 'sla_summary',
+    at: input.at,
+    tenantId: input.tenantId,
+    projectId: input.projectId,
+    windowMs: input.windowMs,
+    requests: overview.requests,
+    availabilityPct: Math.max(0, 100 - overview.errorRate * 100),
+    successRatePct,
+    errorRatePct: overview.errorRate * 100,
+    p50LatencyMs: overview.latencyP50Ms,
+    p95LatencyMs: overview.latencyP95Ms,
+    p99LatencyMs: overview.latencyP99Ms,
+    breachCount: overview.errors,
+  }
+}
 
 /** A request event after the hub tags it with a source. */
 type StoredRequest = RequestEvent & { source: string }

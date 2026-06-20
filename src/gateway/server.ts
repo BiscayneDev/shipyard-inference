@@ -66,11 +66,13 @@ function errorJson(
  * via AsyncLocalStorage and surfaced as `x-shipyard-*` headers / an SSE trailer.
  */
 export function createGatewayApp(config: GatewayConfig): Hono {
-  if ((!config.apiKeys || config.apiKeys.length === 0) && !config.keyStore) {
+  if ((!config.apiKeys || config.apiKeys.length === 0) && !config.keyStore && !config.bootstrapAuth) {
     console.warn(
       '[shipyard-inference] gateway started with NO api keys and no key store — ' +
         'auth is disabled. Set apiKeys or a keyStore for anything but local dev.',
     )
+  } else if (config.bootstrapAuth && (!config.apiKeys || config.apiKeys.length === 0)) {
+    console.warn('[shipyard-inference] gateway running in bootstrap auth mode (local dev).')
   }
 
   const router = new Router({
@@ -192,10 +194,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = openAIRequestToChatParams(body)
-    // A per-user key attributes the request to its account — so the developer's
-    // IDE traffic ties to their wallet, no `user` field needed. Overrides `user`.
-    if (auth.account?.userId) {
-      params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
+    // A tenant/project-scoped key attributes the request to its account — so
+    // the caller's traffic ties to the right tenant, project, and wallet.
+    if (auth.account) {
+      params.metadata = {
+        ...(params.metadata ?? {}),
+        userId: auth.account.projectId ?? auth.account.userId,
+        tenantId: auth.account.tenantId,
+        projectId: auth.account.projectId,
+        apiKeyId: auth.account.userId,
+        apiKeyLabel: auth.account.label,
+      }
     }
     const id = requestId()
     const ctx: RequestContext = {}

@@ -203,6 +203,7 @@ const keyStore: ApiKeyStore =
         table: process.env.SUPABASE_API_KEYS_TABLE,
       })
     : new MemoryApiKeyStore()
+const bootstrapAuth = !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
 
 // Tender on the gateway — an agent's OWN traffic earns kickbacks: a sponsored
 // line is auctioned during each request's wait and shown in the developer's
@@ -289,10 +290,11 @@ const gateway = createGatewayApp({
   pricingOverrides,
   apiKeys: API_KEYS,
   keyStore,
+  bootstrapAuth,
   tender: gatewayTender,
   telemetry: reporter,
   cors: { origins: '*' },
-  // The terminal event for a request fires *inside* the (still-alive) streaming
+
   // invocation — flush then, so a stream's `request_completed` reaches Supabase
   // before the function freezes. (Post-`next()` flush below covers non-streams.)
   onEvent: (event) => {
@@ -305,6 +307,7 @@ const gateway = createGatewayApp({
 const operator = createOperatorConsole({
   hub,
   operatorTokens: OPERATOR_TOKENS,
+  keyStore,
   cors: { origins: '*' },
 })
 

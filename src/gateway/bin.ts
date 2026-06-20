@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { startGateway } from './serve.js'
 import type { GatewayConfig } from './config.js'
 import { createTelemetryReporter, type TelemetryReporter } from '../operator/reporter.js'
+import { SupabaseApiKeyStore, type ApiKeyStore } from './keys.js'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name)
@@ -30,6 +31,15 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  const keyStore: ApiKeyStore | undefined =
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+      ? new SupabaseApiKeyStore({
+          url: process.env.SUPABASE_URL,
+          key: process.env.SUPABASE_SERVICE_KEY,
+          table: process.env.SUPABASE_API_KEYS_TABLE,
+        })
+      : undefined
+  if (keyStore && !config.keyStore) config.keyStore = keyStore
   const portArg = arg('--port')
   if (portArg) config.port = Number(portArg)
 

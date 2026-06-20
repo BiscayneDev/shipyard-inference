@@ -100,17 +100,20 @@ and what it cost. `hono` + `@hono/node-server` are optional peers — `import { 
 pulls no server code. See [`examples/hermes-agent`](./examples/hermes-agent) for
 the Hermes Agent + Nous/Hermes setup.
 
-## Operator command center
+## Hosted control plane
 
-One **central dashboard for everything happening with Shipyard inference**, across
-every place it's integrated — your own home, outside any one consumer app. It's two
-parts: a drop-in **reporter** every deployment wires in, and a **hub** that ingests,
-persists to disk, aggregates, and serves the operator SPA.
+Shipyard Inference includes a lightweight operator surface for **LLM spend control**:
+one private dashboard that shows **usage, savings, and billing** across every deployment.
+It is built for customer-facing hosted control planes and paid pilots, so buyers can see
+real consumption and real savings without learning our internal plumbing.
+
+It has two parts: a drop-in **reporter** every integration wires in, and a **hub** that
+ingests, persists to disk, aggregates, and serves the private operator SPA.
 
 **Wire it in (one line per integration):** pass `reporter.onEvent` to any `Router` or
 gateway. Every routing decision, failover, retry, error, cache lookup, and completed
 request — with real tokens, cost, baseline, and savings — flows to the hub, tagged with
-a `source`.
+a deployment `source`.
 
 ```ts
 import { Router, createTelemetryReporter } from 'shipyard-inference'
@@ -154,19 +157,21 @@ SHIPYARD_OPERATOR_TOKEN=secret SHIPYARD_TELEMETRY_TOKEN=ingest npx shipyard-oper
 # → http://localhost:8799  (enter the operator token to unlock)
 ```
 
-The command center tracks requests/RPM, success & error rates, tokens/TPM, **actual vs
-baseline vs saved $ (+ savings %)**, modeled **revenue vs provider cost → gross margin**,
-cache hit / failover / retry rates, latency p50/p95/p99, a time series, per-model /
-provider / user / source / error breakdowns, routing health, a live request feed, SLO
-alert chips, and **billing & settlement** (settled/owed/stuck + live treasury USDC
-balance with explorer links). Revenue is modeled in the hub from `SHIPYARD_MARGIN_PCT`
+The dashboard shows requests/RPM, token volume, error rate, p50/p95/p99 latency,
+**actual spend vs baseline vs saved $**, modeled **billable revenue vs provider cost →
+gross margin**, cache hit / failover / retry rates, a time series, per-model / provider /
+user / deployment breakdowns, reliability, recent usage, and **billing & settlement**
+(settled USDC, stuck settlements, and live treasury balance with explorer links).
+Revenue is modeled in the hub from `SHIPYARD_MARGIN_PCT`
 (`min(actual·(1+margin), baseline)`, Dock's M2 rule) so consumers need zero billing
 wiring; settlements report the real money. Telemetry persists to disk
 (`SHIPYARD_OPERATOR_DATA_DIR`, append-only JSONL) and the hub replays the recent window
 on restart. Set `SHIPYARD_TREASURY_WALLET` (+ `SHIPYARD_SETTLE_NETWORK`/`_RPC_URL`) to
 light up the treasury panel. Mount it onto an existing server with
-`createOperatorConsole({ hub })`. See [`examples/chat-portal`](./examples/chat-portal)
-for a working source (`OPERATOR_URL=… node server.mjs`).
+`createOperatorConsole({ hub })`. For a **paid pilot / savings audit**, open the hosted
+dashboard, unlock it with the operator token, and present the savings/billing view to the
+buyer. See [`examples/chat-portal`](./examples/chat-portal) for a working source
+(`OPERATOR_URL=… node server.mjs`).
 
 ## Fund a wallet → cheap inference
 

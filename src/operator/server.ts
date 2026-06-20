@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { cors } from 'hono/cors'
 import { checkBearer } from '../gateway/auth.js'
+import { MemoryApiKeyStore, type ApiKeyIssueInput, type ApiKeyStore } from '../gateway/keys.js'
 import type { TelemetryHub } from './hub.js'
 import type { IngestPayload } from './types.js'
 
@@ -17,6 +18,8 @@ export interface OperatorConsoleOptions {
   cors?: { origins: string[] | '*' }
   /** Whether the billing panel is wired (treasury configured). Surfaced in `/api/meta`. */
   treasuryConfigured?: boolean
+  /** Hosted-control-plane API key store; defaults to ephemeral bootstrap mode. */
+  keyStore?: ApiKeyStore
 }
 
 const STATIC: Record<string, [string, string]> = {
@@ -50,11 +53,15 @@ export function parseWindowMs(raw: string | undefined, fallback = 3_600_000): nu
  */
 export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
   const { hub } = opts
+  const keyStore = opts.keyStore ?? new MemoryApiKeyStore()
   if (!opts.operatorTokens || opts.operatorTokens.length === 0) {
     console.warn(
       '[shipyard-operator] no operator tokens set — the dashboard API is OPEN. ' +
         'Set SHIPYARD_OPERATOR_TOKEN for anything but local dev.',
     )
+  }
+  if (!opts.keyStore) {
+    console.warn('[shipyard-operator] no api key store configured — using in-memory bootstrap mode.')
   }
 
   const app = new Hono()
@@ -119,6 +126,24 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
   })
   api.get('/routing', (c) => c.json(hub.routingHealth(window(c), source(c))))
   api.get('/billing', (c) => c.json(hub.billing(window(c), source(c))))
+
+  api.get('/keys', async (c) => c.json({ keys: await keyStore.listAccounts() }))
+  api.post('/keys', async (c) => {
+    let body: ApiKeyIssueInput
+    try {
+      body = (await c.req.json()) as ApiKeyIssueInput
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400)
+    }
+    const issued = await keyStore.issue(body ?? {}, Date.now())
+    return c.json(issued, 201)
+  })
+  api.delete('/keys/:key', async (c) => {
+    const key = c.req.param('key')
+    const revoked = await keyStore.revoke(key)
+    if (!revoked) return c.json({ error: 'key not found' }, 404)
+    return c.json({ revoked: true })
+  })
 
   app.route('/api', api)
 

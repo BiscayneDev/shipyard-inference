@@ -65,6 +65,8 @@ export interface GatewayConfig {
    * their wallet for routing rebates + Tender kickbacks. Composed with `apiKeys`.
    */
   keyStore?: ApiKeyStore
+  /** Local bootstrap mode: allow unauthenticated requests while still resolving any issued key. */
+  bootstrapAuth?: boolean
   cors?: { origins: string[] | '*' }
   /** Models advertised by `GET /v1/models`. Defaults to candidates' declared models. */
   models?: GatewayModel[]

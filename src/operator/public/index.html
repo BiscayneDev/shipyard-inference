@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shipyard Inference · Operator</title>
+    <title>Shipyard Inference · Hosted control plane</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -17,12 +17,29 @@
           <span class="logo">◢</span>
           <div>
             <div class="brand-name">Shipyard Inference</div>
-            <div class="brand-sub">Operator command center</div>
+            <div class="brand-sub">Hosted control plane · LLM spend control</div>
           </div>
+        </div>
+        <div class="gate-copy">
+          <div class="eyebrow">Usage · savings · billing</div>
+          <h1>Give customers a private control plane for LLM spend.</h1>
+          <p>
+            Shipyard Inference surfaces usage, savings, and billing in one lightweight dashboard.
+            It is built to justify a paid pilot, prove savings, and keep the control plane simple.
+          </p>
+        </div>
+        <ul class="gate-points" aria-label="What the dashboard shows">
+          <li><strong>Usage</strong> requests, tokens, latency, and reliability by tenant or deployment.</li>
+          <li><strong>Savings</strong> actual spend versus baseline, plus modeled revenue and margin.</li>
+          <li><strong>Billing</strong> settled USDC, stuck settlements, and live treasury balance.</li>
+        </ul>
+        <div class="gate-actions">
+          <a class="btn btn-secondary" href="https://openshipyard.xyz" target="_blank" rel="noopener">Request a paid pilot / savings audit</a>
+          <button class="btn" type="submit">Unlock dashboard</button>
         </div>
         <label class="gate-label" for="token">Operator token</label>
         <input id="token" class="gate-input mono" type="password" placeholder="SHIPYARD_OPERATOR_TOKEN" autocomplete="off" />
-        <button class="btn" type="submit">Unlock</button>
+        <div class="gate-note">Enter the token to open the private operator view.</div>
         <div id="gate-error" class="gate-error hidden"></div>
       </form>
     </div>
@@ -33,8 +50,8 @@
         <div class="brand">
           <span class="logo">◢</span>
           <div>
-            <div class="brand-name">Shipyard Inference <span class="brand-tag">OPERATOR</span></div>
-            <div class="brand-sub" id="sub">every request, every deployment</div>
+            <div class="brand-name">Shipyard Inference <span class="brand-tag">CONTROL PLANE</span></div>
+            <div class="brand-sub" id="sub">usage, savings, and billing for LLM spend control</div>
           </div>
         </div>
         <div class="controls">
@@ -55,11 +72,11 @@
         <!-- charts -->
         <section class="cards-2">
           <div class="card">
-            <div class="card-head"><h3>Requests / min</h3><span class="card-sub" id="rpm-sub"></span></div>
+            <div class="card-head"><h3>Usage rate</h3><span class="card-sub" id="rpm-sub"></span></div>
             <div id="chart-requests" class="chart"></div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Cost vs. saved</h3><span class="card-sub" id="cost-sub"></span></div>
+            <div class="card-head"><h3>Spend vs. savings</h3><span class="card-sub" id="cost-sub"></span></div>
             <div id="chart-cost" class="chart"></div>
           </div>
         </section>
@@ -67,7 +84,7 @@
         <!-- breakdowns -->
         <section class="card">
           <div class="card-head">
-            <h3>Breakdown</h3>
+            <h3>Spend breakdown</h3>
             <div class="seg" id="dim-seg"></div>
           </div>
           <div id="breakdown" class="table-wrap"></div>
@@ -76,11 +93,11 @@
         <!-- routing + billing -->
         <section class="cards-2">
           <div class="card">
-            <div class="card-head"><h3>Routing health</h3></div>
+            <div class="card-head"><h3>Reliability</h3></div>
             <div id="routing"></div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Billing &amp; settlement</h3><span class="card-sub" id="billing-sub"></span></div>
+            <div class="card-head"><h3>Billing</h3><span class="card-sub" id="billing-sub"></span></div>
             <div id="billing"></div>
           </div>
         </section>
@@ -88,11 +105,11 @@
         <!-- feed + errors -->
         <section class="cards-2">
           <div class="card">
-            <div class="card-head"><h3>Live requests</h3><span class="card-sub" id="feed-sub"></span></div>
+            <div class="card-head"><h3>Recent usage</h3><span class="card-sub" id="feed-sub"></span></div>
             <div id="feed" class="table-wrap tall"></div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Errors</h3></div>
+            <div class="card-head"><h3>Exceptions</h3></div>
             <div id="errors" class="table-wrap tall"></div>
           </div>
         </section>

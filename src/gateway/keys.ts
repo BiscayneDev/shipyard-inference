@@ -1,23 +1,31 @@
 import { createHash, randomBytes } from 'node:crypto'
 
-// Per-user API keys for the consumer surface: a developer signs up, gets a
-// `sk-shipyard-…` key, and pastes it (+ the gateway baseURL) into their IDE.
-// Every request the key authenticates is attributed to that account, so routing
-// savings and Tender kickbacks accrue to the right wallet — no `user` field
-// needed from the IDE. Only a SHA-256 of the key is stored; the plaintext is
-// shown once at issue.
+// API keys for the hosted control plane: each key resolves to a tenant/project
+// identity, and the plaintext secret is shown only once at issue time. Only a
+// SHA-256 of the key is stored.
 //
 // `resolve` is async (a persistent store hits a DB) but on the request hot path
 // it's served from a short-TTL in-memory cache, so steady-state auth is local.
 
 export interface Account {
-  /** Stable account id — the attribution key (becomes `metadata.userId`). */
+  /** Stable identity for the API key (used as a fallback `metadata.userId`). */
   userId: string
-  /** Payout wallet for routing rebates + Tender kickbacks. */
+  /** Owning tenant for the key. */
+  tenantId?: string
+  /** Project scoped under the tenant. */
+  projectId?: string
+  /** Optional external wallet for billing / kickbacks. */
   wallet?: string
   /** Human label, e.g. "cursor-laptop". */
   label?: string
+  /** Optional scopes used by the operator/admin view. */
+  scopes?: string[]
+  /** `active` keys resolve; `revoked` keys remain listed but fail auth. */
+  status: 'active' | 'revoked'
+  /** Unix-ms creation time. */
   createdAt: number
+  /** Unix-ms revocation time, when revoked. */
+  revokedAt?: number
 }
 
 export interface IssuedKey {
@@ -26,14 +34,23 @@ export interface IssuedKey {
   account: Account
 }
 
+export interface ApiKeyIssueInput {
+  tenantId?: string
+  projectId?: string
+  userId?: string
+  wallet?: string
+  label?: string
+  scopes?: string[]
+}
+
 export interface ApiKeyStore {
   /** Resolve a plaintext key to its account, or undefined if unknown/revoked. */
   resolve(key: string): Promise<Account | undefined>
   /** Issue a new key for an account (creates the account). */
-  issue(input: { userId?: string; wallet?: string; label?: string }, at: number): Promise<IssuedKey>
+  issue(input: ApiKeyIssueInput, at: number): Promise<IssuedKey>
   /** Revoke a key by its plaintext value. Returns true if it existed. */
-  revoke(key: string): Promise<boolean>
-  /** All accounts with a live key (for an operator view). */
+  revoke(key: string, at?: number): Promise<boolean>
+  /** All known accounts (live + revoked) for an operator view. */
   listAccounts(): Promise<Account[]>
 }
 
@@ -49,33 +66,47 @@ function newUserId(): string {
   return `u_${randomBytes(8).toString('hex')}`
 }
 
+function normalizeIssueInput(input: ApiKeyIssueInput): Account {
+  const fallbackId = input.projectId ?? input.tenantId ?? input.userId ?? newUserId()
+  return {
+    userId: input.userId ?? fallbackId,
+    tenantId: input.tenantId,
+    projectId: input.projectId,
+    wallet: input.wallet,
+    label: input.label,
+    scopes: input.scopes,
+    status: 'active',
+    createdAt: 0,
+  }
+}
+
 /** In-memory key store. Process-local — fine for a single long-lived server. */
 export class MemoryApiKeyStore implements ApiKeyStore {
-  private readonly byHash = new Map<string, Account>()
+  private readonly byHash = new Map<string, { key: string; account: Account }>()
 
   async resolve(key: string): Promise<Account | undefined> {
     if (!key) return undefined
-    return this.byHash.get(hashApiKey(key))
+    const record = this.byHash.get(hashApiKey(key))
+    if (!record || record.account.status !== 'active') return undefined
+    return record.account
   }
 
-  async issue(input: { userId?: string; wallet?: string; label?: string }, at: number): Promise<IssuedKey> {
+  async issue(input: ApiKeyIssueInput, at: number): Promise<IssuedKey> {
     const key = generateApiKey()
-    const account: Account = {
-      userId: input.userId ?? newUserId(),
-      wallet: input.wallet,
-      label: input.label,
-      createdAt: at,
-    }
-    this.byHash.set(hashApiKey(key), account)
+    const account = { ...normalizeIssueInput(input), createdAt: at }
+    this.byHash.set(hashApiKey(key), { key, account })
     return { key, account }
   }
 
-  async revoke(key: string): Promise<boolean> {
-    return this.byHash.delete(hashApiKey(key))
+  async revoke(key: string, at = Date.now()): Promise<boolean> {
+    const record = this.byHash.get(hashApiKey(key))
+    if (!record || record.account.status === 'revoked') return false
+    record.account = { ...record.account, status: 'revoked', revokedAt: at }
+    return true
   }
 
   async listAccounts(): Promise<Account[]> {
-    return [...this.byHash.values()]
+    return [...this.byHash.values()].map((r) => ({ ...r.account }))
   }
 }
 
@@ -93,10 +124,30 @@ export interface SupabaseApiKeyStoreOptions {
 }
 
 interface KeyRow {
+  key_hash: string
   user_id: string
+  tenant_id: string | null
+  project_id: string | null
   wallet: string | null
   label: string | null
+  scopes: string[] | null
+  status: 'active' | 'revoked'
   created_at: number
+  revoked_at: number | null
+}
+
+function rowToAccount(row: KeyRow): Account {
+  return {
+    userId: row.user_id,
+    tenantId: row.tenant_id ?? undefined,
+    projectId: row.project_id ?? undefined,
+    wallet: row.wallet ?? undefined,
+    label: row.label ?? undefined,
+    scopes: row.scopes ?? undefined,
+    status: row.status,
+    createdAt: row.created_at,
+    revokedAt: row.revoked_at ?? undefined,
+  }
 }
 
 /**
@@ -133,54 +184,64 @@ export class SupabaseApiKeyStore implements ApiKeyStore {
     const hit = this.cache.get(h)
     const now = Date.now()
     if (hit && now - hit.at < this.ttl) return hit.account
-    const url = `${this.base}/${this.table}?select=user_id,wallet,label,created_at&key_hash=eq.${h}&limit=1`
+    const url =
+      `${this.base}/${this.table}?select=key_hash,user_id,tenant_id,project_id,wallet,label,scopes,status,created_at,revoked_at` +
+      `&key_hash=eq.${h}&status=eq.active&revoked_at=is.null&limit=1`
     const res = await this.fetchImpl(url, { headers: this.headers })
     if (!res.ok) throw new Error(`supabase key resolve failed: ${res.status} ${await res.text().catch(() => '')}`)
     const rows = (await res.json()) as KeyRow[]
     const row = rows[0]
-    const account: Account | undefined = row
-      ? { userId: row.user_id, wallet: row.wallet ?? undefined, label: row.label ?? undefined, createdAt: row.created_at }
-      : undefined
+    const account: Account | undefined = row ? rowToAccount(row) : undefined
     this.cache.set(h, { account, at: now })
     return account
   }
 
-  async issue(input: { userId?: string; wallet?: string; label?: string }, at: number): Promise<IssuedKey> {
+  async issue(input: ApiKeyIssueInput, at: number): Promise<IssuedKey> {
     const key = generateApiKey()
-    const account: Account = {
-      userId: input.userId ?? newUserId(),
-      wallet: input.wallet,
-      label: input.label,
-      createdAt: at,
-    }
+    const account: Account = { ...normalizeIssueInput(input), createdAt: at }
     const res = await this.fetchImpl(`${this.base}/${this.table}`, {
       method: 'POST',
       headers: { ...this.headers, prefer: 'return=minimal' },
       body: JSON.stringify([
-        { key_hash: hashApiKey(key), user_id: account.userId, wallet: account.wallet ?? null, label: account.label ?? null, created_at: at },
+        {
+          key_hash: hashApiKey(key),
+          user_id: account.userId,
+          tenant_id: account.tenantId ?? null,
+          project_id: account.projectId ?? null,
+          wallet: account.wallet ?? null,
+          label: account.label ?? null,
+          scopes: account.scopes ?? null,
+          status: 'active',
+          created_at: at,
+          revoked_at: null,
+        },
       ]),
     })
     if (!res.ok) throw new Error(`supabase key issue failed: ${res.status} ${await res.text().catch(() => '')}`)
     return { key, account }
   }
 
-  async revoke(key: string): Promise<boolean> {
+  async revoke(key: string, at = Date.now()): Promise<boolean> {
     const h = hashApiKey(key)
-    const res = await this.fetchImpl(`${this.base}/${this.table}?key_hash=eq.${h}`, {
-      method: 'DELETE',
-      headers: { ...this.headers, prefer: 'return=minimal' },
+    const res = await this.fetchImpl(`${this.base}/${this.table}?key_hash=eq.${h}&status=eq.active`, {
+      method: 'PATCH',
+      headers: { ...this.headers, prefer: 'return=representation' },
+      body: JSON.stringify({ status: 'revoked', revoked_at: at }),
     })
     this.cache.delete(h)
-    return res.ok
+    if (!res.ok) return false
+    const rows = (await res.json().catch(() => [])) as KeyRow[]
+    return rows.length > 0
   }
 
   async listAccounts(): Promise<Account[]> {
-    const res = await this.fetchImpl(`${this.base}/${this.table}?select=user_id,wallet,label,created_at&order=created_at.desc`, {
-      headers: this.headers,
-    })
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?select=key_hash,user_id,tenant_id,project_id,wallet,label,scopes,status,created_at,revoked_at&order=created_at.desc`,
+      { headers: this.headers },
+    )
     if (!res.ok) throw new Error(`supabase key list failed: ${res.status}`)
     const rows = (await res.json()) as KeyRow[]
-    return rows.map((r) => ({ userId: r.user_id, wallet: r.wallet ?? undefined, label: r.label ?? undefined, createdAt: r.created_at }))
+    return rows.map(rowToAccount)
   }
 }
 
@@ -189,9 +250,16 @@ export const SUPABASE_API_KEYS_SCHEMA = `
 create table if not exists api_keys (
   key_hash   text   primary key,
   user_id    text   not null,
+  tenant_id  text,
+  project_id text,
   wallet     text,
   label      text,
-  created_at bigint not null
+  scopes     jsonb,
+  status     text   not null default 'active',
+  created_at bigint not null,
+  revoked_at bigint
 );
 create index if not exists api_keys_user_idx on api_keys (user_id);
+create index if not exists api_keys_tenant_idx on api_keys (tenant_id, project_id);
+create index if not exists api_keys_status_idx on api_keys (status, revoked_at);
 `

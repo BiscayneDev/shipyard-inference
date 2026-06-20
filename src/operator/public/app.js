@@ -1,4 +1,4 @@
-// Shipyard Inference — Operator command center (vanilla, no build step).
+// Shipyard Inference — hosted control plane (vanilla, no build step).
 'use strict'
 
 const TOKEN_KEY = 'shipyard_operator_token'
@@ -8,7 +8,7 @@ const DIMS = [
   ['model', 'Model'],
   ['provider', 'Provider'],
   ['user', 'User'],
-  ['source', 'Source'],
+  ['source', 'Deployment'],
 ]
 
 const state = {
@@ -97,7 +97,7 @@ function syncSeg() {
 }
 function renderSources() {
   const sel = $('source')
-  const opts = ['<option value="">All sources</option>']
+  const opts = ['<option value="">All deployments</option>']
     .concat((state.meta.sources || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`))
   sel.innerHTML = opts.join('')
   sel.value = state.source
@@ -152,14 +152,14 @@ function kpi(label, value, sub, cls) {
 }
 function renderKpis(o) {
   const cards = [
-    kpi('Requests', fmtInt(o.requests), fmtNum(o.rpm, 1) + ' /min'),
-    kpi('Tokens', fmtInt(o.inputTokens + o.outputTokens), fmtInt(o.tpm) + ' /min · ' + fmtInt(o.inputTokens) + ' in / ' + fmtInt(o.outputTokens) + ' out'),
-    kpi('Provider cost', fmtUsd(o.actualCostUsd), 'real spend'),
-    kpi('Saved', fmtUsd(o.savedUsd), fmtPct(o.savingsPct) + ' vs baseline', 'pos'),
-    kpi('Revenue (modeled)', fmtUsd(o.revenueUsd), state.meta.marginPct + '% margin rule', 'accent'),
+    kpi('Usage requests', fmtInt(o.requests), fmtNum(o.rpm, 1) + ' /min'),
+    kpi('Token volume', fmtInt(o.inputTokens + o.outputTokens), fmtInt(o.tpm) + ' /min · ' + fmtInt(o.inputTokens) + ' in / ' + fmtInt(o.outputTokens) + ' out'),
+    kpi('Actual LLM spend', fmtUsd(o.actualCostUsd), 'real spend'),
+    kpi('Savings', fmtUsd(o.savedUsd), fmtPct(o.savingsPct) + ' vs baseline', 'pos'),
+    kpi('Billable revenue (modeled)', fmtUsd(o.revenueUsd), state.meta.marginPct + '% margin rule', 'accent'),
     kpi('Gross margin', fmtUsd(o.marginUsd), fmtPct(o.marginPct) + ' of revenue', 'pos'),
     kpi('p95 latency', fmtMs(o.latencyP95Ms), 'p50 ' + fmtMs(o.latencyP50Ms) + ' · p99 ' + fmtMs(o.latencyP99Ms)),
-    kpi('Errors', fmtInt(o.errors), fmtPct(o.errorRate) + ' · ' + fmtInt(o.failovers) + ' failover · ' + fmtInt(o.retries) + ' retry'),
+    kpi('Error rate', fmtPct(o.errorRate), fmtInt(o.errors) + ' errors · ' + fmtInt(o.failovers) + ' failover · ' + fmtInt(o.retries) + ' retry'),
     kpi('Tenants', fmtInt(o.users), fmtInt(o.sources) + ' source(s)'),
   ]
   $('kpis').innerHTML = cards.join('')
@@ -210,7 +210,7 @@ function renderRouting(h) {
 }
 
 function renderBilling(b) {
-  $('billing-sub').textContent = `${fmtUsd(b.settledUsd)} settled`
+  $('billing-sub').textContent = `${fmtUsd(b.settledUsd)} settled USDC`
   const statline = `<div class="statline">
     <div><b>${fmtUsd(b.revenueUsd)}</b><span class="muted">revenue</span></div>
     <div><b>${fmtUsd(b.actualCostUsd)}</b><span class="muted">cost</span></div>
@@ -222,13 +222,13 @@ function renderBilling(b) {
   if (b.treasury && b.treasury.length) {
     treas = '<div class="treas">' + b.treasury.map((t) => `<div class="t"><div class="muted">${shortAddr(t.address)} · ${t.network}</div><div class="b">${t.usdc === null ? '—' : fmtUsd(t.usdc) + ' USDC'}</div>${t.error ? `<div class="muted" style="color:var(--bad)">${esc(t.error.slice(0, 40))}</div>` : ''}</div>`).join('') + '</div>'
   } else if (state.meta.treasuryConfigured) {
-    treas = '<div class="empty">Treasury configured — awaiting first balance read…</div>'
+    treas = '<div class="empty">Treasury configured — awaiting the first balance read…</div>'
   }
   let table
   if (!b.settlements.length) {
-    table = '<div class="empty">No settlements reported. Wire <span class="mono">reporter.recordSettlement(...)</span> on the billing side.</div>'
+    table = '<div class="empty">No settlements reported yet. Connect <span class="mono">reporter.recordSettlement(...)</span> to show billing in the dashboard.</div>'
   } else {
-    const head = '<tr><th>When</th><th>Source</th><th>User</th><th>Amount</th><th>Status</th><th>Tx</th></tr>'
+    const head = '<tr><th>When</th><th>Deployment</th><th>User</th><th>Amount</th><th>Status</th><th>Tx</th></tr>'
     const body = b.settlements.map((s) => `<tr>
       <td>${ago(s.at)} ago</td>
       <td>${esc(s.source)}</td>
@@ -243,8 +243,8 @@ function renderBilling(b) {
 
 function renderFeed(rows) {
   $('feed-sub').textContent = rows.length ? rows.length + ' shown' : ''
-  if (!rows.length) { $('feed').innerHTML = '<div class="empty">No requests yet.</div>'; return }
-  const head = '<tr><th>When</th><th>Source</th><th>Model</th><th>User</th><th>In/Out</th><th>Cost</th><th>Saved</th><th>Lat</th></tr>'
+  if (!rows.length) { $('feed').innerHTML = '<div class="empty">No usage yet.</div>'; return }
+  const head = '<tr><th>When</th><th>Deployment</th><th>Model</th><th>User</th><th>In/Out</th><th>Cost</th><th>Saved</th><th>Lat</th></tr>'
   const body = rows.map((r) => `<tr>
     <td>${ago(r.at)}</td>
     <td>${esc(r.source)}</td>
@@ -289,9 +289,9 @@ async function refresh() {
       $('source').dataset.known = (meta.sources || []).join()
       renderSources()
     }
-    $('sub').textContent = `${fmtNum(o.rpm, 1)} req/min · ${fmtInt(o.sources)} source(s) · window ${state.window}`
-    $('rpm-sub').textContent = `${fmtInt(o.requests)} reqs`
-    $('cost-sub').textContent = `${fmtUsd(o.actualCostUsd)} cost · ${fmtUsd(o.savedUsd)} saved`
+    $('sub').textContent = `${fmtNum(o.rpm, 1)} req/min · ${fmtInt(o.sources)} tenant(s) · window ${state.window}`
+    $('rpm-sub').textContent = `${fmtInt(o.requests)} requests in view`
+    $('cost-sub').textContent = `${fmtUsd(o.actualCostUsd)} actual spend · ${fmtUsd(o.savedUsd)} saved`
     renderChips(o, billing)
     renderKpis(o)
     $('chart-requests').innerHTML = svgBars(ts, (b) => b.requests, 'var(--accent)')

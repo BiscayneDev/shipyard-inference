@@ -4,6 +4,7 @@ import { TelemetryHub } from './hub.js'
 import { JsonlTelemetryStore } from './store.js'
 import { createOperatorConsole } from './server.js'
 import { readTreasuryBalances, type TreasuryConfig } from './treasury.js'
+import { SupabaseApiKeyStore } from '../gateway/keys.js'
 
 function list(envVar: string): string[] {
   return (process.env[envVar] ?? '')
@@ -33,11 +34,21 @@ async function main(): Promise<void> {
   })
   await hub.boot()
 
+  const keyStore =
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+      ? new SupabaseApiKeyStore({
+          url: process.env.SUPABASE_URL,
+          key: process.env.SUPABASE_SERVICE_KEY,
+          table: process.env.SUPABASE_API_KEYS_TABLE,
+        })
+      : undefined
+
   const app = createOperatorConsole({
     hub,
     operatorTokens: list('SHIPYARD_OPERATOR_TOKEN'),
     ingestTokens: list('SHIPYARD_TELEMETRY_TOKEN'),
     treasuryConfigured: treasuries.length > 0,
+    keyStore,
   })
 
   // Treasury balance poller (best-effort) — populates the billing panel.

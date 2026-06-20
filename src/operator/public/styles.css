@@ -41,15 +41,32 @@ a:hover { color: var(--text); }
 /* ---------- token gate ---------- */
 .gate { position: fixed; inset: 0; z-index: 2; display: grid; place-items: center; background: var(--bg); }
 .gate-card {
-  width: 360px; background: var(--panel); border: 1px solid var(--border-2);
-  border-radius: var(--radius); padding: 26px; display: flex; flex-direction: column; gap: 14px;
+  width: min(760px, calc(100vw - 24px));
+  background: var(--panel); border: 1px solid var(--border-2);
+  border-radius: var(--radius); padding: 28px; display: flex; flex-direction: column; gap: 14px;
+  box-shadow: 0 28px 80px rgba(0,0,0,.35);
 }
+.eyebrow { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); }
+.gate-copy h1 {
+  margin: 10px 0 8px; font-size: clamp(28px, 4vw, 42px); line-height: 1.04; letter-spacing: -0.04em;
+}
+.gate-copy p { margin: 0; max-width: 62ch; color: var(--muted); line-height: 1.55; font-size: 14px; }
+.gate-points {
+  list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+}
+.gate-points li {
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 10px; padding: 12px 12px 11px;
+  color: var(--muted); font-size: 12px; line-height: 1.45;
+}
+.gate-points strong { display: block; color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.gate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
 .gate-label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 6px; }
 .gate-input {
   background: #04060a; border: 1px solid var(--border-2); color: var(--text);
   border-radius: 9px; padding: 11px 12px; font-size: 13px; font-family: var(--mono);
 }
 .gate-input:focus { outline: none; border-color: var(--accent); }
+.gate-note { font-size: 12px; color: var(--dim); font-family: var(--mono); }
 .gate-error { color: var(--bad); font-size: 12px; }
 
 /* ---------- brand ---------- */
@@ -79,6 +96,8 @@ a:hover { color: var(--text); }
 }
 .btn { background: var(--accent); color: #032019; border: none; border-radius: 9px; padding: 11px; font-size: 13px; font-weight: 500; font-family: var(--mono); cursor: pointer; }
 .btn:hover { filter: brightness(1.06); }
+.btn-secondary { display: inline-flex; align-items: center; justify-content: center; text-align: center; text-decoration: none; background: transparent; color: var(--text); border: 1px solid var(--border-2); border-radius: 9px; padding: 11px 14px; font-size: 13px; font-weight: 500; font-family: var(--mono); }
+.btn-secondary:hover { color: var(--accent); border-color: var(--accent); }
 .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border-2); border-radius: 8px; padding: 7px 11px; font-size: 12px; font-family: var(--mono); cursor: pointer; }
 .btn-ghost:hover { color: var(--accent); border-color: var(--accent); }
 .btn-mini { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 8px; font-size: 11px; font-family: var(--mono); cursor: pointer; }
@@ -119,6 +138,9 @@ a:hover { color: var(--text); }
 .card-sub { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 .cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 1000px) { .cards-2 { grid-template-columns: 1fr; } }
+@media (max-width: 840px) {
+  .gate-points { grid-template-columns: 1fr; }
+}
 .chart { width: 100%; height: 150px; }
 
 /* ---------- tables ---------- */

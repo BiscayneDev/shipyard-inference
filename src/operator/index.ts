@@ -1,6 +1,14 @@
 // Operator command center — central telemetry hub + drop-in reporter.
 export { TelemetryHub } from './hub.js'
 export type { TelemetryHubOptions } from './hub.js'
+export {
+  buildSavingsSnapshot,
+  buildSlaSummary,
+} from './hub.js'
+export type {
+  SavingsSnapshotInput,
+  SlaSummaryInput,
+} from './hub.js'
 
 export {
   createTelemetryReporter,
@@ -17,9 +25,10 @@ export type { OperatorConsoleOptions } from './server.js'
 
 export {
   JsonlTelemetryStore,
+  JsonlControlPlaneStore,
   NullTelemetryStore,
 } from './store.js'
-export type { TelemetryStore } from './store.js'
+export type { TelemetryStore, ControlPlaneStore } from './store.js'
 
 export {
   SupabaseTelemetryStore,
@@ -51,6 +60,17 @@ export type {
   BillingView,
   TreasuryBalance,
   SettlementRow,
+  Tenant,
+  Project,
+  ApiKey,
+  UsageRecord,
+  SavingsSnapshot,
+  BillingPlan,
+  SlaSummary,
+  ControlPlaneKind,
+  ControlPlaneRecord,
+  ControlPlaneQuery,
+  BillingSummary,
   RoutingHealth,
   ProviderHealthRow,
 } from './types.js'

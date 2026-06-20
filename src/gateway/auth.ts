@@ -34,15 +34,25 @@ export interface AuthResult {
 /**
  * Resolve a request's bearer token. A per-user `ApiKeyStore` is checked first
  * (and yields the attributed `account`); otherwise the static `apiKeys` list is
- * used. Auth is disabled only when NEITHER is configured (dev convenience).
+ * used. Auth is disabled only when NEITHER is configured (dev convenience), or
+ * when `bootstrapAuth` is explicitly enabled for a local shared-memory setup.
  */
 export async function resolveAuth(
-  opts: { apiKeys?: string[]; keyStore?: ApiKeyStore },
+  opts: { apiKeys?: string[]; keyStore?: ApiKeyStore; bootstrapAuth?: boolean },
   authHeader: string | undefined,
 ): Promise<AuthResult> {
   const keys = opts.apiKeys ?? []
-  if (keys.length === 0 && !opts.keyStore) return { ok: true } // auth disabled (dev)
   const token = bearerToken(authHeader)
+
+  if (opts.bootstrapAuth && keys.length === 0) {
+    if (token && opts.keyStore) {
+      const account = await opts.keyStore.resolve(token)
+      if (account) return { ok: true, account }
+    }
+    return { ok: true }
+  }
+
+  if (keys.length === 0 && !opts.keyStore) return { ok: true } // auth disabled (dev)
   if (!token) return { ok: false }
   if (opts.keyStore) {
     const account = await opts.keyStore.resolve(token)

@@ -261,9 +261,170 @@ export interface SettlementRow {
   error?: string
 }
 
+// --------------------------------------------------------------------------
+// Hosted control-plane entities
+// --------------------------------------------------------------------------
+
+export interface Tenant {
+  kind: 'tenant'
+  id: string
+  name: string
+  createdAt: number
+  updatedAt?: number
+  status?: 'active' | 'trial' | 'suspended' | 'deleted'
+  metadata?: Record<string, unknown>
+}
+
+export interface Project {
+  kind: 'project'
+  id: string
+  tenantId: string
+  name: string
+  createdAt: number
+  updatedAt?: number
+  archivedAt?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface ApiKey {
+  kind: 'api_key'
+  id: string
+  tenantId: string
+  projectId?: string
+  keyHash: string
+  label?: string
+  createdAt: number
+  revokedAt?: number
+  lastUsedAt?: number
+  metadata?: Record<string, unknown>
+}
+
+/** One completed request attributed to a tenant/project/api key. */
+export interface UsageRecord {
+  kind: 'usage'
+  at: number
+  tenantId: string
+  projectId?: string
+  apiKeyId?: string
+  source?: string
+  provider?: string
+  model?: string
+  userId?: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  actualCostUsd?: number
+  baselineCostUsd?: number
+  savedUsd?: number
+  latencyMs: number
+  pinned?: boolean
+}
+
+export interface SavingsSnapshot {
+  kind: 'savings_snapshot'
+  at: number
+  tenantId: string
+  projectId?: string
+  windowMs: number
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  actualCostUsd: number
+  baselineCostUsd: number
+  savedUsd: number
+  savingsPct: number
+  revenueUsd: number
+  marginUsd: number
+  marginPct: number
+  users: number
+  sources: number
+  metadata?: Record<string, unknown>
+}
+
+export interface BillingPlan {
+  kind: 'billing_plan'
+  id: string
+  tenantId: string
+  name: string
+  createdAt: number
+  currency?: 'USD'
+  active?: boolean
+  monthlyCommitUsd?: number
+  includedUsd?: number
+  overageRatePct?: number
+  requestLimit?: number
+  seatLimit?: number
+  features?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SlaSummary {
+  kind: 'sla_summary'
+  at: number
+  tenantId: string
+  projectId?: string
+  windowMs: number
+  requests: number
+  availabilityPct: number
+  successRatePct: number
+  errorRatePct: number
+  p50LatencyMs: number
+  p95LatencyMs: number
+  p99LatencyMs: number
+  breachCount: number
+  metadata?: Record<string, unknown>
+}
+
+export type ControlPlaneKind =
+  | Tenant['kind']
+  | Project['kind']
+  | ApiKey['kind']
+  | UsageRecord['kind']
+  | SavingsSnapshot['kind']
+  | BillingPlan['kind']
+  | SlaSummary['kind']
+
+export type ControlPlaneRecord =
+  | Tenant
+  | Project
+  | ApiKey
+  | UsageRecord
+  | SavingsSnapshot
+  | BillingPlan
+  | SlaSummary
+
+export interface ControlPlaneQuery {
+  tenantId?: string
+  projectId?: string
+  kind?: ControlPlaneKind | ControlPlaneKind[]
+  since?: number
+  until?: number
+}
+
+export interface BillingSummary {
+  at: number
+  windowMs: number
+  tenantId: string
+  projectId?: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  actualCostUsd: number
+  baselineCostUsd: number
+  savedUsd: number
+  savingsPct: number
+  revenueUsd: number
+  marginUsd: number
+  marginPct: number
+  plan: BillingPlan | null
+  savingsSnapshot: SavingsSnapshot | null
+  sla: SlaSummary | null
+}
+
 /** Health-of-routing rollup. */
 export interface RoutingHealth {
-  /** Model-selection distribution (which model got chosen, and how often). */
+
   selections: { key: string; count: number }[]
   pinnedRequests: number
   autoRequests: number
