@@ -55,6 +55,14 @@ export type RouterEvent =
       baselineCostUsd?: number
       /** `baselineCostUsd − actualCostUsd` when both are known (≥ 0 in practice). */
       savedUsd?: number
+      /** Savings split for auditability. */
+      routingSavingsUsd?: number
+      cachingSavingsUsd?: number
+      compressionSavingsUsd?: number
+      /** Frozen baseline path for the savings report. */
+      baselineModel?: string
+      /** Customer request class used to keep the baseline scoped honestly. */
+      requestClass?: string
       userId?: string
       latencyMs: number
       /** True when the caller pinned a specific provider/model via `routingHints.pin`. */
@@ -176,6 +184,7 @@ export class Router implements LLMProvider {
             compressed.metadata?.userId,
             compressed.model,
             this.isPinned(compressed),
+            compressed.metadata?.requestClass as string | undefined,
           )
           return res
         } catch (error) {
@@ -277,6 +286,7 @@ export class Router implements LLMProvider {
                 compressed.metadata?.userId,
                 compressed.model,
                 this.isPinned(compressed),
+                compressed.metadata?.requestClass as string | undefined,
               )
             } else {
               committed = true
@@ -412,6 +422,7 @@ export class Router implements LLMProvider {
     userId?: string,
     requestedModel?: string,
     pinned?: boolean,
+    requestClass?: string,
   ): void {
     const meta =
       decision.meta ??
@@ -427,10 +438,22 @@ export class Router implements LLMProvider {
       ? resolveModelMetadata(baselineModelId, undefined, this.opts.pricingOverrides).meta
       : undefined
     const baselineCostUsd = computeBaselineCostUsd(baselineMeta, usage)
-    const savedUsd =
-      baselineCostUsd !== undefined && actualCostUsd !== undefined
-        ? baselineCostUsd - actualCostUsd
+    const actualDirectCostUsd = computeBaselineCostUsd(meta, usage)
+    const routingSavingsUsd =
+      baselineCostUsd !== undefined && actualDirectCostUsd !== undefined
+        ? baselineCostUsd - actualDirectCostUsd
         : undefined
+    const cachingSavingsUsd =
+      actualDirectCostUsd !== undefined && actualCostUsd !== undefined
+        ? actualDirectCostUsd - actualCostUsd
+        : undefined
+    const compressionSavingsUsd =
+      routingSavingsUsd !== undefined && cachingSavingsUsd !== undefined ? 0 : undefined
+    const savedUsd =
+      routingSavingsUsd !== undefined && cachingSavingsUsd !== undefined
+        ? routingSavingsUsd + cachingSavingsUsd + (compressionSavingsUsd ?? 0)
+        : undefined
+    const requestClassLabel = requestClass
 
     this.emit({
       type: 'request_completed',
@@ -440,6 +463,11 @@ export class Router implements LLMProvider {
       actualCostUsd,
       baselineCostUsd,
       savedUsd,
+      routingSavingsUsd,
+      cachingSavingsUsd,
+      compressionSavingsUsd,
+      baselineModel: baselineModelId,
+      requestClass: requestClassLabel,
       userId,
       latencyMs,
       pinned,
@@ -451,6 +479,11 @@ export class Router implements LLMProvider {
       actualCostUsd,
       baselineCostUsd,
       savedUsd,
+      routingSavingsUsd,
+      cachingSavingsUsd,
+      compressionSavingsUsd,
+      baselineModel: baselineModelId,
+      requestClass: requestClassLabel,
       userId,
       latencyMs,
       at: Date.now(),

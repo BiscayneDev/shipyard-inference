@@ -80,6 +80,11 @@ function normalize(event: RouterEvent, at: number): TelemetryEvent | null {
         actualCostUsd: event.actualCostUsd,
         baselineCostUsd: event.baselineCostUsd,
         savedUsd: event.savedUsd,
+        routingSavingsUsd: event.routingSavingsUsd,
+        cachingSavingsUsd: event.cachingSavingsUsd,
+        compressionSavingsUsd: event.compressionSavingsUsd,
+        baselineModel: event.baselineModel,
+        requestClass: event.requestClass,
         latencyMs: event.latencyMs,
         pinned: event.pinned,
       }

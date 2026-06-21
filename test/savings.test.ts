@@ -139,3 +139,33 @@ test('no baselineModel and no requested model → no savings claim', async () =>
   assert.equal(done.baselineCostUsd, undefined)
   assert.equal(done.savedUsd, undefined)
 })
+
+test('baseline reporting keeps the configured default path and splits savings attribution', async () => {
+  const cheap = candidate('cheap', providerWithUsage(), [
+    model('cheap', { inputCostPerMTok: 1, outputCostPerMTok: 1 }),
+  ])
+  const events: RouterEvent[] = []
+  const router = new Router({
+    candidates: [cheap],
+    strategy: costOptimized(),
+    baselineModel: 'premium-default',
+    pricingOverrides: {
+      'premium-default': { inputCostPerMTok: 10, outputCostPerMTok: 30 },
+    },
+    onEvent: (e) => events.push(e),
+  })
+
+  await router.chat({
+    ...chatParams(),
+    metadata: { userId: 'alice', requestClass: 'general' },
+  })
+
+  const done = events.find((e) => e.type === 'request_completed')
+  assert.ok(done && done.type === 'request_completed')
+  assert.equal((done as any).baselineModel, 'premium-default')
+  assert.equal((done as any).requestClass, 'general')
+  assert.ok(Math.abs(((done as any).routingSavingsUsd ?? 0) - 47) < 1e-9)
+  assert.ok(Math.abs(((done as any).cachingSavingsUsd ?? 0) - 0.9) < 1e-9)
+  assert.equal((done as any).compressionSavingsUsd, 0)
+  assert.ok(Math.abs((done.savedUsd ?? 0) - 47.9) < 1e-9)
+})

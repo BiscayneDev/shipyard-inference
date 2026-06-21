@@ -126,6 +126,15 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
   })
   api.get('/routing', (c) => c.json(hub.routingHealth(window(c), source(c))))
   api.get('/billing', (c) => c.json(hub.billing(window(c), source(c))))
+  api.get('/reports/savings', (c) =>
+    c.json(
+      hub.savingsReport(window(c), {
+        tenantId: c.req.query('tenantId') || undefined,
+        projectId: c.req.query('projectId') || undefined,
+        source: source(c),
+      }),
+    ),
+  )
 
   api.get('/keys', async (c) => c.json({ keys: await keyStore.listAccounts() }))
   api.post('/keys', async (c) => {

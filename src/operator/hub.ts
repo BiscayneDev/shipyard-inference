@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   computeBreakdown,
   computeErrors,
@@ -45,6 +46,14 @@ export interface SavingsSnapshotInput {
   windowMs: number
   at: number
   overview: Overview
+  baselineModel?: string
+  requestClass?: string
+  windowStartAt?: number
+  windowEndAt?: number
+  frozenAt?: number
+  shadowMode?: boolean
+  signature?: string
+  metadata?: Record<string, unknown>
 }
 
 export function buildSavingsSnapshot(input: SavingsSnapshotInput): SavingsSnapshot {
@@ -61,12 +70,23 @@ export function buildSavingsSnapshot(input: SavingsSnapshotInput): SavingsSnapsh
     actualCostUsd: overview.actualCostUsd,
     baselineCostUsd: overview.baselineCostUsd,
     savedUsd: overview.savedUsd,
+    routingSavingsUsd: overview.routingSavingsUsd,
+    cachingSavingsUsd: overview.cachingSavingsUsd,
+    compressionSavingsUsd: overview.compressionSavingsUsd,
     savingsPct: overview.savingsPct,
     revenueUsd: overview.revenueUsd,
     marginUsd: overview.marginUsd,
     marginPct: overview.marginPct,
     users: overview.users,
     sources: overview.sources,
+    baselineModel: input.baselineModel,
+    requestClass: input.requestClass,
+    windowStartAt: input.windowStartAt,
+    windowEndAt: input.windowEndAt,
+    frozenAt: input.frozenAt,
+    shadowMode: input.shadowMode,
+    signature: input.signature,
+    metadata: input.metadata,
   }
 }
 
@@ -96,6 +116,55 @@ export function buildSlaSummary(input: SlaSummaryInput): SlaSummary {
     p99LatencyMs: overview.latencyP99Ms,
     breachCount: overview.errors,
   }
+}
+
+function latestDefined<T>(items: T[], pick: (item: T) => string | undefined): string | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const value = pick(items[i]!)
+    if (value !== undefined) return value
+  }
+  return undefined
+}
+
+function countDefined<T>(items: T[], pick: (item: T) => string | undefined): number {
+  const seen = new Set<string>()
+  for (const item of items) {
+    const value = pick(item)
+    if (value !== undefined) seen.add(value)
+  }
+  return seen.size
+}
+
+function signSnapshot(snapshot: SavingsSnapshot): string {
+  const payload = {
+    at: snapshot.at,
+    tenantId: snapshot.tenantId,
+    projectId: snapshot.projectId,
+    windowMs: snapshot.windowMs,
+    requests: snapshot.requests,
+    inputTokens: snapshot.inputTokens,
+    outputTokens: snapshot.outputTokens,
+    actualCostUsd: snapshot.actualCostUsd,
+    baselineCostUsd: snapshot.baselineCostUsd,
+    savedUsd: snapshot.savedUsd,
+    routingSavingsUsd: snapshot.routingSavingsUsd,
+    cachingSavingsUsd: snapshot.cachingSavingsUsd,
+    compressionSavingsUsd: snapshot.compressionSavingsUsd,
+    savingsPct: snapshot.savingsPct,
+    revenueUsd: snapshot.revenueUsd,
+    marginUsd: snapshot.marginUsd,
+    marginPct: snapshot.marginPct,
+    users: snapshot.users,
+    sources: snapshot.sources,
+    baselineModel: snapshot.baselineModel,
+    requestClass: snapshot.requestClass,
+    windowStartAt: snapshot.windowStartAt,
+    windowEndAt: snapshot.windowEndAt,
+    frozenAt: snapshot.frozenAt,
+    shadowMode: snapshot.shadowMode,
+    metadata: snapshot.metadata,
+  }
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
 
 /** A request event after the hub tags it with a source. */
@@ -261,6 +330,32 @@ export class TelemetryHub {
       stuck,
       treasury: this.treasury,
       settlements: rows,
+    }
+  }
+
+  savingsReport(
+    windowMs: number,
+    options: { tenantId?: string; projectId?: string; source?: string } = {},
+  ): SavingsSnapshot {
+    const { since, events } = this.windowed(windowMs, options.source)
+    const overview = computeOverview(events, windowMs, this.now(), this.marginPct)
+    const requests = events.filter((event): event is StoredRequest => event.kind === 'request')
+    const snapshot = buildSavingsSnapshot({
+      tenantId: options.tenantId ?? 'global',
+      projectId: options.projectId,
+      windowMs,
+      at: this.now(),
+      overview,
+      baselineModel: latestDefined(requests, (r) => r.baselineModel),
+      requestClass: latestDefined(requests, (r) => r.requestClass),
+      windowStartAt: since,
+      windowEndAt: this.now(),
+      frozenAt: requests.at(-1)?.at ?? this.now(),
+      shadowMode: countDefined(requests, (r) => r.baselineModel) > 0,
+    })
+    return {
+      ...snapshot,
+      signature: signSnapshot(snapshot),
     }
   }
 }

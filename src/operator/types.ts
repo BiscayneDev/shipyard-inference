@@ -28,6 +28,14 @@ export interface RequestEvent {
   baselineCostUsd?: number
   /** `baselineCostUsd − actualCostUsd` when both are known. */
   savedUsd?: number
+  /** Savings attribution against the customer's frozen baseline path. */
+  routingSavingsUsd?: number
+  cachingSavingsUsd?: number
+  compressionSavingsUsd?: number
+  /** Baseline model path frozen for this request's savings report. */
+  baselineModel?: string
+  /** Customer request class, used to scope baseline comparisons. */
+  requestClass?: string
   latencyMs: number
   /** True when the caller pinned a specific model (vs. letting the router pick). */
   pinned?: boolean
@@ -152,6 +160,9 @@ export interface Overview {
   actualCostUsd: number
   baselineCostUsd: number
   savedUsd: number
+  routingSavingsUsd: number
+  cachingSavingsUsd: number
+  compressionSavingsUsd: number
   /** `savedUsd / baselineCostUsd`, 0 when no baseline. */
   savingsPct: number
   /** Modeled revenue = Σ min(actual·(1+margin), baseline) (or actual·(1+margin) when no baseline). */
@@ -192,6 +203,9 @@ export interface BreakdownRow {
   actualCostUsd: number
   baselineCostUsd: number
   savedUsd: number
+  routingSavingsUsd: number
+  cachingSavingsUsd: number
+  compressionSavingsUsd: number
   revenueUsd: number
   marginUsd: number
   /** Attempt errors attributed to this key (providers/models only). */
@@ -220,6 +234,11 @@ export interface FeedRow {
   outputTokens: number
   actualCostUsd?: number
   savedUsd?: number
+  routingSavingsUsd?: number
+  cachingSavingsUsd?: number
+  compressionSavingsUsd?: number
+  baselineModel?: string
+  requestClass?: string
   latencyMs: number
   pinned?: boolean
 }
@@ -317,6 +336,11 @@ export interface UsageRecord {
   actualCostUsd?: number
   baselineCostUsd?: number
   savedUsd?: number
+  routingSavingsUsd?: number
+  cachingSavingsUsd?: number
+  compressionSavingsUsd?: number
+  baselineModel?: string
+  requestClass?: string
   latencyMs: number
   pinned?: boolean
 }
@@ -333,12 +357,22 @@ export interface SavingsSnapshot {
   actualCostUsd: number
   baselineCostUsd: number
   savedUsd: number
+  routingSavingsUsd: number
+  cachingSavingsUsd: number
+  compressionSavingsUsd: number
   savingsPct: number
   revenueUsd: number
   marginUsd: number
   marginPct: number
   users: number
   sources: number
+  baselineModel?: string
+  requestClass?: string
+  windowStartAt?: number
+  windowEndAt?: number
+  frozenAt?: number
+  shadowMode?: boolean
+  signature?: string
   metadata?: Record<string, unknown>
 }
 

@@ -10,6 +10,14 @@ export interface UsageRecord {
   baselineCostUsd?: number
   /** `baselineCostUsd − actualCostUsd` when both are known. */
   savedUsd?: number
+  /** Savings split for auditability. */
+  routingSavingsUsd?: number
+  cachingSavingsUsd?: number
+  compressionSavingsUsd?: number
+  /** Frozen baseline path for the savings report. */
+  baselineModel?: string
+  /** Customer request class used to keep the baseline scoped honestly. */
+  requestClass?: string
   /** Opaque end-user id from `LLMChatParams.metadata.userId`, for per-user attribution. */
   userId?: string
   latencyMs: number

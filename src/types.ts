@@ -71,6 +71,8 @@ export interface LLMChatParams {
     projectId?: string
     apiKeyId?: string
     apiKeyLabel?: string
+    /** Optional request class label for savings/reporting. */
+    requestClass?: string
   } & Record<string, unknown>
 }
 

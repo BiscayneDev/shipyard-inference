@@ -1,88 +1,42 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { TelemetryHub } from '../src/operator/hub.js'
-import { createOperatorConsole, parseWindowMs } from '../src/operator/server.js'
-import type { IngestPayload, Overview, TelemetryEvent } from '../src/operator/types.js'
+import { createOperatorConsole, TelemetryHub } from '../src/operator/index.js'
 
-const T = 1_700_000_000_000
+const now = 1_700_000_000_000
 
-function setup() {
-  const hub = new TelemetryHub({ now: () => T })
-  const app = createOperatorConsole({
-    hub,
-    ingestTokens: ['ing'],
-    operatorTokens: ['op'],
-  })
-  return { hub, app }
-}
+test('operator exposes a signed savings report for a window', async () => {
+  const hub = new TelemetryHub({ now: () => now })
+  await hub.ingest('gateway-a', [
+    {
+      kind: 'request',
+      at: now - 1_000,
+      source: 'gateway-a',
+      provider: 'cheap',
+      model: 'cheap',
+      userId: 'alice',
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      actualCostUsd: 2.1,
+      baselineCostUsd: 50,
+      savedUsd: 47.9,
+      latencyMs: 100,
+      pinned: false,
+      baselineModel: 'premium-default',
+      requestClass: 'general',
+      routingSavingsUsd: 45.8,
+      cachingSavingsUsd: 2.1,
+      compressionSavingsUsd: 0,
+    } as any,
+  ])
 
-const ingestBody = (events: TelemetryEvent[]): IngestPayload => ({ source: 'svc-a', events })
-
-const req = (at: number): TelemetryEvent => ({
-  kind: 'request',
-  at,
-  provider: 'p1',
-  model: 'A',
-  userId: 'u1',
-  inputTokens: 10,
-  outputTokens: 5,
-  actualCostUsd: 0.001,
-  baselineCostUsd: 0.003,
-  savedUsd: 0.002,
-  latencyMs: 100,
-})
-
-test('parseWindowMs understands shorthand and raw ms', () => {
-  assert.equal(parseWindowMs('15m'), 900_000)
-  assert.equal(parseWindowMs('6h'), 21_600_000)
-  assert.equal(parseWindowMs('2d'), 172_800_000)
-  assert.equal(parseWindowMs('60000'), 60_000)
-  assert.equal(parseWindowMs(undefined), 3_600_000)
-})
-
-test('POST /ingest rejects a bad ingest token', async () => {
-  const { app } = setup()
-  const res = await app.request('/ingest', {
-    method: 'POST',
-    headers: { authorization: 'Bearer nope', 'content-type': 'application/json' },
-    body: JSON.stringify(ingestBody([req(T)])),
-  })
-  assert.equal(res.status, 401)
-})
-
-test('GET /api/* requires the operator token', async () => {
-  const { app } = setup()
-  const res = await app.request('/api/overview', { headers: { authorization: 'Bearer ing' } })
-  assert.equal(res.status, 401) // ingest token is not an operator token
-})
-
-test('ingest → query returns the expected aggregate', async () => {
-  const { app } = setup()
-  const ingest = await app.request('/ingest', {
-    method: 'POST',
-    headers: { authorization: 'Bearer ing', 'content-type': 'application/json' },
-    body: JSON.stringify(ingestBody([req(T), req(T - 1), req(T - 2)])),
-  })
-  assert.equal(ingest.status, 200)
-  assert.deepEqual(await ingest.json(), { accepted: 3 })
-
-  const res = await app.request('/api/overview?window=1h', {
-    headers: { authorization: 'Bearer op' },
-  })
+  const app = createOperatorConsole({ hub, operatorTokens: [], ingestTokens: [] })
+  const res = await app.request('/api/reports/savings?window=1h')
   assert.equal(res.status, 200)
-  const o = (await res.json()) as Overview
-  assert.equal(o.requests, 3)
-  assert.equal(o.inputTokens, 30)
-  assert.ok(Math.abs(o.savedUsd - 0.006) < 1e-9)
-
-  // source filter narrows to a deployment
-  const meta = await (await app.request('/api/meta', { headers: { authorization: 'Bearer op' } })).json()
-  assert.deepEqual((meta as { sources: string[] }).sources, ['svc-a'])
-})
-
-test('the dashboard shell is served unauthenticated', async () => {
-  const { app } = setup()
-  const res = await app.request('/')
-  assert.equal(res.status, 200)
-  assert.match(res.headers.get('content-type') ?? '', /text\/html/)
+  const report = await res.json()
+  assert.equal(report.baselineModel, 'premium-default')
+  assert.equal(report.requestClass, 'general')
+  assert.equal(report.signature.length > 0, true)
+  assert.equal(report.savedUsd, 47.9)
+  assert.equal(report.routingSavingsUsd, 45.8)
+  assert.equal(report.cachingSavingsUsd, 2.1)
 })

@@ -49,7 +49,11 @@ export function computeOverview(
   let actualCostUsd = 0
   let baselineCostUsd = 0
   let savedUsd = 0
+  let routingSavingsUsd = 0
+  let cachingSavingsUsd = 0
+  let compressionSavingsUsd = 0
   let revenueUsd = 0
+  let sawBreakdown = false
   const latencies: number[] = []
   const users = new Set<string>()
   const sources = new Set<string>()
@@ -64,6 +68,9 @@ export function computeOverview(
         actualCostUsd += e.actualCostUsd ?? 0
         baselineCostUsd += e.baselineCostUsd ?? 0
         savedUsd += e.savedUsd ?? 0
+        routingSavingsUsd += e.routingSavingsUsd ?? 0
+        cachingSavingsUsd += e.cachingSavingsUsd ?? 0
+        compressionSavingsUsd += e.compressionSavingsUsd ?? 0
         revenueUsd += modeledRevenueUsd(e.actualCostUsd, e.baselineCostUsd, marginPct)
         latencies.push(e.latencyMs)
         if (e.userId) users.add(e.userId)
@@ -108,6 +115,9 @@ export function computeOverview(
     actualCostUsd,
     baselineCostUsd,
     savedUsd,
+    routingSavingsUsd,
+    cachingSavingsUsd,
+    compressionSavingsUsd,
     savingsPct: baselineCostUsd ? savedUsd / baselineCostUsd : 0,
     revenueUsd,
     marginUsd,
@@ -180,26 +190,28 @@ export function computeBreakdown(
 ): BreakdownRow[] {
   const rows = new Map<string, BreakdownRow & { _latSum: number }>()
   const row = (key: string): BreakdownRow & { _latSum: number } => {
-    let r = rows.get(key)
-    if (!r) {
-      r = {
-        key,
-        requests: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        actualCostUsd: 0,
-        baselineCostUsd: 0,
-        savedUsd: 0,
-        revenueUsd: 0,
-        marginUsd: 0,
-        errors: 0,
-        failovers: 0,
-        avgLatencyMs: 0,
-        _latSum: 0,
-      }
-      rows.set(key, r)
+    const existing = rows.get(key)
+    if (existing) return existing
+    const created: BreakdownRow & { _latSum: number } = {
+      key,
+      requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      actualCostUsd: 0,
+      baselineCostUsd: 0,
+      savedUsd: 0,
+      routingSavingsUsd: 0,
+      cachingSavingsUsd: 0,
+      compressionSavingsUsd: 0,
+      revenueUsd: 0,
+      marginUsd: 0,
+      errors: 0,
+      failovers: 0,
+      avgLatencyMs: 0,
+      _latSum: 0,
     }
-    return r
+    rows.set(key, created)
+    return created
   }
 
   for (const e of events) {
@@ -213,6 +225,9 @@ export function computeBreakdown(
       r.actualCostUsd += e.actualCostUsd ?? 0
       r.baselineCostUsd += e.baselineCostUsd ?? 0
       r.savedUsd += e.savedUsd ?? 0
+      r.routingSavingsUsd += e.routingSavingsUsd ?? 0
+      r.cachingSavingsUsd += e.cachingSavingsUsd ?? 0
+      r.compressionSavingsUsd += e.compressionSavingsUsd ?? 0
       const rev = modeledRevenueUsd(e.actualCostUsd, e.baselineCostUsd, marginPct)
       r.revenueUsd += rev
       r.marginUsd += rev - (e.actualCostUsd ?? 0)
