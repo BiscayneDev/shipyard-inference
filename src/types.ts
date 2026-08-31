@@ -140,3 +140,116 @@ export interface LLMProvider {
     opts?: LLMStreamOptions,
   ): AsyncIterable<LLMStreamEvent>
 }
+
+// ---------------------------------------------------------------------------
+// Video generation types
+// ---------------------------------------------------------------------------
+
+/** Parameters for quoting a video generation job. */
+export interface VideoQuoteParams {
+  model: string
+  /** Desired clip duration in seconds. */
+  duration?: number
+  /** Desired resolution, e.g. `720p`, `1080p`. */
+  resolution?: string
+}
+
+/** Result of quoting a video generation job. */
+export interface VideoQuoteResult {
+  /** Estimated cost in USD. */
+  quote: number
+}
+
+/** Parameters for enqueueing a video generation job. */
+export interface VideoQueueParams {
+  model: string
+  prompt: string
+  /** Desired clip duration in seconds. */
+  duration?: number
+  /** Desired resolution, e.g. `720p`, `1080p`. */
+  resolution?: string
+  /** Aspect ratio, e.g. `16:9`, `9:16`, `1:1`. */
+  aspectRatio?: string
+  /** Optional image-to-video reference (URL or data URI). */
+  image_url?: string
+  /** Optional routing hints — same semantics as `LLMChatParams.routingHints`. */
+  routingHints?: RoutingHints
+  /** Free-form per-request metadata for telemetry tagging. */
+  metadata?: Record<string, unknown>
+}
+
+/** Result of enqueueing a video generation job. */
+export interface VideoQueueResult {
+  model: string
+  queueId: string
+  /** Direct download URL if the provider returns one immediately. */
+  downloadUrl?: string
+}
+
+/** Status of a video generation job. */
+export type VideoStatus = 'PROCESSING' | 'COMPLETED'
+
+/** Parameters for retrieving the status/result of a video generation job. */
+export interface VideoRetrieveParams {
+  model: string
+  queueId: string
+  downloadUrl?: string
+}
+
+/** Result of retrieving a video generation job. */
+export interface VideoRetrieveResult {
+  status: VideoStatus
+  /** Base64-encoded or raw video data, when available. */
+  videoData?: string
+  downloadUrl?: string
+  /** Provider-reported average execution time (ms). */
+  averageExecutionTime?: number
+  /** Wall-clock execution duration for this specific job (ms). */
+  executionDuration?: number
+}
+
+/** Parameters for marking a video generation job as complete / cancelling it. */
+export interface VideoCompleteParams {
+  model: string
+  queueId: string
+}
+
+/**
+ * High-level convenience parameters that enqueue + poll until the video is
+ * ready, returning the final result in one call.
+ */
+export interface VideoGenerateParams extends VideoQueueParams {
+  /** Milliseconds between polls. */
+  pollIntervalMs?: number
+  /** Maximum number of poll attempts before giving up. */
+  maxPollAttempts?: number
+}
+
+/** Final result of a `video.generate()` call. */
+export interface VideoGenerateResult {
+  model: string
+  queueId: string
+  /** Base64-encoded or raw video data, when available. */
+  videoData?: string
+  downloadUrl?: string
+  /** Estimated cost in USD for this generation, when known. */
+  costUsd?: number
+}
+
+/**
+ * A provider that supports media generation (video, and potentially
+ * image/audio in the future). The `video` namespace mirrors the Venice
+ * video API surface: enqueue, poll for status, quote, and optionally cancel.
+ */
+export interface MediaProvider {
+  video: {
+    /** Quote the cost (USD) of a video generation job. */
+    quote?(params: VideoQuoteParams): Promise<VideoQuoteResult>
+    /** Enqueue a video generation job; returns a queue id. */
+    queue(params: VideoQueueParams): Promise<VideoQueueResult>
+    /** Retrieve the current status / result of a queued job. */
+    retrieve(params: VideoRetrieveParams): Promise<VideoRetrieveResult>
+    /** Optionally mark a job complete / cancel it. */
+    complete?(params: VideoCompleteParams): Promise<void>
+  }
+}

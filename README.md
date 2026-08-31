@@ -44,6 +44,9 @@ compression, and OpenRouter are all ready.
 | `createUsePodCandidate()` (auto catalog) | ✅ Ready     |
 | `createNousProvider()` (Hermes)        | ✅ Ready       |
 | `createOpenRouterProvider()`           | ✅ Ready       |
+| `VeniceVideoProvider` (video)          | ✅ Ready       |
+| `createVeniceVideoCandidate()`         | ✅ Ready       |
+| `VideoRouter` (video generate/queue)   | ✅ Ready       |
 | `Router` / `costOptimized()`           | ✅ Ready       |
 | `withFailover()` / retry-with-jitter   | ✅ Ready       |
 | Streaming (`chatStream`)               | ✅ Ready       |
@@ -390,9 +393,50 @@ Add hundreds more models via OpenRouter:
 
 ```ts
 import { createOpenRouterProvider } from 'shipyard-inference'
-const openrouter = createOpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })
+const openrouter = createOpenRouterProvider({ apiKey: proces..._KEY })
 // add as a candidate; use OpenRouter model ids like 'google/gemini-2.5-pro'
 ```
+
+### Video generation (Venice)
+
+Shipyard Inference also handles async video generation through Venice's API.
+The `VideoRouter` (accessed via `router.video`) routes across video-capable
+candidates with the same `costOptimized` strategy, x402 payment, and telemetry
+as chat — just priced per-generation instead of per-token.
+
+```ts
+import {
+  Router, AnthropicProvider, createVeniceVideoCandidate, costOptimized,
+} from 'shipyard-inference'
+
+const router = new Router({
+  candidates: [
+    { id: 'anthropic', provider: new AnthropicProvider({ apiKey: proces..._KEY }) },
+    createVeniceVideoCandidate({ apiKey: proces..._KEY }),
+  ],
+  strategy: costOptimized(),
+})
+
+// Chat: prompt-chaining LLM call (cheap text model)
+const chain = await router.chat({
+  system: 'You connect prompts to previous clips.',
+  messages: [{ role: 'user', content: userPrompt }],
+  routingHints: { tier: 'economy' },
+})
+
+// Video: Venice via x402, routed + paid transparently
+const video = await router.video.generate({
+  model: 'gemini-omni-flash-1-1-text-to-video', // $0.16/gen — or omit to auto-pick cheapest
+  prompt: chain.content!,
+  duration: 5,
+  resolution: '720p',
+})
+// → { model, queueId, videoData?, downloadUrl?, costUsd? }
+```
+
+The gateway also exposes `POST /v1/video/queue`, `POST /v1/video/retrieve`,
+`POST /v1/video/complete`, and `POST /v1/video/generate` — same auth, same
+`x-shipyard-*` response headers as chat.
 
 > Pricing in `DEFAULT_PRICING` is **advisory** and drifts; per-candidate `models[]`
 > is authoritative, with `pricingOverrides` in between. It ranks candidates, it

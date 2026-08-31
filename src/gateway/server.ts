@@ -22,7 +22,7 @@ import {
 } from '../anthropic-compat/index.js'
 import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
 import { TENDER_DEFAULTS } from '../tender/types.js'
-import type { LLMChatParams, LLMStreamEvent } from '../types.js'
+import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrieveParams, VideoCompleteParams, VideoGenerateParams } from '../types.js'
 import { resolveAuth } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 
@@ -345,6 +345,135 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     } catch (err) {
       const { status, body: errBody } = toAnthropicError(err)
       return c.json(errBody, status as 400)
+    }
+  })
+
+  // ── Video generation routes — Venice async API (queue → poll → retrieve) ──
+  // These proxy to the Router's `video` surface (VideoRouter). The same
+  // x-shipyard-* headers are exposed for telemetry. Auth is the same as chat.
+
+  app.post('/v1/video/queue', async (c) => {
+    const auth = await resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    let body: VideoQueueParams
+    try {
+      body = (await c.req.json()) as VideoQueueParams
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body?.model || !body?.prompt) {
+      return errorJson(c, 400, '`model` and `prompt` are required', 'invalid_request_error')
+    }
+    try {
+      const result = await router.video.queue(body)
+      if (exposeCost) {
+        c.header('x-shipyard-model', result.model)
+        c.header('x-shipyard-provider', 'venice-video')
+      }
+      return c.json({
+        model: result.model,
+        queue_id: result.queueId,
+        download_url: result.downloadUrl,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return errorJson(c, 502, `Video queue failed: ${msg}`, 'server_error')
+    }
+  })
+
+  app.post('/v1/video/retrieve', async (c) => {
+    const auth = await resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    let body: VideoRetrieveParams
+    try {
+      body = (await c.req.json()) as VideoRetrieveParams
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body?.model || !body?.queueId) {
+      return errorJson(c, 400, '`model` and `queue_id` are required', 'invalid_request_error')
+    }
+    try {
+      const result = await router.video.retrieve({
+        model: body.model,
+        queueId: body.queueId,
+        downloadUrl: body.downloadUrl,
+      })
+      if (result.status === 'COMPLETED' && result.videoData) {
+        // Return inline binary for completed inline videos
+        if (exposeCost) {
+          c.header('x-shipyard-model', body.model)
+          c.header('x-shipyard-provider', 'venice-video')
+        }
+        return new Response(result.videoData, {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        })
+      }
+      return c.json({
+        status: result.status,
+        download_url: result.downloadUrl,
+        average_execution_time: result.averageExecutionTime,
+        execution_duration: result.executionDuration,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return errorJson(c, 502, `Video retrieve failed: ${msg}`, 'server_error')
+    }
+  })
+
+  app.post('/v1/video/complete', async (c) => {
+    const auth = await resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    let body: VideoCompleteParams
+    try {
+      body = (await c.req.json()) as VideoCompleteParams
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body?.model || !body?.queueId) {
+      return errorJson(c, 400, '`model` and `queue_id` are required', 'invalid_request_error')
+    }
+    try {
+      await router.video.complete(body)
+      return c.json({ success: true })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return errorJson(c, 502, `Video complete failed: ${msg}`, 'server_error')
+    }
+  })
+
+  app.post('/v1/video/generate', async (c) => {
+    const auth = await resolveAuth(config, c.req.header('authorization'))
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    let body: VideoGenerateParams
+    try {
+      body = (await c.req.json()) as VideoGenerateParams
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body?.model || !body?.prompt) {
+      return errorJson(c, 400, '`model` and `prompt` are required', 'invalid_request_error')
+    }
+    try {
+      const result = await router.video.generate(body)
+      if (exposeCost) {
+        c.header('x-shipyard-model', result.model)
+        c.header('x-shipyard-provider', 'venice-video')
+        if (result.costUsd !== undefined) {
+          c.header('x-shipyard-cost-usd', String(result.costUsd))
+        }
+      }
+      return c.json({
+        model: result.model,
+        queue_id: result.queueId,
+        download_url: result.downloadUrl,
+        video_data: result.videoData,
+        cost_usd: result.costUsd,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return errorJson(c, 502, `Video generation failed: ${msg}`, 'server_error')
     }
   })
 

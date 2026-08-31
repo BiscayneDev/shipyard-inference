@@ -23,6 +23,10 @@ export interface ModelMetadata {
   tier: ModelTier
   /** Free-form capability tags, e.g. `['tools', 'vision', 'json']`. */
   capabilities: string[]
+  /** USD per generation for media (video/image/audio) models. */
+  costPerGeneration?: number
+  /** Media type for non-LLM models (video, image, or audio generation). */
+  mediaType?: 'video' | 'image' | 'audio'
 }
 
 /**

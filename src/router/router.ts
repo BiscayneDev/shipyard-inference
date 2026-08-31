@@ -22,6 +22,7 @@ import {
   costOptimized,
   failover,
 } from './strategy.js'
+import { VideoRouter, type VideoRouterEvent } from './video.js'
 
 export type RouterEvent =
   | { type: 'cache_hit'; key: string }
@@ -107,6 +108,12 @@ export interface RouterOptions {
    * An explicit `params.routingHints.tier` always overrides this.
    */
   autoTier?: boolean | ((params: LLMChatParams) => ModelTier)
+  /** Candidates with video-capable models, forwarded to {@link VideoRouter}. */
+  videoCandidates?: ProviderCandidate[]
+  /** Poll interval (ms) for video generation polling. Default 5000. */
+  videoPollIntervalMs?: number
+  /** Max poll attempts for video generation polling. Default 60. */
+  videoMaxPollAttempts?: number
 }
 
 /**
@@ -120,6 +127,7 @@ export interface RouterOptions {
 export class Router implements LLMProvider {
   private readonly opts: RouterOptions
   private readonly strategy: RoutingStrategy
+  private _video?: VideoRouter
 
   constructor(opts: RouterOptions) {
     if (opts.candidates.length === 0) {
@@ -127,6 +135,20 @@ export class Router implements LLMProvider {
     }
     this.opts = opts
     this.strategy = opts.strategy ?? costOptimized()
+  }
+
+  /** Lazy video router; created on first access from the router's options. */
+  get video(): VideoRouter {
+    if (!this._video) {
+      this._video = new VideoRouter({
+        candidates: this.opts.videoCandidates ?? this.opts.candidates,
+        pricingOverrides: this.opts.pricingOverrides,
+        onEvent: this.opts.onEvent as ((event: VideoRouterEvent) => void) | undefined,
+        pollIntervalMs: this.opts.videoPollIntervalMs,
+        maxPollAttempts: this.opts.videoMaxPollAttempts,
+      })
+    }
+    return this._video
   }
 
   async chat(params: LLMChatParams): Promise<LLMResponse> {

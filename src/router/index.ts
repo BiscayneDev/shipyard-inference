@@ -1,5 +1,7 @@
 export { Router, withFailover } from './router.js'
 export type { RouterOptions, RouterEvent } from './router.js'
+export { VideoRouter } from './video.js'
+export type { VideoRouterOptions, VideoRouterEvent } from './video.js'
 export {
   costOptimized,
   failover,

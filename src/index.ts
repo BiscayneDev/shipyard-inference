@@ -32,6 +32,19 @@ export type { NousProviderOptions } from './providers/nous.js'
 export { createOpenRouterProvider } from './providers/openrouter.js'
 export type { OpenRouterProviderOptions } from './providers/openrouter.js'
 
+// Venice async video generation (MediaProvider)
+export {
+  VeniceVideoProvider,
+  VeniceVideoError,
+} from './providers/venice.js'
+export type { VeniceVideoProviderOptions } from './providers/venice.js'
+export {
+  VENICE_VIDEO_CATALOG,
+  VENICE_PREFERRED_VIDEO,
+  createVeniceVideoCandidate,
+} from './providers/venice-catalog.js'
+export type { VeniceVideoCandidateOptions } from './providers/venice-catalog.js'
+
 // Streaming helpers
 export { collectStream, responseToStream, parseToolArguments } from './stream.js'
 

@@ -1,9 +1,8 @@
-import type { LLMProvider } from '../types.js'
+import type { LLMProvider, MediaProvider } from '../types.js'
 import type { ModelMetadata, ProviderCandidate } from '../router/candidates.js'
 import {
   VeniceVideoProvider,
   type VeniceVideoProviderOptions,
-  createVeniceVideoProvider,
 } from './venice.js'
 
 /**
@@ -92,9 +91,10 @@ export function createVeniceVideoCandidate(
   options: VeniceVideoCandidateOptions = {},
 ): ProviderCandidate {
   const id = options.id ?? 'venice-video'
-  const provider: LLMProvider = options.baseURL
-    ? createVeniceVideoProvider({ ...options })
-    : new VeniceVideoProvider(options)
+  // VeniceVideoProvider implements MediaProvider (video), not LLMProvider.
+  // ProviderCandidate.provider is typed as LLMProvider, but for video-only
+  // candidates the router casts to MediaProvider when dispatching video calls.
+  const provider = new VeniceVideoProvider(options) as unknown as LLMProvider
 
   const models = options.models ?? VENICE_PREFERRED_VIDEO
 
