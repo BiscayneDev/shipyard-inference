@@ -81,3 +81,37 @@ test('bootstrap local-dev mode stays open while still resolving issued keys', as
   assert.equal(provider.calls[0]?.metadata?.tenantId, 'tenant-c')
   assert.equal(provider.calls[0]?.metadata?.projectId, 'project-c')
 })
+
+test('key store outage falls back to static api keys instead of failing auth', async () => {
+  const unavailable = async (): Promise<never> => {
+    throw new Error('supabase key resolve failed: 404 relation "api_keys" does not exist')
+  }
+  const brokenStore = {
+    resolve: unavailable,
+    issue: unavailable,
+    revoke: unavailable,
+    listAccounts: unavailable,
+  } as unknown as MemoryApiKeyStore
+
+  // Static-key bearer still authenticates despite the store throwing on every resolve.
+  const auth = await resolveAuth({ apiKeys: ['static-key'], keyStore: brokenStore }, 'Bearer static-key')
+  assert.equal(auth.ok, true)
+
+  // Unknown tokens are still rejected.
+  const bad = await resolveAuth({ apiKeys: ['static-key'], keyStore: brokenStore }, 'Bearer nope')
+  assert.equal(bad.ok, false)
+
+  // End-to-end: a completion succeeds on the static key while the store is down.
+  const provider = mockProvider(async () => ({ content: 'ok', toolCalls: [], stopReason: 'end_turn' as const }))
+  const app = createGatewayApp({
+    candidates: [candidate('c', provider, [model('m')])],
+    apiKeys: ['static-key'],
+    keyStore: brokenStore,
+  })
+  const res = await app.request('/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: 'Bearer static-key', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hello' }] }),
+  })
+  assert.equal(res.status, 200)
+})

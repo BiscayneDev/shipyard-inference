@@ -44,9 +44,26 @@ export async function resolveAuth(
   const keys = opts.apiKeys ?? []
   const token = bearerToken(authHeader)
 
+  // A keyStore outage (or a schema that was never applied) must never brick
+  // authentication for static `apiKeys` bearers: resolve failures degrade to
+  // `undefined` and the static-key check below still runs.
+  const resolveSafe = async (): Promise<Account | undefined> => {
+    if (!opts.keyStore) return undefined
+    try {
+      return await opts.keyStore.resolve(token)
+    } catch (err) {
+      console.warn(
+        `[shipyard-gateway] key store resolve failed; ${
+          keys.length > 0 ? 'falling back to static api keys' : 'rejecting request'
+        }: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return undefined
+    }
+  }
+
   if (opts.bootstrapAuth && keys.length === 0) {
-    if (token && opts.keyStore) {
-      const account = await opts.keyStore.resolve(token)
+    if (token) {
+      const account = await resolveSafe()
       if (account) return { ok: true, account }
     }
     return { ok: true }
@@ -54,10 +71,8 @@ export async function resolveAuth(
 
   if (keys.length === 0 && !opts.keyStore) return { ok: true } // auth disabled (dev)
   if (!token) return { ok: false }
-  if (opts.keyStore) {
-    const account = await opts.keyStore.resolve(token)
-    if (account) return { ok: true, account }
-  }
+  const account = await resolveSafe()
+  if (account) return { ok: true, account }
   if (keys.some((key) => safeEqual(key, token))) return { ok: true }
   return { ok: false }
 }
