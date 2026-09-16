@@ -1,0 +1,26 @@
+name: Publish to npm
+
+# Trusted publishing: npm verifies this workflow's GitHub OIDC identity, so no
+# token (and no 2FA/OTP) is needed. The repository must be linked once in
+# npmjs.com → account Settings → Trusted Publishing before the first run.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25
+      - run: npm ci
+      - run: npm test
+      - run: npm publish
