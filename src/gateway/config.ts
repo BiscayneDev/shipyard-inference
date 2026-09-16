@@ -79,6 +79,14 @@ export interface GatewayConfig {
   /** Called with each verified x402 payment (wire to `recordSettlement`). */
   onX402Payment?: (payment: X402PaymentInfo) => void
   /**
+   * Per-request quality floor for requests that don't name a catalog model
+   * (or name `auto`): the Router infers a minimum tier from the request shape
+   * (prompt size, tools, requested output) and `costOptimized` then picks the
+   * cheapest model that clears it. Explicit model names are always honored and
+   * bypass the floor. Default off (plain cost-optimized routing).
+   */
+  autoTier?: boolean
+  /**
    * Per-user API key store. When set, a request's `sk-shipyard-…` bearer resolves
    * to an account and the request is auto-attributed to that account's `userId`
    * (overriding the OpenAI `user` field) — so a developer's IDE traffic ties to

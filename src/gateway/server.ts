@@ -27,6 +27,37 @@ import { resolveAuth } from './auth.js'
 import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
+import { isCapable } from '../router/capabilities.js'
+import type { RoutingHints } from '../types.js'
+
+/**
+ * Honor an explicitly requested model: when the request names a model the
+ * deployment declares — and that model is actually capable of the request —
+ * pin routing to the candidate that owns it, so the caller gets exactly that
+ * model. `auto` (or an unknown id) falls through to strategy routing
+ * (cost-optimized, optionally with an auto-tier floor), and an explicit model
+ * that can't serve the request (e.g. tools against a non-tools model) also
+ * falls through, preserving the no-capable-model 400 contract.
+ */
+function explicitModelHints(
+  config: GatewayConfig,
+  model: string | undefined,
+  params: LLMChatParams,
+): RoutingHints | undefined {
+  if (!model) return undefined
+  const requested = model.trim().toLowerCase()
+  if (!requested || requested === 'auto' || requested === 'shipyard-auto') return undefined
+  for (const candidate of config.candidates) {
+    for (const declared of candidate.models ?? []) {
+      if (declared.model.toLowerCase() === requested) {
+        return isCapable(declared, undefined, params)
+          ? { pin: { provider: candidate.id, model: declared.model } }
+          : undefined
+      }
+    }
+  }
+  return undefined
+}
 
 /**
  * Resolve auth for an inference route, allowing a verified x402 payment to
@@ -127,6 +158,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     strategy: config.strategy,
     baselineModel: config.baselineModel,
     pricingOverrides: config.pricingOverrides,
+    autoTier: config.autoTier,
     cache: config.cache,
     usageRecorder: config.usageRecorder,
     onEvent: (event) => {
@@ -242,6 +274,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = openAIRequestToChatParams(body)
+    // An explicitly named catalog model is honored exactly; `auto` (or unset)
+    // routes by strategy with the auto-tier quality floor.
+    const explicitHints = explicitModelHints(config, body.model, params)
+    if (explicitHints) params.routingHints = explicitHints
     // A tenant/project-scoped key attributes the request to its account — so
     // the caller's traffic ties to the right tenant, project, and wallet.
     if (auth.account) {
@@ -352,6 +388,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = anthropicRequestToChatParams(body)
+    // Honor an explicitly named catalog model (mirrors /v1/chat/completions).
+    const explicitHints = explicitModelHints(config, body.model, params)
+    if (explicitHints) params.routingHints = explicitHints
     if (auth.account?.userId) params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
     const id = `msg_${randomBytes(12).toString('hex')}`
     const ctx: RequestContext = {}

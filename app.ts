@@ -76,8 +76,10 @@ const claudeModels = [
   { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200_000, tier: 'standard' as const, capabilities: ['tools' as const] },
 ]
 const gptModels = [
-  { model: 'gpt-4o-mini', inputCostPerMTok: 0.15, outputCostPerMTok: 0.6, contextWindow: 128_000, tier: 'economy' as const, capabilities: ['tools' as const] },
-  { model: 'gpt-4o', inputCostPerMTok: 2.5, outputCostPerMTok: 10, contextWindow: 128_000, tier: 'standard' as const, capabilities: ['tools' as const] },
+  // GPT-4.1 family — validated against the live OpenAI key (models endpoint).
+  { model: 'gpt-4.1-nano', inputCostPerMTok: 0.1, outputCostPerMTok: 0.4, contextWindow: 1_047_576, tier: 'economy' as const, capabilities: ['tools' as const] },
+  { model: 'gpt-4.1-mini', inputCostPerMTok: 0.4, outputCostPerMTok: 1.6, contextWindow: 1_047_576, tier: 'standard' as const, capabilities: ['tools' as const] },
+  { model: 'gpt-4.1', inputCostPerMTok: 2, outputCostPerMTok: 8, contextWindow: 1_047_576, tier: 'frontier' as const, capabilities: ['tools' as const] },
 ]
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -287,8 +289,17 @@ const pricingOverrides = Object.fromEntries(
 const gateway = createGatewayApp({
   candidates,
   strategy: costOptimized(),
+  // Requests that name a catalog model get exactly that model; `auto` (or an
+  // unknown id) routes to the cheapest model that clears the request's inferred
+  // quality tier (tools/large prompts ⇒ standard, frontier work ⇒ frontier).
+  autoTier: true,
   baselineModel,
   pricingOverrides,
+  // Advertise the full catalog plus the `auto` alias in GET /v1/models.
+  models: [
+    { id: 'auto', ownedBy: 'shipyard' },
+    ...candidates.flatMap((c) => (c.models ?? []).map((m) => ({ id: m.model, ownedBy: c.id }))),
+  ],
   apiKeys: API_KEYS,
   keyStore,
   bootstrapAuth,

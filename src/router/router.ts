@@ -377,7 +377,19 @@ export class Router implements LLMProvider {
           `[shipyard-inference] Pinned provider '${pin.provider}' not found among candidates`,
         )
       }
-      return [{ candidate, model: pin.model ?? params.model }]
+      // Attach the declared pricing metadata so pinned requests still carry
+      // full cost telemetry — usage recording, baseline/savings math, and the
+      // Tender attestation gate (which requires a real billed cost > 0) all
+      // read `meta`; without it a pinned request reports $0 cost.
+      const requested = pin.model ?? params.model
+      const declared = requested
+        ? (candidate.models ?? []).find((m) => m.model === requested)
+        : undefined
+      const { meta } =
+        declared && requested
+          ? resolveModelMetadata(requested, declared, this.opts.pricingOverrides)
+          : { meta: undefined }
+      return [{ candidate, model: meta?.model ?? requested, ...(meta ? { meta } : {}) }]
     }
 
     return this.strategy.select({
