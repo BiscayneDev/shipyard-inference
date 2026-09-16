@@ -13,3 +13,5 @@ public/dashboard/
 examples/chat-portal/.usepod-fund.json
 .vercel
 landing.generated.ts
+.env*.local
+test-ledger/
