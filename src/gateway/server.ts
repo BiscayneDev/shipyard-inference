@@ -24,7 +24,54 @@ import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
 import { TENDER_DEFAULTS } from '../tender/types.js'
 import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrieveParams, VideoCompleteParams, VideoGenerateParams } from '../types.js'
 import { resolveAuth } from './auth.js'
+import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
+import { buildChallenge, verifyX402Payment } from './x402.js'
+
+/**
+ * Resolve auth for an inference route, allowing a verified x402 payment to
+ * substitute for an API key. Returns a successful AuthResult, a failed
+ * AuthResult (caller 401s), or a 402 Response when payment is required.
+ */
+async function authOrPayment(
+  config: GatewayConfig,
+  authHeader: string | undefined,
+  paymentHeader: string | undefined,
+  resource: string,
+): Promise<AuthResult | Response> {
+  const auth = await resolveAuth(config, authHeader)
+  if (auth.ok) return auth
+  if (!config.x402) return auth
+  if (!paymentHeader) {
+    return Response.json(buildChallenge(config.x402, resource), {
+      status: 402,
+      headers: { 'x-402-challenge': 'solana-usdc' },
+    })
+  }
+  const result = await verifyX402Payment(config.x402, paymentHeader)
+  if (!result.ok) {
+    const challenge = buildChallenge(config.x402, resource)
+    return Response.json({ ...challenge, error: result.error }, {
+      status: 402,
+      headers: { 'x-402-error': String(result.error) },
+    })
+  }
+  config.onX402Payment?.({
+    payer: result.payer,
+    signature: result.signature!,
+    amountUsdc: result.amountUsdc ?? 0,
+  })
+  return {
+    ok: true,
+    account: {
+      userId: result.payer ?? 'x402-payer',
+      wallet: result.payer,
+      label: 'x402',
+      status: 'active',
+      createdAt: Date.now(),
+    },
+  }
+}
 
 interface RequestContext {
   model?: string
@@ -178,7 +225,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    const auth = await resolveAuth(config, c.req.header('authorization'))
+    const auth = await authOrPayment(config, c.req.header('authorization'), c.req.header('x-payment'), '/v1/chat/completions')
+    if (auth instanceof Response) return auth
     if (!auth.ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
@@ -289,7 +337,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/messages', async (c) => {
-    const auth = await resolveAuth(config, anthropicAuth(c))
+    const auth = await authOrPayment(config, anthropicAuth(c), c.req.header('x-payment'), '/v1/messages')
+    if (auth instanceof Response) return auth
     if (!auth.ok) return c.json(anthropicAuthError, 401)
 
     let body: AnthropicChatRequest

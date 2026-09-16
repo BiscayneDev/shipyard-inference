@@ -44,6 +44,7 @@ import {
   resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
+  x402Config,
   type GatewayConfig,
   type ApiKeyStore,
 } from './dist/gateway/index.js'
@@ -294,6 +295,20 @@ const gateway = createGatewayApp({
   tender: gatewayTender,
   telemetry: reporter,
   cors: { origins: '*' },
+
+  // x402 pay-per-call: unauthenticated requests get a 402 USDC challenge; a
+  // verified X-PAYMENT proof serves the request (any wallet, Paybox included).
+  // Collected payments flow to the operator hub's billing panel.
+  x402: x402Config(process.env),
+  onX402Payment: (payment) => {
+    reporter.recordSettlement({
+      userId: payment.payer,
+      amountUsd: payment.amountUsdc,
+      status: 'settled',
+      signature: payment.signature,
+      network: x402Config(process.env)?.network,
+    })
+  },
 
   // invocation — flush then, so a stream's `request_completed` reaches Supabase
   // before the function freezes. (Post-`next()` flush below covers non-streams.)
@@ -673,7 +688,8 @@ refresh();
 // ---------------------------------------------------------------------------
 const app = new Hono()
 app.use('*', cors({ origin: '*' }))
-app.get('/healthz', (c) => c.json({ status: 'ok', source: SOURCE, candidates: candidates.map((c) => c.id), persistent: Boolean(store) }))
+const x402Cfg = x402Config(process.env)
+app.get('/healthz', (c) => c.json({ status: 'ok', source: SOURCE, candidates: candidates.map((c) => c.id), persistent: Boolean(store), x402: x402Cfg ? { priceUsdc: x402Cfg.priceUsdc, network: x402Cfg.network, treasury: x402Cfg.treasury } : null }))
 
 // Landing page at `/`. Registered before the operator mount so it wins over the
 // operator's static catch-all (which otherwise serves the dashboard SPA here).

@@ -5,6 +5,17 @@ import type { CacheStore } from '../router/cache.js'
 import type { UsageRecorder } from '../router/usage.js'
 import type { TelemetryReporter } from '../operator/reporter.js'
 import type { ApiKeyStore } from './keys.js'
+import type { X402Config } from './x402.js'
+
+/** A verified x402 payment collected for one request. */
+export interface X402PaymentInfo {
+  /** Payer wallet when known (owner of the funding token account). */
+  payer?: string
+  /** Confirmed on-chain signature. */
+  signature: string
+  /** Whole USDC actually collected. */
+  amountUsdc: number
+}
 
 export interface GatewayModel {
   id: string
@@ -58,6 +69,15 @@ export interface GatewayConfig {
   telemetry?: TelemetryReporter
   /** Static bearer keys. Empty/omitted ⇒ auth disabled (dev only; logs a warning). */
   apiKeys?: string[]
+  /**
+   * Per-request x402 charging (USDC on Solana). When set, inference routes
+   * answer unauthenticated requests with a 402 payment challenge instead of a
+   * 401, and a verified `X-PAYMENT` proof serves the request — Paybox or any
+   * wallet can pay per call, no API key needed.
+   */
+  x402?: X402Config
+  /** Called with each verified x402 payment (wire to `recordSettlement`). */
+  onX402Payment?: (payment: X402PaymentInfo) => void
   /**
    * Per-user API key store. When set, a request's `sk-shipyard-…` bearer resolves
    * to an account and the request is auto-attributed to that account's `userId`
