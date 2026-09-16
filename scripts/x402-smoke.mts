@@ -95,9 +95,11 @@ async function main(): Promise<void> {
 
   const payerAta = await splToken.getAssociatedTokenAddress(mint, payer.publicKey)
   const treasuryAta = await splToken.getAssociatedTokenAddress(mint, treasury.publicKey)
+  // NOTE: the treasury's USDC ATA is deliberately NOT created here — the
+  // settle path's idempotent create must handle a fresh payee (the regression
+  // that produced InvalidAccountData on mainnet against a brand-new treasury).
   for (const [owner, ata, desc] of [
     [payer, payerAta, 'payer USDC ATA'],
-    [treasury, treasuryAta, 'treasury USDC ATA'],
   ] as const) {
     const vtx = new web3.VersionedTransaction(
       new web3.TransactionMessage({

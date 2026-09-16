@@ -152,6 +152,18 @@ export async function createSolanaPayProvider(
     const payerAta = await splToken.getAssociatedTokenAddress(mint, payer)
     const recipientAta = await splToken.getAssociatedTokenAddress(mint, recipient)
 
+    // Idempotent destination-ATA creation: a fresh payee (e.g. a new gateway
+    // treasury) has no token account, and a bare transfer fails on-chain with
+    // InvalidAccountData. The idempotent create is a cheap no-op when the
+    // account already exists; when it doesn't, the sender pays the ~0.002 SOL
+    // rent — exactly how wallet apps send SPL tokens to fresh addresses.
+    const createRecipientAta = splToken.createAssociatedTokenAccountIdempotentInstruction(
+      payer,
+      recipientAta,
+      recipient,
+      mint,
+    )
+
     const instruction = splToken.createTransferInstruction(
       payerAta,
       recipientAta,
@@ -163,7 +175,7 @@ export async function createSolanaPayProvider(
     const message = new web3.TransactionMessage({
       payerKey: payer,
       recentBlockhash: blockhash,
-      instructions: [instruction],
+      instructions: [createRecipientAta, instruction],
     }).compileToV0Message()
 
     const tx = new web3.VersionedTransaction(message)
