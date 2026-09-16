@@ -21,3 +21,4 @@ local.gateway.config.mjs
 scripts/x402-mainnet-test.mjs
 scripts/x402-mainnet-test.mts
 test-ledger-fresh/
+scripts/.localnet.json
