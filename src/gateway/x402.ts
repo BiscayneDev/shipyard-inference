@@ -21,6 +21,7 @@
 // Supabase receipts table).
 
 import { randomBytes, createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import bs58 from 'bs58'
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -40,7 +41,20 @@ export interface X402Config {
   treasury: string
   /** Solana cluster the payment settles on. */
   network: 'mainnet' | 'devnet'
-  /** Price per request, whole USDC (e.g. 0.001). */
+  /**
+   * Billing scheme. `exact` (default): flat price per request. `upto`: metered
+   * per-token — the 402 authorizes a ceiling (`priceUsdc`), the actual settles
+   * from token usage, and the rest is refunded, via payment channels.
+   */
+  scheme?: 'exact' | 'upto'
+  /** `upto`: price per token, whole USDC (e.g. 0.0001). */
+  perTokenUsdc?: number
+  /**
+   * `upto`: operator keypair bytes (64) — fee payer, voucher signer, rent
+   * payer. Funded on the settle network. Required when `scheme` is `upto`.
+   */
+  operatorSecret?: Uint8Array
+  /** Price per request (`exact`) or ceiling per request (`upto`), whole USDC. */
   priceUsdc: number
   rpcUrl?: string
   usdcMint?: string
@@ -55,24 +69,73 @@ export interface X402Config {
  * is off. Requires a treasury (`SHIPYARD_X402_TREASURY_WALLET`, falling back to
  * `TENDER_TREASURY_WALLET` so one treasury serves both surfaces) and a positive
  * `SHIPYARD_X402_PRICE_USDC`. Network follows `SHIPYARD_SETTLE_NETWORK`.
+ *
+ * `upto` additionally requires `SHIPYARD_X402_PER_TOKEN_USDC` and
+ * `SHIPYARD_X402_OPERATOR_KEY` (path to a JSON keypair file, or a
+ * comma-separated byte list, or base58).
  */
 export function x402Config(env: Record<string, string | undefined> = process.env): X402Config | undefined {
   const treasury = (env.SHIPYARD_X402_TREASURY_WALLET ?? env.TENDER_TREASURY_WALLET)?.trim()
   const price = Number(env.SHIPYARD_X402_PRICE_USDC)
   if (!treasury || !Number.isFinite(price) || price <= 0) return undefined
-  return {
+  const scheme = env.SHIPYARD_X402_SCHEME === 'upto' ? 'upto' : 'exact'
+  const base: X402Config = {
     treasury,
     network: env.SHIPYARD_SETTLE_NETWORK === 'mainnet' ? 'mainnet' : 'devnet',
     priceUsdc: price,
     rpcUrl: env.SHIPYARD_SETTLE_RPC_URL?.trim() || undefined,
     usdcMint: env.SHIPYARD_SETTLE_USDC_MINT?.trim() || undefined,
   }
+  if (scheme !== 'upto') return base
+  const perToken = Number(env.SHIPYARD_X402_PER_TOKEN_USDC)
+  const operatorSecret = parseOperatorKey(env.SHIPYARD_X402_OPERATOR_KEY)
+  if (!Number.isFinite(perToken) || perToken <= 0) {
+    console.warn('[shipyard-inference] x402 scheme=upto requires SHIPYARD_X402_PER_TOKEN_USDC > 0 — falling back to exact')
+    return base
+  }
+  if (!operatorSecret) {
+    console.warn(
+      '[shipyard-inference] x402 scheme=upto requires SHIPYARD_X402_OPERATOR_KEY (JSON keypair path, byte list, or base58) — falling back to exact',
+    )
+    return base
+  }
+  return { ...base, scheme: 'upto', perTokenUsdc: perToken, operatorSecret }
+}
+
+/** Parse an operator key: JSON keypair file path, `12,34,…` byte list, or base58. */
+function parseOperatorKey(raw: string | undefined): Uint8Array | undefined {
+  const value = raw?.trim()
+  if (!value) return undefined
+  // JSON file path
+  if (/\.json$/i.test(value)) {
+    try {
+      const parsed = JSON.parse(readFileSync(value, 'utf8')) as number[]
+      if (Array.isArray(parsed) && parsed.length === 64) return Uint8Array.from(parsed)
+    } catch {
+      /* fall through */
+    }
+  }
+  // Comma-separated byte list
+  if (/^\d+(,\s*\d+)+$/.test(value)) {
+    const bytes = value.split(',').map((b) => Number(b.trim()))
+    if (bytes.length === 64) return Uint8Array.from(bytes)
+  }
+  // Base58 secret key (64 bytes)
+  try {
+    const bytes = bs58.decode(value)
+    if (bytes.length === 64) return bytes
+  } catch {
+    /* fall through */
+  }
+  return undefined
 }
 
 const usdcMintFor = (cfg: X402Config): string => cfg.usdcMint ?? USDC_MINT[cfg.network]
 const rpcFor = (cfg: X402Config): string => cfg.rpcUrl ?? DEFAULT_RPC[cfg.network]
 /** Atomic USDC (6 decimals) for a whole-USDC price. */
 const atomicFor = (cfg: X402Config): string => String(Math.round(cfg.priceUsdc * 1_000_000))
+
+export { usdcMintFor, rpcFor, atomicFor }
 
 // ── Challenge ────────────────────────────────────────────────────────────────
 

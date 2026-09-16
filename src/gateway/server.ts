@@ -27,8 +27,22 @@ import { resolveAuth } from './auth.js'
 import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
+import {
+  buildUptoChallenge,
+  verifyUptoOpen,
+  settleUpto,
+  ceilingAtomic,
+  perTokenAtomic,
+} from './x402-upto.js'
+import type { UptoVerified, UptoSettlement } from './x402-upto.js'
 import { isCapable } from '../router/capabilities.js'
 import type { RoutingHints } from '../types.js'
+
+/** The request's x402 payment credential: `PAYMENT-SIGNATURE` (x402 v2) or
+ *  `X-PAYMENT` (v1, the `exact` scheme's createPayingFetch). */
+function paymentHeaderOf(c: Context): string | undefined {
+  return c.req.header('payment-signature') ?? c.req.header('x-payment')
+}
 
 /**
  * Honor an explicitly requested model: when the request names a model the
@@ -59,20 +73,69 @@ function explicitModelHints(
   return undefined
 }
 
+/** Auth outcome extended with a pending `upto` settlement (metered billing). */
+interface AuthOutcome extends AuthResult {
+  /** Present when a keyless request paid via x402 `upto` — the caller settles
+   *  it after serving, from metered usage. */
+  upto?: UptoVerified
+}
+
 /**
  * Resolve auth for an inference route, allowing a verified x402 payment to
  * substitute for an API key. Returns a successful AuthResult, a failed
  * AuthResult (caller 401s), or a 402 Response when payment is required.
+ *
+ * `scheme: 'upto'` (metered): the 402 advertises a ceiling and a fresh
+ * blockhash so the client can open a payment channel; a presented `X-PAYMENT`
+ * is verified + escrowed here (before serving) and returned as `upto` for the
+ * route to settle from metered tokens after the model runs.
  */
 async function authOrPayment(
   config: GatewayConfig,
   authHeader: string | undefined,
   paymentHeader: string | undefined,
   resource: string,
-): Promise<AuthResult | Response> {
+  requestUrl?: string,
+): Promise<AuthOutcome | Response> {
   const auth = await resolveAuth(config, authHeader)
   if (auth.ok) return auth
   if (!config.x402) return auth
+  const x402 = config.x402
+
+  if (x402.scheme === 'upto') {
+    const ceiling = ceilingAtomic(x402.priceUsdc)
+    const url = requestUrl ?? resource
+    const challenge = () =>
+      buildUptoChallenge(x402, url, ceiling).then((ch) =>
+        Response.json(ch.body, {
+          status: 402,
+          headers: { 'payment-required': ch.paymentRequiredHeader, 'x-402-challenge': 'solana-usdc-upto' },
+        }),
+      )
+    if (!paymentHeader) return await challenge()
+    try {
+      const verified = await verifyUptoOpen(x402, paymentHeader, ceiling)
+      return {
+        ok: true,
+        account: {
+          userId: verified.payer || 'x402-payer',
+          wallet: verified.payer,
+          label: 'x402-upto',
+          status: 'active',
+          createdAt: Date.now(),
+        },
+        upto: verified,
+      }
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : JSON.stringify(String(err))
+      const ch = await buildUptoChallenge(x402, url, ceiling)
+      return Response.json({ ...ch.body, error: message }, {
+        status: 402,
+        headers: { 'payment-required': ch.paymentRequiredHeader, 'x-402-error': message },
+      })
+    }
+  }
+
   if (!paymentHeader) {
     return Response.json(buildChallenge(config.x402, resource), {
       status: 402,
@@ -102,6 +165,42 @@ async function authOrPayment(
       createdAt: Date.now(),
     },
   }
+}
+
+/**
+ * Settle a metered `upto` request after serving: tokens × per-token price,
+ * clamped to the ceiling, refunded remainder. Best-effort — a settle failure
+ * after a served response is logged (the escrowed channel refunds the payer
+ * via its withdraw path on close); never blocks the response.
+ */
+async function settleUptoSafe(
+  config: GatewayConfig,
+  verified: UptoVerified,
+  baseUnits: bigint,
+): Promise<UptoSettlement | undefined> {
+  try {
+    const settlement = await settleUpto(config.x402!, verified, baseUnits)
+    config.onX402Payment?.({
+      payer: verified.payer,
+      signature: settlement.transaction,
+      amountUsdc: Number(settlement.amountBaseUnits) / 1e6,
+    })
+    return settlement
+  } catch (err) {
+    console.warn(
+      `[shipyard-gateway] upto settle failed (channel refunds via withdraw): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    )
+    return undefined
+  }
+}
+
+/** Metered charge for a completed request: tokens when the upstream reports
+ *  usage, else a chars/4 estimate. Minimum one token. */
+function uptoCharge(x402: NonNullable<GatewayConfig['x402']>, tokens: number | undefined, contentChars: number): bigint {
+  const t = tokens ?? Math.max(1, Math.ceil(contentChars / 4))
+  return BigInt(Math.max(1, t)) * perTokenAtomic(x402.perTokenUsdc ?? 0)
 }
 
 interface RequestContext {
@@ -257,11 +356,18 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    const auth = await authOrPayment(config, c.req.header('authorization'), c.req.header('x-payment'), '/v1/chat/completions')
+    const auth = await authOrPayment(
+      config,
+      c.req.header('authorization'),
+      paymentHeaderOf(c),
+      '/v1/chat/completions',
+      c.req.url,
+    )
     if (auth instanceof Response) return auth
     if (!auth.ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
+    const upto = auth.upto
 
     let body: OpenAIChatRequest
     try {
@@ -311,18 +417,46 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           router.chatStream(params, { signal: controller.signal }),
         )
         try {
+          let meterChars = 0
+          let meterUsage: { inputTokens: number; outputTokens: number } | undefined
           await als.run(ctx, async () => {
             for await (const event of tstream) {
+              if (upto) {
+                if (event.type === 'text_delta') meterChars += event.text.length
+                const usage = (event as { usage?: { inputTokens: number; outputTokens: number } }).usage
+                if (usage) meterUsage = usage
+              }
               for (const chunk of encoder.forEvent(event)) {
                 await stream.writeSSE({ data: JSON.stringify(chunk) })
               }
             }
           })
           await finish(ctx)
+          let uptoPayment: UptoSettlement | undefined
+          if (upto) {
+            const charge = uptoCharge(
+              config.x402!,
+              meterUsage ? meterUsage.inputTokens + meterUsage.outputTokens : undefined,
+              meterChars,
+            )
+            uptoPayment = await settleUptoSafe(config, upto, charge)
+          }
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
             await stream.writeSSE({
               data: JSON.stringify({
-                x_shipyard: { model: ctx.model, provider: ctx.provider, costUsd: ctx.costUsd },
+                x_shipyard: {
+                  model: ctx.model,
+                  provider: ctx.provider,
+                  costUsd: ctx.costUsd,
+                  ...(uptoPayment
+                    ? {
+                        payment: {
+                          amountBaseUnits: uptoPayment.amountBaseUnits.toString(),
+                          signature: uptoPayment.transaction,
+                        },
+                      }
+                    : {}),
+                },
               }),
             })
           }
@@ -340,6 +474,15 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
         if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+      }
+      if (upto) {
+        const tokens = res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined
+        const contentChars = JSON.stringify(res).length
+        const settlement = await settleUptoSafe(config, upto, uptoCharge(config.x402!, tokens, contentChars))
+        if (settlement) {
+          c.header('x-payment-response', settlement.responseHeader)
+          c.header('x-shipyard-billed-base-units', settlement.amountBaseUnits.toString())
+        }
       }
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
@@ -373,9 +516,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/messages', async (c) => {
-    const auth = await authOrPayment(config, anthropicAuth(c), c.req.header('x-payment'), '/v1/messages')
+    const auth = await authOrPayment(
+      config,
+      anthropicAuth(c),
+      paymentHeaderOf(c),
+      '/v1/messages',
+      c.req.url,
+    )
     if (auth instanceof Response) return auth
     if (!auth.ok) return c.json(anthropicAuthError, 401)
+    const upto = auth.upto
 
     let body: AnthropicChatRequest
     try {
@@ -408,14 +558,31 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           router.chatStream(params, { signal: controller.signal }),
         )
         try {
+          let meterChars = 0
+          let meterUsage: { inputTokens: number; outputTokens: number } | undefined
           await als.run(ctx, async () => {
             for await (const event of tstream) {
+              if (upto) {
+                if (event.type === 'text_delta') meterChars += event.text.length
+                const usage = (event as { usage?: { inputTokens: number; outputTokens: number } }).usage
+                if (usage) meterUsage = usage
+              }
               for (const f of encoder.forEvent(event)) {
                 await stream.writeSSE({ event: f.event, data: f.data })
               }
             }
           })
           await finish(ctx)
+          if (upto) {
+            // Settlement is server-side (headers already streamed); the payer
+            // sees the amount on the channel receipt. Best-effort by design.
+            const charge = uptoCharge(
+              config.x402!,
+              meterUsage ? meterUsage.inputTokens + meterUsage.outputTokens : undefined,
+              meterChars,
+            )
+            await settleUptoSafe(config, upto, charge)
+          }
         } catch (err) {
           await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
         }
@@ -428,6 +595,15 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
         if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+      }
+      if (upto) {
+        const tokens = res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined
+        const contentChars = JSON.stringify(res).length
+        const settlement = await settleUptoSafe(config, upto, uptoCharge(config.x402!, tokens, contentChars))
+        if (settlement) {
+          c.header('x-payment-response', settlement.responseHeader)
+          c.header('x-shipyard-billed-base-units', settlement.amountBaseUnits.toString())
+        }
       }
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {
