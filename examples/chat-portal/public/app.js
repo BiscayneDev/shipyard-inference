@@ -387,7 +387,17 @@ async function runTurn() {
         mode: state.inferenceMode,
       }),
     })
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok || !res.body) {
+      if (res.status === 402) {
+        // x402 payment required — this message needs a wallet. Show the
+        // challenge amount until the in-browser payer lands (wallet-bundle).
+        const chal = await res.json().catch(() => ({}))
+        const req = chal.accepts?.[0]
+        const amount = req ? `$${(Number(req.maxAmountRequired ?? req.amount ?? 0) / 1e6).toFixed(2)}` : ''
+        throw new Error(`Payment required — connect a wallet to pay ${amount} per message (x402)`)
+      }
+      throw new Error(`HTTP ${res.status}`)
+    }
 
     await readSSE(res.body, async (evt, data) => {
       if (evt === 'delta') {
@@ -405,6 +415,26 @@ async function runTurn() {
         renderActions(assistant)
         if (meta.wallet) applyWallet(meta.wallet)
         await settle(assistant)
+      } else if (evt === 'receipt') {
+        // x402 `upto` settlement receipt: actual paid + refunded, with the
+        // on-chain signature. The proof this message was wallet-paid.
+        const r = JSON.parse(data)
+        const chips = assistant.querySelector('.chips')
+        if (chips) {
+          const paid = document.createElement('span')
+          paid.className = 'chip settle'
+          paid.textContent = `paid $${Number(r.amountUsd).toFixed(4)} · refunded $${Number(r.refundedUsd ?? 0).toFixed(4)}`
+          chips.appendChild(paid)
+          if (r.signature) {
+            const link = document.createElement('a')
+            link.className = 'chip'
+            link.textContent = 'tx ↗'
+            link.href = `https://explorer.solana.com/tx/${r.signature}${r.network === 'localnet' || r.network === 'devnet' ? '?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899' : ''}`
+            link.target = '_blank'
+            link.rel = 'noreferrer'
+            chips.appendChild(link)
+          }
+        }
       } else if (evt === 'placement') {
         // Tender side channel: render the sponsored line in chrome, OUTSIDE the
         // message bubble — never appended to `acc` / the model output.

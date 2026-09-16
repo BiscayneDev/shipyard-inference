@@ -29,6 +29,7 @@ import {
   createUsePodProvider,
   createWalletInference,
   createTelemetryReporter,
+  OpenAIProvider,
   payboxSigner,
   payboxSettle,
   registerUsePod,
@@ -48,6 +49,16 @@ import {
   MemoryCampaignStore,
   SupabaseCampaignStore,
 } from 'shipyard-inference'
+// x402 `upto` billing (metered per message, wallet-only users) rides on the
+// pay-kit SDK. Optional at runtime: `npm i ../pay-kit/typescript/packages/pay-kit`
+// (or the published @solana/pay-kit) to enable; without it the portal runs its
+// existing modes and upto stays off.
+let X402Upto, usd, Signer
+try {
+  ;({ X402Upto, usd, Signer } = await import('@solana/pay-kit'))
+} catch {
+  console.warn('[portal] @solana/pay-kit not installed — x402 `upto` billing disabled')
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT ?? 8788)
@@ -177,6 +188,75 @@ async function buildProductionInference() {
   return null
 }
 
+// Mode — plain OpenAI-compatible gateway (PORTAL_INFER_BASE_URL): point the
+// portal at any OpenAI-compatible inference backend (e.g. a local
+// shipyard-gateway with local models). Pairs with the x402 `upto` billing mode
+// below — that's the "First Stranger's Dollar" path: wallet-only users, metered
+// per message, no API key anywhere.
+async function buildGatewayInference() {
+  const baseURL = process.env.PORTAL_INFER_BASE_URL
+  if (!baseURL) return null
+  const models = JSON.parse(process.env.PORTAL_INFER_MODELS ?? '[]')
+  if (!Array.isArray(models) || models.length === 0) return null
+  const provider = new OpenAIProvider({
+    apiKey: process.env.PORTAL_INFER_API_KEY ?? 'dev-key',
+    baseURL,
+  })
+  return {
+    mode: 'gateway',
+    candidates: [{ id: 'gateway', provider, models }],
+    baselineModel: process.env.PORTAL_INFER_BASELINE ?? models[0].model,
+    close: async () => {},
+  }
+}
+
+// Mode — x402 `upto` billing (wallet-only users): each chat message is ONE
+// metered x402 call. The browser pays from a connected wallet: 402 challenge
+// carries a ceiling, the client opens a payment channel escrowing it, we
+// stream the reply, settle the ACTUAL metered cost on-chain, refund the rest.
+// No account, no API key, no Stripe — the wallet is the customer.
+//
+// Env:
+//   PORTAL_UPTO=1                      enable (also picks the gateway backend)
+//   PORTAL_UPTO_OPERATOR_SECRET        JSON array — merchant keypair (fee payer + recipient)
+//   PORTAL_UPTO_MINT                    USDC mint (stand-in on localnet)
+//   PORTAL_UPTO_RPC                     RPC (default http://127.0.0.1:8899)
+//   PORTAL_UPTO_NETWORK                 localnet | devnet | mainnet
+//   PORTAL_UPTO_CEILING_USD             per-message ceiling (default 0.10)
+//   PORTAL_UPTO_UNIT_PRICE_USD          per-token retail floor (default 0.0001)
+const UPTO_CEILING_USD = Number(process.env.PORTAL_UPTO_CEILING_USD ?? 0.1)
+const UPTO_UNIT_PRICE_USD = Number(process.env.PORTAL_UPTO_UNIT_PRICE_USD ?? 0.0001)
+const uptoConfig = (() => {
+  if (process.env.PORTAL_UPTO !== '1') return null
+  const secret = JSON.parse(process.env.PORTAL_UPTO_OPERATOR_SECRET ?? 'null')
+  const mint = process.env.PORTAL_UPTO_MINT
+  if (!Array.isArray(secret) || !mint) {
+    console.warn('[portal] PORTAL_UPTO=1 needs PORTAL_UPTO_OPERATOR_SECRET (JSON) + PORTAL_UPTO_MINT — upto billing disabled')
+    return null
+  }
+  const network = process.env.PORTAL_UPTO_NETWORK ?? 'localnet'
+  const rpcUrl = process.env.PORTAL_UPTO_RPC ?? 'http://127.0.0.1:8899'
+  return { secret, mint, network, rpcUrl }
+})()
+const upto = await (async () => {
+  if (!uptoConfig) return undefined
+  const signer = await Signer.bytes(uptoConfig.secret)
+  return new X402Upto({
+    network: `solana_${uptoConfig.network}`,
+    operator: { signer, recipient: signer.pubkey },
+    rpcUrl: uptoConfig.rpcUrl,
+    stablecoins: [uptoConfig.mint],
+  })
+})()
+const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
+/** Settled amount for one message: real metered cost + margin, floored at the
+ *  per-token retail price, capped at the ceiling. Never negative. */
+function uptoChargeFor(usage, actualCostUsd) {
+  const tokens = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)
+  const floored = Math.max(actualCostUsd ?? 0, tokens * UPTO_UNIT_PRICE_USD)
+  return round6(Math.min(floored, UPTO_CEILING_USD))
+}
+
 // Mode A — demo: a built-in mock provider, two tiers so routing + savings have
 // something to show. Recognizably a stub; bills nothing. ALWAYS available, so the
 // portal can offer a Demo ⇄ Production toggle (default Demo — no real spend until
@@ -199,7 +279,7 @@ function buildDemoInference() {
 // backend (always) and the real production backend (when env configures one). The
 // UI toggles per request; default is Demo — no real spend until you flip. The
 // `inference` alias is the production backing for funding/settlement/network.
-const prodInference = await buildProductionInference()
+const prodInference = (await buildGatewayInference()) ?? (await buildProductionInference())
 const demoInference = buildDemoInference()
 const productionAvailable = Boolean(prodInference)
 const inference = prodInference ?? demoInference
@@ -872,6 +952,43 @@ app.post('/api/chat', async (c) => {
     return c.json({ error: '`messages` is required' }, 400)
   }
 
+  // x402 `upto` gate: each message is one metered, wallet-paid call. Keyless
+  // requests get the 402 challenge; requests carrying X-PAYMENT have their
+  // channel-open verified + escrowed BEFORE inference runs, and the actual
+  // metered cost is settled + refunded after the reply streams.
+  let uptoVerified
+  if (upto) {
+    const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
+    if (!paymentHeader) {
+      const requirements = await upto.accepts(uptoCeiling())
+      const headers = await upto.challengeHeaders(uptoCeiling(), c.req.raw, requirements)
+      return c.json(
+        {
+          accepts: requirements.map((r) => ({ ...r, protocol: 'x402' })),
+          description: 'Metered inference — pay per message from your wallet',
+        },
+        402,
+        headers,
+      )
+    }
+    try {
+      uptoVerified = await upto.verifyOpen(c.req.raw, uptoCeiling())
+    } catch (err) {
+      // Re-challenge with the failure reason, pay-kit style.
+      const requirements = await upto.accepts(uptoCeiling())
+      const headers = await upto.challengeHeaders(uptoCeiling(), c.req.raw, requirements)
+      return c.json(
+        {
+          accepts: requirements.map((r) => ({ ...r, protocol: 'x402' })),
+          code: err?.code ?? 'invalid_payment',
+          detail: err?.message ?? String(err),
+        },
+        402,
+        headers,
+      )
+    }
+  }
+
   // Inference mode toggle (default Demo). Production routes to the real backend
   // when one is configured; otherwise it falls back to Demo.
   const wantProd = body.mode === 'production' && prodRT
@@ -1015,8 +1132,43 @@ app.post('/api/chat', async (c) => {
         await stream.writeSSE({ event: 'attestation', data: JSON.stringify(attEvent) })
       }
 
+      // x402 `upto` settlement: the metered actual (tokens × retail floor, real
+      // provider cost + margin, capped at the ceiling) is claimed on-chain with
+      // the operator's voucher; the unused escrow refunds to the payer's
+      // wallet. Runs after the reply fully streamed — the receipt is the last
+      // thing the user sees for the message.
+      if (uptoVerified) {
+        const amountUsd = uptoChargeFor(ctx.usage, ctx.actualCostUsd)
+        try {
+          const settlement = await upto.settle(uptoVerified, BigInt(Math.round(amountUsd * 1_000_000)))
+          await stream.writeSSE({
+            event: 'receipt',
+            data: JSON.stringify({
+              amountUsd,
+              ceilingUsd: UPTO_CEILING_USD,
+              refundedUsd: round6(UPTO_CEILING_USD - amountUsd),
+              signature: settlement.transaction,
+              network: uptoConfig.network,
+              payer: (uptoVerified.payer ?? undefined) || undefined,
+            }),
+          })
+          reporter?.recordSettlement({
+            userId: session?.id ?? uptoVerified.payer ?? 'upto-payer',
+            amountUsd,
+            status: 'settled',
+            network: uptoConfig.network,
+          })
+        } catch (err) {
+          await stream.writeSSE({
+            event: 'error',
+            data: JSON.stringify({ message: `x402 settlement failed: ${err instanceof Error ? err.message : String(err)}` }),
+          })
+        }
+      }
+
       await stream.writeSSE({ event: 'done', data: '[DONE]' })
     } catch (err) {
+      console.error('[portal] chat stream failed:', err)
       await stream.writeSSE({
         event: 'error',
         data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }),

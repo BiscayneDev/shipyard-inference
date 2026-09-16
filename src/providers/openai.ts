@@ -68,7 +68,9 @@ export class OpenAIProvider implements LLMProvider {
     const started = new Set<number>()
 
     for await (const chunk of stream) {
-      const choice = chunk.choices[0]
+      // Tolerate chunks without choices — e.g. the gateway's terminal
+      // `x_shipyard` telemetry event and usage-only chunks from strict relays.
+      const choice = chunk.choices?.[0]
       if (choice) {
         const delta = choice.delta
         if (delta?.content) {
