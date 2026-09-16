@@ -15,3 +15,8 @@ examples/chat-portal/.usepod-fund.json
 landing.generated.ts
 .env*.local
 test-ledger/
+
+# Local-only test tooling (machine-specific wallets/keys)
+local.gateway.config.mjs
+scripts/x402-mainnet-test.mjs
+scripts/x402-mainnet-test.mts

@@ -39,7 +39,7 @@ export class SupabaseTelemetryStore implements TelemetryStore {
     if (!opts.url) throw new Error('SupabaseTelemetryStore: `url` is required')
     if (!opts.key) throw new Error('SupabaseTelemetryStore: `key` is required')
     this.base = opts.url.replace(/\/+$/, '') + '/rest/v1'
-    this.table = opts.table ?? 'telemetry_events'
+    this.table = opts.table || 'telemetry_events'
     this.fetchImpl = opts.fetch ?? fetch
     this.headers = {
       apikey: opts.key,

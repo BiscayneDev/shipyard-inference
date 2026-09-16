@@ -157,9 +157,13 @@ async function resolvePayerAddress(
   options: PayboxSignerOptions,
 ): Promise<string> {
   if (options.publicKey) return options.publicKey
-  const credentials = await client.listCredentials()
-  const match = credentials.find((c) => c.credential.id === options.credentialId)
-  const address = match?.credential.metadata?.address
+  const result = (await client.listCredentials()) as unknown
+  // The SDK returns { credentials: [...] }; accept a bare array defensively.
+  const entries = (
+    Array.isArray(result) ? result : ((result as { credentials?: unknown[] }).credentials ?? [])
+  ) as Array<{ credential?: { id?: string; metadata?: { address?: string } } }>
+  const match = entries.find((g) => g.credential?.id === options.credentialId)
+  const address = match?.credential?.metadata?.address
   if (typeof address === 'string' && address) return address
   throw new PaymentError(
     'payboxSigner could not determine the wallet address — pass `publicKey`',
