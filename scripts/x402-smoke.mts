@@ -22,7 +22,10 @@ import { createSolanaPayProvider, createPayingFetch } from '../src/payment/index
 import { candidate, mockProvider, model } from '../test/helpers.js'
 
 const USDC_DEVNET = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
-const RPC = 'https://api.devnet.solana.com'
+const RPC = process.env.X402_SMOKE_RPC ?? 'https://api.devnet.solana.com'
+// Local validator (solana-test-validator): airdrops are instant and we mint our
+// own 6-decimal USDC stand-in instead of using Circle's devnet faucet.
+const IS_LOCAL = RPC.includes('127.0.0.1')
 const PRICE_USDC = 0.001
 const connection = new web3.Connection(RPC, 'confirmed')
 
@@ -64,7 +67,7 @@ async function main(): Promise<void> {
   log(`payer:    ${payer.publicKey.toBase58()}`)
   log(`treasury: ${treasury.publicKey.toBase58()}`)
 
-  const mint = new web3.PublicKey(USDC_DEVNET)
+  let mint = new web3.PublicKey(USDC_DEVNET)
 
   const fund = async (kp: web3.Keypair, desc: string): Promise<void> => {
     let lastErr: unknown
@@ -84,25 +87,34 @@ async function main(): Promise<void> {
   await fund(payer, 'payer')
   await fund(treasury, 'treasury')
 
+  if (IS_LOCAL) {
+    // Local validator: mint our own 6-decimal USDC stand-in (before the ATAs).
+    mint = await splToken.createMint(connection, payer, payer.publicKey, payer.publicKey, 6)
+    log(`local USDC mint: ${mint.toBase58()}`)
+  }
+
   const payerAta = await splToken.getAssociatedTokenAddress(mint, payer.publicKey)
   const treasuryAta = await splToken.getAssociatedTokenAddress(mint, treasury.publicKey)
   for (const [owner, ata, desc] of [
     [payer, payerAta, 'payer USDC ATA'],
     [treasury, treasuryAta, 'treasury USDC ATA'],
   ] as const) {
-    const sig = await connection.sendTransaction(
-      new web3.VersionedTransaction(
-        new web3.TransactionMessage({
-          payerKey: payer.publicKey,
-          recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
-          instructions: [splToken.createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, ata, owner.publicKey, mint)],
-        }).compileToV0Message(),
-      ),
+    const vtx = new web3.VersionedTransaction(
+      new web3.TransactionMessage({
+        payerKey: payer.publicKey,
+        recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
+        instructions: [splToken.createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, ata, owner.publicKey, mint)],
+      }).compileToV0Message(),
     )
+    vtx.sign([payer])
+    const sig = await connection.sendTransaction(vtx)
     await confirmed(sig, `${desc} created`)
   }
 
-  if (!(await faucetUsdc(payerAta.toBase58()))) {
+  if (IS_LOCAL) {
+    const sig = await splToken.mintTo(connection, payer, mint, payerAta, payer, 5_000_000)
+    await confirmed(sig, 'payer USDC minted locally')
+  } else if (!(await faucetUsdc(payerAta.toBase58()))) {
     throw new Error('Circle devnet USDC faucet did not deliver; aborting')
   }
   const startBalance = await splToken.getAccount(connection, payerAta).then((a: { amount: bigint }) => Number(a.amount)).catch(() => 0n)
@@ -114,7 +126,15 @@ async function main(): Promise<void> {
   const payments: Array<{ payer?: string; amountUsdc: number }> = []
   const app = createGatewayApp({
     candidates: [candidate('mock', provider, [model('mock-model')])],
-    x402: { treasury: treasury.publicKey.toBase58(), network: 'devnet', priceUsdc: PRICE_USDC },
+    // A configured key keeps auth *on*, so the keyless request below must pay.
+    apiKeys: ['smoke-key'],
+    x402: {
+      treasury: treasury.publicKey.toBase58(),
+      network: 'devnet',
+      priceUsdc: PRICE_USDC,
+      rpcUrl: RPC,
+      usdcMint: mint.toBase58(),
+    },
     onX402Payment: (p) => payments.push({ payer: p.payer, amountUsdc: p.amountUsdc }),
   })
   const server = serve({ fetch: app.fetch, port: 8879 })
@@ -122,17 +142,36 @@ async function main(): Promise<void> {
 
   // ── 3. Paid request ──────────────────────────────────────────────────────
   const signer = await keypairSigner(JSON.stringify(Array.from(payer.secretKey)))
-  const payment = await createSolanaPayProvider({ signer, network: 'devnet' })
-  const payingFetch = createPayingFetch({ paymentProvider: payment })
+  const payment = await createSolanaPayProvider({
+    signer,
+    network: 'devnet',
+    rpcUrl: RPC,
+    usdcMint: mint.toBase58(),
+  })
+  const payingFetch = createPayingFetch({
+    paymentProvider: payment,
+    // If the gateway rejects the first proof (e.g. blockhash aged out before
+    // its submit), the re-challenge carries a fresh nonce → fresh blockhash.
+    maxPaymentRetries: 2,
+  })
 
   const res = await payingFetch('http://127.0.0.1:8879/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model: 'mock-model', messages: [{ role: 'user', content: 'prove the loop' }] }),
   })
-  const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const raw = await res.text()
+  let body: { choices?: Array<{ message?: { content?: string } }> } = {}
+  try {
+    body = JSON.parse(raw) as typeof body
+  } catch {
+    body = {}
+  }
   log(`response: HTTP ${res.status} "${body.choices?.[0]?.message?.content ?? ''}"`)
-  if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`)
+  if (res.status !== 200) {
+    log(`failure body: ${raw.slice(0, 600)}`)
+    throw new Error(`expected 200, got ${res.status}`)
+  }
   if (body.choices?.[0]?.message?.content !== 'paid inference works') throw new Error('unexpected completion body')
   if (payments.length !== 1) throw new Error(`expected 1 collected payment, got ${payments.length}`)
 

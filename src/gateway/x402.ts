@@ -167,26 +167,36 @@ export async function verifyX402Payment(cfg: X402Config, paymentHeader: string):
   // Submit on-chain. A client-retry of a header we already submitted fails
   // here — that's the natural replay guard — and is handled below by checking
   // whether the on-chain credit exists for THIS tx hash before rejecting.
+  // skipPreflight: the transaction is already signed and fee-prefunded by the
+  // client; simulation only adds latency and false negatives (e.g. a blockhash
+  // aging out during simulation on fast local chains).
   let signature: string
   try {
-    signature = await rpc<string>(cfg, 'sendTransaction', [txBase64, { encoding: 'base64' }])
+    signature = await rpc<string>(cfg, 'sendTransaction', [
+      txBase64,
+      { encoding: 'base64', skipPreflight: true },
+    ])
   } catch (err) {
+    // A re-delivery of a proof we already submitted lands here — the client
+    // can't resubmit the same bytes either (idempotent at the node). Surface
+    // the real cause; the 402 retry loop's fresh nonce handles recovery.
     return {
       ok: false,
       error: `submitting payment transaction failed: ${err instanceof Error ? err.message : String(err)}`,
     }
   }
 
-  // Wait for confirmation.
+  // Wait for confirmation. getSignatureStatuses' result is `{context, value}` —
+  // the statuses array lives under `value`.
   const deadline = Date.now() + (cfg.confirmTimeoutMs ?? 45_000)
   let confirmed = false
   while (Date.now() < deadline) {
-    const statuses = await rpc<Array<{ confirmationStatus?: string; err: unknown } | null>>(
+    const result = await rpc<{ value?: Array<{ confirmationStatus?: string; err: unknown } | null> }>(
       cfg,
       'getSignatureStatuses',
       [[signature], { searchTransactionHistory: true }],
-    ).catch(() => [])
-    const status = statuses?.[0]
+    ).catch(() => ({ value: [] as Array<{ confirmationStatus?: string; err: unknown } | null> }))
+    const status = result?.value?.[0]
     if (status?.err) return { ok: false, error: 'payment transaction failed on-chain' }
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
       confirmed = true

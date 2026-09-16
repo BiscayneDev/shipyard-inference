@@ -116,7 +116,8 @@ function paymentHeader(): string {
 function happyPathRpc(deltaUsdc = 0.001): typeof fetch {
   return mockRpc({
     sendTransaction: () => 'testsig',
-    getSignatureStatuses: () => [{ confirmationStatus: 'confirmed', err: null }],
+    // Real getSignatureStatuses returns {context, value} — mirror that shape.
+    getSignatureStatuses: () => ({ context: { slot: 1 }, value: [{ confirmationStatus: 'confirmed', err: null }] }),
     getTransaction: () => paidTxMeta(deltaUsdc),
   })
 }
@@ -160,7 +161,7 @@ test('malformed header is rejected without RPC calls', async () => {
 test('failed on-chain transaction is rejected', async () => {
   const rpc = mockRpc({
     sendTransaction: () => 'testsig',
-    getSignatureStatuses: () => [{ confirmationStatus: 'confirmed', err: { some: 'error' } }],
+    getSignatureStatuses: () => ({ context: { slot: 1 }, value: [{ confirmationStatus: 'confirmed', err: { some: 'error' } }] }),
   })
   assert.equal((await verifyX402Payment(testConfig({ fetch: rpc }), paymentHeader())).ok, false)
 })
