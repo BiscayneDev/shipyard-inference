@@ -377,7 +377,7 @@ async function runTurn() {
 
   let acc = ''
   try {
-    const res = await fetch('/api/chat', {
+    const chatInit = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -386,7 +386,23 @@ async function runTurn() {
         sessionId: state.sessionId,
         mode: state.inferenceMode,
       }),
-    })
+    }
+    let res = await fetch('/api/chat', chatInit)
+    // x402 `upto`: a keyless 402 means this message needs a wallet. Pay it
+    // in-browser — Phantom signs the channel open, key material never leaves
+    // the wallet, and the retry carries the payment header.
+    if (res.status === 402 && window.ShipyardUpto?.hasPhantom()) {
+      try {
+        const cfg = await (await fetch('/api/upto-config')).json()
+        if (cfg?.enabled) {
+          contentEl.textContent = ''
+          contentEl.insertAdjacentHTML('beforeend', 'connecting wallet… <span class="cursor">▍</span>')
+          res = await window.ShipyardUpto.payAndRetry('/api/chat', chatInit, cfg.rpcUrl)
+        }
+      } catch (payErr) {
+        throw new Error(`wallet payment failed: ${payErr.message}`)
+      }
+    }
     if (!res.ok || !res.body) {
       if (res.status === 402) {
         // x402 payment required — this message needs a wallet. Show the

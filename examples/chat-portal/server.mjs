@@ -468,6 +468,18 @@ function walletSnapshot(session) {
 const app = new Hono()
 app.use('/api/*', cors())
 
+app.get('/api/upto-config', (c) => {
+  // Browser x402 `upto` payers need the RPC + network to build the channel
+  // open. Absent when upto billing is off.
+  if (!uptoConfig) return c.json({ enabled: false }, 404)
+  return c.json({
+    enabled: true,
+    rpcUrl: uptoConfig.rpcUrl,
+    network: uptoConfig.network,
+    ceilingUsd: UPTO_CEILING_USD,
+  })
+})
+
 app.get('/api/models', (c) => {
   // The picker + savings baseline are per inference mode (?mode=demo|production).
   const wantProd = c.req.query('mode') === 'production' && prodRT
