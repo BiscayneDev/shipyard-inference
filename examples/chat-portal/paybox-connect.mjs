@@ -79,6 +79,9 @@ export async function completeConnect(origin, code, verifier, clientId) {
     code,
     redirect_uri: `${origin}/api/paybox/connect/callback`,
     code_verifier: verifier,
+    // Public clients (token_endpoint_auth_method: none) authenticate via the
+    // client_id in the body — Paybox 422s without it.
+    client_id: clientId,
     resource,
   })
   const res = await fetch(meta.token_endpoint, {
@@ -86,7 +89,10 @@ export async function completeConnect(origin, code, verifier, clientId) {
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: form,
   })
-  if (!res.ok) throw new Error(`Paybox token exchange failed (${res.status})`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Paybox token exchange failed (${res.status}): ${body.slice(0, 400)}`)
+  }
   const t = await res.json()
   if (!t.access_token) throw new Error('Paybox token exchange returned no access token')
   return {
