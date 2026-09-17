@@ -10,10 +10,9 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Keypair, VersionedTransaction } from '@solana/web3.js'
 
-const setup = JSON.parse(
-  readFileSync(resolve(process.cwd(), '../pay-kit/typescript/examples/shipyard-inference-session/.session.json'), 'utf8'),
-) as { clientSecret: number[] }
-const kp = Keypair.fromSecretKey(new Uint8Array(setup.clientSecret))
+const WALLET_FILE = process.env.WALLET_FILE ?? '../pay-kit/typescript/examples/shipyard-inference-session/.session.json'
+const setup = JSON.parse(readFileSync(resolve(process.cwd(), WALLET_FILE), 'utf8'),) as { clientSecret?: number[]; payerSecret?: number[] }
+const kp = Keypair.fromSecretKey(new Uint8Array(setup.clientSecret ?? setup.payerSecret))
 const log = (m: string): void => console.log(`[browser-payer-test] ${m}`)
 
 // Mock the injected wallet BEFORE the payer module loads (same shape Phantom
@@ -58,7 +57,8 @@ const init: RequestInit = {
   }),
 }
 
-const res = await ShipyardUpto.payAndRetry('http://localhost:8788/api/chat', init, 'http://127.0.0.1:8899')
+const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8899'
+const res = await ShipyardUpto.payAndRetry('http://localhost:8788/api/chat', init, RPC_URL)
 log(`paid retry: HTTP ${res.status}`)
 if (res.status !== 200) throw new Error(`payment failed: ${(await res.text()).slice(0, 600)}`)
 
