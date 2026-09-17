@@ -579,6 +579,79 @@ function buildPaymentTrace(assistant, r) {
   )
 }
 
+// ---- Dictation (Web Speech API) ----
+const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition
+let recog = null
+if (SR) {
+  $('mic').addEventListener('click', () => {
+    if (recog) { recog.stop(); return }
+    recog = new SR()
+    recog.interimResults = true
+    recog.continuous = false
+    const base = $('input').value
+    recog.onresult = (e) => {
+      let t = ''
+      for (const r of e.results) t += r[0].transcript
+      $('input').value = (base ? base + ' ' : '') + t
+      autosize()
+    }
+    recog.onend = () => { recog = null; $('mic').classList.remove('rec') }
+    recog.onerror = () => { recog = null; $('mic').classList.remove('rec') }
+    $('mic').classList.add('rec')
+    recog.start()
+  })
+} else {
+  $('mic').style.display = 'none'
+}
+
+// ---- Insight Cards (paged: spend-over-time / by model) ----
+let insightPageNum = 1
+function renderInsights(r) {
+  $('insight-total').textContent = `$${r.total.toFixed(4)}`
+  const chart = $('insight-chart')
+  const max = Math.max(0.000001, ...r.days.map((d) => d.usd))
+  chart.innerHTML = ''
+  for (const d of r.days) {
+    const h = Math.max(2, Math.round((d.usd / max) * 60))
+    const bar = document.createElement('div')
+    bar.className = 'insight-bar'
+    bar.style.height = `${h}px`
+    bar.innerHTML = `<span class="tip">${d.date.slice(5)} · $${d.usd.toFixed(4)} · ${d.n} msg</span>`
+    chart.appendChild(bar)
+  }
+  const active = r.days.filter((d) => d.usd > 0).length
+  $('insight-foot').textContent = r.messages
+    ? `${r.messages} messages · ${active}/14 active days`
+    : 'no data yet — send a message'
+  $('insight-msgs').textContent = `${r.messages} msgs`
+  const models = $('insight-models')
+  models.innerHTML = ''
+  const mmax = Math.max(0.000001, ...r.models.map((m) => m.usd))
+  for (const m of r.models) {
+    const row = document.createElement('div')
+    row.className = 'insight-model'
+    row.innerHTML = `<div class="row"><span>${m.model}</span><span class="mono">$${m.usd.toFixed(4)} · ${m.n}</span></div>
+      <div class="bar" style="width:${Math.max(4, Math.round((m.usd / mmax) * 100))}%"></div>`
+    models.appendChild(row)
+  }
+  if (!r.messages) models.innerHTML = '<div class="muted" style="font-size:12px">no data yet</div>'
+}
+async function refreshInsights() {
+  try { renderInsights(await (await fetch('/api/insights')).json()) } catch {}
+}
+function bindInsightPager() {
+  const show = (n) => {
+    insightPageNum = n
+    $('insight-page-1').classList.toggle('hidden', n !== 1)
+    $('insight-page-2').classList.toggle('hidden', n !== 2)
+    $('insight-page').textContent = `${n}/2`
+  }
+  $('insight-prev').addEventListener('click', () => show(insightPageNum === 1 ? 2 : 1))
+  $('insight-next').addEventListener('click', () => show(insightPageNum === 1 ? 2 : 1))
+}
+bindInsightPager()
+refreshInsights()
+
 async function settle(assistant) {
   if (!state.sessionId) return
   const t0 = performance.now()
@@ -589,6 +662,7 @@ async function settle(assistant) {
       body: JSON.stringify({ sessionId: state.sessionId }),
     })).json()
     if (r.wallet) applyWallet(r.wallet)
+    refreshInsights()
     if (r.error) {
       const chips = assistant.querySelector('.chips')
       const chip = document.createElement('span')

@@ -494,3 +494,43 @@ textarea::placeholder { color: var(--faint); }
 }
 .chips .chip.settle { border-color: rgba(47, 224, 172, .35); color: var(--accent-2); }
 .chips a.chip:hover { border-color: var(--hair-2); color: var(--text); }
+
+/* ---------- Prompt Bar (composer with model pill + dictation) ---------- */
+.composer { gap: 6px; }
+.promptbar-side { display: flex; align-items: center; flex: none; }
+.composer .model-pick { position: relative; }
+.composer .model-trigger {
+  border: 1px solid var(--hair); border-radius: 999px; background: var(--glass);
+  color: var(--muted); font-size: 12px; padding: 4px 10px; display: inline-flex;
+  align-items: center; gap: 6px; cursor: pointer; max-width: 180px;
+}
+.composer .model-trigger:hover { border-color: var(--hair-2); color: var(--text); }
+.composer .model-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer .model-menu { top: calc(100% + 6px); bottom: auto; }
+.btn.mic { font-size: 15px; line-height: 1; flex: none; padding: 6px 10px; }
+.btn.mic.rec { color: var(--danger); border-color: rgba(255, 111, 115, .45); animation: micpulse 1.2s infinite; }
+@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,111,115,.25); } 50% { box-shadow: 0 0 0 6px rgba(255,111,115,0); } }
+
+/* ---------- Insight Cards ---------- */
+.insights { margin-top: 14px; }
+.insights-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.insights-pager { display: flex; align-items: center; gap: 4px; }
+.insights-pager .mono { font-size: 11px; color: var(--faint); }
+.insight-k { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 8px; }
+.insight-chart { display: flex; align-items: flex-end; gap: 3px; height: 64px; }
+.insight-bar {
+  flex: 1; min-width: 0; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, var(--accent), rgba(91,140,255,.25));
+  position: relative; cursor: crosshair; transition: opacity .15s;
+}
+.insight-bar:hover { opacity: .8; }
+.insight-bar .tip {
+  display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: var(--glass-2); border: 1px solid var(--hair); border-radius: 6px; padding: 3px 8px;
+  font-family: var(--mono); font-size: 10px; white-space: nowrap; z-index: 3; pointer-events: none;
+}
+.insight-bar:hover .tip { display: block; }
+.insight-foot { font-size: 10px; color: var(--faint); margin-top: 6px; }
+.insight-models { display: flex; flex-direction: column; gap: 6px; }
+.insight-model { font-size: 12px; }
+.insight-model .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.insight-model .bar { height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--violet), rgba(183,139,255,.2)); }

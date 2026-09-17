@@ -624,6 +624,59 @@ app.post('/api/paybox/signing-key', async (c) => {
   return c.json({ ok: true, canSign: true })
 })
 
+// ---- Insights: spend-over-time from the portal's own telemetry ----
+// Persisted (survives restarts) so the charts get richer over time.
+const INSIGHTS_FILE = new URL('./.data/insights.json', import.meta.url)
+let insightEvents = []
+try {
+  insightEvents = JSON.parse(fs.readFileSync(INSIGHTS_FILE, 'utf8'))
+  if (!Array.isArray(insightEvents)) insightEvents = []
+} catch {}
+function recordInsight(e) {
+  insightEvents.push({ ts: Date.now(), ...e })
+  if (insightEvents.length > 5000) insightEvents = insightEvents.slice(-5000)
+  clearTimeout(recordInsight._t)
+  recordInsight._t = setTimeout(() => {
+    try {
+      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
+      fs.writeFileSync(INSIGHTS_FILE, JSON.stringify(insightEvents))
+    } catch {}
+  }, 500)
+}
+
+app.get('/api/insights', (c) => {
+  const byDay = new Map()
+  const byModel = new Map()
+  let total = 0
+  for (const e of insightEvents) {
+    const day = new Date(e.ts).toISOString().slice(0, 10)
+    const cur = byDay.get(day) ?? { usd: 0, n: 0 }
+    cur.usd += Number(e.chargedUsd ?? e.actualCostUsd ?? 0)
+    cur.n += 1
+    byDay.set(day, cur)
+    const m = byModel.get(e.model ?? 'unknown') ?? { usd: 0, n: 0 }
+    m.usd += Number(e.actualCostUsd ?? 0)
+    m.n += 1
+    byModel.set(e.model ?? 'unknown', m)
+    total += Number(e.actualCostUsd ?? 0)
+  }
+  // Last 14 days, zero-filled so the chart has a steady baseline.
+  const days = []
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
+    days.push({ date: d, ...(byDay.get(d) ?? { usd: 0, n: 0 }) })
+  }
+  return c.json({
+    total: Math.round(total * 1e6) / 1e6,
+    messages: insightEvents.length,
+    days,
+    models: [...byModel.entries()]
+      .map(([model, v]) => ({ model, usd: Math.round(v.usd * 1e6) / 1e6, n: v.n }))
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, 6),
+  })
+})
+
 app.get('/api/paybox/wallet', async (c) => {
   const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
   const session = sid ? sessions.get(sid) : undefined
@@ -1164,6 +1217,124 @@ app.get('/api/campaigns', (c) =>
   }),
 )
 
+// ---------------------------------------------------------------------------
+// Decisions — the System One surface (TypeSafe Jev). POST /api/decisions takes
+// {state, questions} and returns typed, probabilistic answers. Billing mirrors
+// chat exactly: Paybox pays server-side when connected, otherwise the request
+// gets the 402 challenge; the metered actual (TypeSafe input pricing) settles
+// on-chain after the answer, refunding the rest of the escrow.
+// ---------------------------------------------------------------------------
+app.get('/api/decisions/config', (c) =>
+  c.json({
+    live: DECISIONS_LIVE,
+    model: DECISIONS_LIVE ? 'jev-latest' : 'stub-latest',
+    inputPerMTok: JEV_INPUT_PER_MTOK,
+  }),
+)
+
+app.post('/api/decisions', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || body.state === undefined || typeof body.questions !== 'object' || !body.questions || Object.keys(body.questions).length === 0) {
+    return c.json({ error: '`state` and a non-empty `questions` object are required' }, 400)
+  }
+  for (const [id, q] of Object.entries(body.questions)) {
+    if (!q || !['choice', 'score', 'noul'].includes(q.type) || typeof q.instructions !== 'string') {
+      return c.json({ error: `Question '${id}' needs type choice|score|noul and string 'instructions'` }, 400)
+    }
+  }
+
+  // x402 `upto` gate — the same contract as chat, one metered call per ask.
+  let uptoVerified
+  const session = body.sessionId ? sessions.get(body.sessionId) : undefined
+  if (upto && session?.paybox) {
+    try {
+      uptoVerified = await payWithPaybox({
+        oauth: session.paybox.oauth,
+        signingKey: session.paybox.signingKey,
+        upto,
+        ceiling: uptoCeiling(),
+        rpcUrl: uptoConfig.rpcUrl,
+      })
+    } catch (err) {
+      console.error('[portal] Paybox payment failed (decisions):', err)
+      return c.json({ error: `Paybox payment failed: ${err instanceof Error ? err.message : String(err)}` }, 402)
+    }
+  } else if (upto) {
+    const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
+    if (!paymentHeader) {
+      const requirements = await upto.accepts(uptoCeiling())
+      const headers = await upto.challengeHeaders(uptoCeiling(), c.req.raw, requirements)
+      return c.json(
+        { accepts: requirements.map((r) => ({ ...r, protocol: 'x402' })), description: 'Metered decisions — pay per call from your wallet' },
+        402,
+        headers,
+      )
+    }
+    try {
+      uptoVerified = await upto.verifyOpen(c.req.raw, uptoCeiling())
+    } catch (err) {
+      const requirements = await upto.accepts(uptoCeiling())
+      const headers = await upto.challengeHeaders(uptoCeiling(), c.req.raw, requirements)
+      return c.json(
+        { accepts: requirements.map((r) => ({ ...r, protocol: 'x402' })), code: 'invalid_payment', detail: err?.message ?? String(err) },
+        402,
+        headers,
+      )
+    }
+  }
+
+  let res
+  try {
+    res = await decisionProvider.decide({ state: body.state, questions: body.questions })
+  } catch (err) {
+    console.error('[portal] decision failed:', err)
+    return c.json({ error: `Decision failed: ${err instanceof Error ? err.message : String(err)}` }, 502)
+  }
+
+  // Billing: metered on the decision's own usage at TypeSafe's input pricing
+  // (output tokens are free), + margin — same shape as chat's actual+margin.
+  const costUsd = decisionCostUsd(res.usage)
+  const chargedUsd = round6(costUsd * (1 + MARGIN))
+  if (session) {
+    session.pendingUsd += chargedUsd
+    session.messages += 1
+  }
+
+  let receipt
+  if (uptoVerified) {
+    const amountUsd = uptoChargeFor(res.usage, costUsd)
+    try {
+      const settlement = await upto.settle(uptoVerified, BigInt(Math.round(amountUsd * 1_000_000)))
+      receipt = {
+        amountUsd,
+        ceilingUsd: UPTO_CEILING_USD,
+        refundedUsd: round6(UPTO_CEILING_USD - amountUsd),
+        signature: settlement.transaction,
+        network: uptoConfig.network,
+      }
+      reporter?.recordSettlement({
+        userId: session?.id ?? uptoVerified.payer ?? 'upto-payer',
+        amountUsd,
+        status: 'settled',
+        network: uptoConfig.network,
+      })
+    } catch (err) {
+      console.error('[portal] decision settle failed (channel refunds via withdraw):', err)
+    }
+  }
+
+  return c.json({
+    model: res.model,
+    live: DECISIONS_LIVE,
+    answers: res.answers,
+    usage: res.usage,
+    costUsd,
+    chargedUsd,
+    receipt,
+    wallet: session ? walletSnapshot(session) : undefined,
+  })
+})
+
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !Array.isArray(body.messages)) {
@@ -1388,6 +1559,17 @@ app.post('/api/chat', async (c) => {
           usage: ctx.usage,
           wallet: session ? walletSnapshot(session) : undefined,
         }),
+      })
+
+      // Insights (local spend-over-time) record every message, paid or demo.
+      recordInsight({
+        model: ctx.model,
+        provider: ctx.provider,
+        actualCostUsd: actual,
+        baselineCostUsd: baseline,
+        savedUsd: saved,
+        chargedUsd: charged === undefined ? undefined : round6(charged),
+        usage: ctx.usage,
       })
 
       // The signed attestation rides the side channel (proof-of-impression + the
