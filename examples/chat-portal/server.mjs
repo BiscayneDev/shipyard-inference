@@ -605,6 +605,57 @@ app.post('/api/paybox/signing-key', async (c) => {
   return c.json({ ok: true, canSign: true })
 })
 
+app.get('/api/paybox/wallet', async (c) => {
+  const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
+  const session = sid ? sessions.get(sid) : undefined
+  if (!session?.paybox) return c.json({ connected: false }, 404)
+  try {
+    const { PayboxClient } = await import('@paybox-sh/sdk')
+    const client = new PayboxClient({
+      baseUrl: process.env.PAYBOX_BASE_URL ?? 'https://api.paybox.sh',
+      token: session.paybox.oauth.accessToken,
+      ...(session.paybox.signingKey ? { signingKey: session.paybox.signingKey } : {}),
+    })
+    // Discover the user's Solana wallet credential + on-chain USDC balance.
+    const credentials = await client.listCredentials()
+    const list = Array.isArray(credentials) ? credentials : credentials?.credentials ?? []
+    const walletCred = list.find((c2) => (c2.type ?? c2.kind ?? '').toLowerCase().includes('wallet'))
+    const address = session.paybox.address ?? walletCred?.metadata?.address ?? walletCred?.credential?.metadata?.address
+    let usdc
+    if (address) {
+      try {
+        const portfolio = await client.getPortfolio({ address })
+        const raw = JSON.stringify(portfolio)
+        // The portfolio shape varies; find USDC entries (prefer Solana).
+        const found = []
+        const walk = (node) => {
+          if (!node || typeof node !== 'object') return
+          if (Array.isArray(node)) return node.forEach(walk)
+          const sym = String(node.symbol ?? node.token ?? '').toUpperCase()
+          if (sym === 'USDC') found.push(node)
+          Object.values(node).forEach(walk)
+        }
+        walk(portfolio)
+        const sol = found.find((f) => JSON.stringify(f).toLowerCase().includes('solana')) ?? found[0]
+        const amount = sol?.balance ?? sol?.amount ?? sol?.uiAmount ?? sol?.formatted
+        if (amount !== undefined) usdc = Number(amount)
+      } catch (err) {
+        console.warn('[portal] Paybox portfolio failed:', err?.message ?? err)
+      }
+    }
+    if (address && !session.paybox.address) session.paybox.address = address
+    return c.json({
+      connected: true,
+      address: address ?? null,
+      usdc,
+      canSign: Boolean(session.paybox.signingKey),
+      walletFound: Boolean(walletCred),
+    })
+  } catch (err) {
+    return c.json({ connected: true, error: err?.message ?? String(err) }, 200)
+  }
+})
+
 app.get('/api/paybox/signing-key', (c) => {
   const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
   const session = sid ? sessions.get(sid) : undefined

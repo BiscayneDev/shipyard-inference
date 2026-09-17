@@ -41,10 +41,13 @@
               </div>
             </div>
             <div class="wallet-addr mono addr" id="addr" title=""></div>
-            <div class="wallet-sub hidden" id="signkey-row" title="A pbxk1. agent key from your Paybox account enables instant MPC signing within your grant limits — without it, every message waits for a passkey approval">
-              <input id="signkey-input" placeholder="pbxk1… signing key (instant signing)" spellcheck="false"
-                style="flex:1;min-width:0;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:4px 8px;color:inherit;font-family:inherit;font-size:11px" />
-              <button class="btn ghost tiny" id="signkey-save">Save</button>
+            <div class="wallet-sub hidden" id="signkey-row" style="flex-direction:column;gap:6px;align-items:stretch" title="A pbxk1. agent key from your Paybox account enables instant MPC signing within your grant limits — without it, every message waits for a passkey approval">
+              <div class="muted" style="line-height:1.4">⚡ <strong>Connect a signing key</strong> for instant signing — otherwise each message needs a passkey approval. Get yours from Paybox → Settings → Agent keys, then paste the <span class="mono">pbxk1.…</span> token:</div>
+              <div style="display:flex;gap:6px">
+                <input id="signkey-input" placeholder="pbxk1…" spellcheck="false"
+                  style="flex:1;min-width:0;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:4px 8px;color:inherit;font-family:inherit;font-size:11px" />
+                <button class="btn ghost tiny" id="signkey-save">Save</button>
+              </div>
             </div>
             <div class="wallet-balance">
               <span class="mono" id="balance">$0.00</span>

@@ -368,14 +368,26 @@ function applyWallet(w) {
   } else {
     $('balance').textContent = fmt(w.balanceUsd)
   }
-  // Paybox agent signing key: when connected via Paybox without one, offer the
-  // pbxk1. key inline — it enables instant in-process MPC signing.
+  // Paybox: show the connected wallet's address + USDC balance, and surface
+  // the signing-key step when in-process signing isn't enabled yet.
   if (state.wallet === 'paybox') {
-    fetch('/api/paybox/signing-key')
+    fetch('/api/paybox/wallet')
       .then((x) => x.json())
       .then((r) => {
+        if (r.address) {
+          $('addr').textContent = r.address
+          $('addr').title = r.address
+        }
+        if (typeof r.usdc === 'number') {
+          $('balance').textContent = `${r.usdc.toFixed(2)} USDC`
+          $('balance').classList.remove('muted')
+          $('balance').title = 'Your Paybox wallet balance (mainnet USDC)'
+        }
         const row = $('signkey-row')
-        if (row) row.classList.toggle('hidden', Boolean(r?.canSign))
+        if (row) {
+          row.classList.toggle('hidden', Boolean(r.canSign))
+          if (!r.canSign) $('signkey-input')?.focus?.()
+        }
       })
       .catch(() => {})
   }
