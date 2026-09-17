@@ -243,6 +243,15 @@ async function connectWallet(wallet = 'paybox') {
     body: JSON.stringify({ sessionId: state.sessionId, wallet, address }),
   })
   const w = await res.json()
+  // Paybox connects via OAuth: the server returns a redirect to paybox.sh for
+  // passkey approval — the browser follows it and comes back via the callback.
+  if (w.redirect) {
+    window.location.href = w.redirect
+    return
+  }
+  if (!w.sessionId) {
+    return connectError(w.error || 'Wallet connect failed.')
+  }
   state.sessionId = w.sessionId
   localStorage.setItem('portal.session', w.sessionId)
   applyWallet(w)
