@@ -427,7 +427,34 @@ function buildSessionRouter(token) {
 // Either way it meters spend as `pendingUsd` and only moves the balance on
 // settle — the meter-then-settle shape Shipyard uses for real Paybox USDC.
 // ---------------------------------------------------------------------------
-const sessions = new Map()
+// Sessions are persisted to disk: portal restarts must not disconnect the
+// user's Paybox wallet (OAuth tokens + signing key live here) — an in-memory
+// map silently broke that and dropped requests to the keyless 402 path.
+const SESSIONS_FILE = new URL('./.data/sessions.json', import.meta.url)
+class PersistentSessions extends Map {
+  constructor() {
+    super()
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8')) ?? {})) {
+        // Re-attach the paybox token-refresh hook after deserialization.
+        if (v?.paybox?.oauth) v.paybox.onRefresh = (t) => (v.paybox.oauth = t)
+        super.set(k, v)
+      }
+    } catch {}
+  }
+  persist() {
+    clearTimeout(this._t)
+    this._t = setTimeout(() => {
+      try {
+        fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
+        fs.writeFileSync(SESSIONS_FILE, JSON.stringify([...this.entries()]))
+      } catch {}
+    }, 250)
+  }
+  set(k, v) { super.set(k, v); this.persist(); return this }
+  delete(k) { super.delete(k); this.persist(); return true }
+}
+const sessions = new PersistentSessions()
 
 // Address shaped to the chosen wallet: MetaMask is EVM (0x-hex), Paybox and
 // Phantom are Solana (base58). Demo sessions mint a throwaway one.
