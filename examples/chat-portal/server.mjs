@@ -26,6 +26,8 @@ import { serve } from '@hono/node-server'
 import {
   Router,
   costOptimized,
+  createTypeSafeProvider,
+  createStubDecisionProvider,
   createUsePodProvider,
   createWalletInference,
   createTelemetryReporter,
@@ -257,6 +259,23 @@ const upto = await (async () => {
   })
 })()
 const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
+
+// ---------------------------------------------------------------------------
+// Decisions — System One models (TypeSafe Jev). Same wallet billing as chat:
+// upto-gated per call, metered on the decision's own token usage. Live Jev
+// when TYPESAFE_API_KEY is set; otherwise the offline stub (same wire shape,
+// neutral answers) so the surface runs with zero keys.
+// ---------------------------------------------------------------------------
+const decisionProvider = process.env.TYPESAFE_API_KEY
+  ? createTypeSafeProvider({ apiKey: process.env.TYPESAFE_API_KEY })
+  : createStubDecisionProvider({ id: 'stub-typesafe' })
+const DECISIONS_LIVE = Boolean(process.env.TYPESAFE_API_KEY)
+/** TypeSafe list pricing: $0.042/MTok input, output free — the metered basis. */
+const JEV_INPUT_PER_MTOK = 0.042
+function decisionCostUsd(usage) {
+  const inTok = usage?.inputTokens ?? 0
+  return round6((inTok / 1_000_000) * JEV_INPUT_PER_MTOK)
+}
 
 /** Settled amount for one message: real metered cost + margin, floored at the
  *  per-token retail price, capped at the ceiling. Never negative. */

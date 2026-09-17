@@ -78,12 +78,19 @@ export async function payWithPaybox({ oauth, signingKey, upto, ceiling, rpcUrl }
   xc.register('solana:*', new UptoSvmScheme(kitSigner, { rpcUrl }))
   const http = new x402HTTPClient(xc)
 
-  // Build the payment against the portal's own fresh challenge.
+  // Build the payment against the portal's own fresh challenge. The x402
+  // client only accepts challenges decoded from a PAYMENT-REQUIRED header —
+  // hand-built objects fail with 'Invalid payment required response'.
   const requirements = await upto.accepts(ceiling)
-  const payload = await http.createPaymentPayload({
-    accepts: requirements,
-    x402Version: 2,
-  })
+  const challengeHeaders = await upto.challengeHeaders(
+    ceiling,
+    new Request('http://portal.local/api/chat', { method: 'POST' }),
+    requirements,
+  )
+  const parsed = http.getPaymentRequiredResponse(
+    (name) => challengeHeaders[name] ?? challengeHeaders[String(name).toLowerCase()],
+  )
+  const payload = await http.createPaymentPayload(parsed)
   const payHeaders = http.encodePaymentSignatureHeader(payload)
 
   // Verify through the same gate a keyless request would hit — this also
