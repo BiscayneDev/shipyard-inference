@@ -581,6 +581,36 @@ app.get('/api/paybox/connect/callback', async (c) => {
   }
 })
 
+// Store the user's pbxk1. agent signing key — enables in-process MPC signing
+// (instant payments within grant limits). Without it, each payment parks in
+// pending_signature until approved with a passkey.
+app.post('/api/paybox/signing-key', async (c) => {
+  const session = (() => {
+    const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
+    return sid ? sessions.get(sid) : undefined
+  })()
+  if (!session?.paybox) return c.json({ error: 'connect Paybox first' }, 401)
+  const { signingKey } = await c.req.json().catch(() => ({}))
+  if (typeof signingKey !== 'string' || !signingKey.trim().startsWith('pbxk1.')) {
+    return c.json({ error: 'signing key must be a pbxk1. token (from your Paybox account)' }, 400)
+  }
+  try {
+    // Validate it parses as a keypair before accepting it.
+    const { credsFromToken } = await import('@paybox-sh/sdk')
+    credsFromToken(signingKey.trim())
+  } catch {
+    return c.json({ error: 'invalid signing key token' }, 400)
+  }
+  session.paybox.signingKey = signingKey.trim()
+  return c.json({ ok: true, canSign: true })
+})
+
+app.get('/api/paybox/signing-key', (c) => {
+  const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
+  const session = sid ? sessions.get(sid) : undefined
+  return c.json({ canSign: Boolean(session?.paybox?.signingKey) })
+})
+
 app.post('/api/wallet/connect', async (c) => {
   const body = await c.req.json().catch(() => ({}))
   // Paybox connects via OAuth, not a session POST — the browser is redirected
@@ -1082,6 +1112,7 @@ app.post('/api/chat', async (c) => {
     try {
       uptoVerified = await payWithPaybox({
         oauth: chatSession.paybox.oauth,
+        signingKey: chatSession.paybox.signingKey,
         upto,
         ceiling: uptoCeiling(),
         rpcUrl: uptoConfig.rpcUrl,

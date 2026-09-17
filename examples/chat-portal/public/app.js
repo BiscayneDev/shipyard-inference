@@ -61,6 +61,31 @@ async function init() {
   $('placement-cta')?.addEventListener('click', recordClick)
   $('cashout')?.addEventListener('click', cashOut)
   $('topup-toggle').addEventListener('click', () => $('topup').classList.toggle('hidden'))
+  // Paybox signing key: save the pbxk1. token to the session (enables instant
+  // in-process MPC signing within the user's grant limits).
+  $('signkey-save')?.addEventListener('click', async () => {
+    const key = $('signkey-input')?.value?.trim()
+    if (!key) return
+    const btn = $('signkey-save')
+    btn.textContent = '…'
+    try {
+      const r = await (await fetch('/api/paybox/signing-key', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ signingKey: key }),
+      })).json()
+      if (r.ok) {
+        $('signkey-row').classList.add('hidden')
+        btn.textContent = 'saved ✓'
+      } else {
+        btn.textContent = r.error || 'invalid key'
+        setTimeout(() => { btn.textContent = 'Save' }, 2800)
+      }
+    } catch {
+      btn.textContent = 'failed'
+      setTimeout(() => { btn.textContent = 'Save' }, 2800)
+    }
+  })
   $('topup').addEventListener('click', (e) => {
     const amt = e.target.closest('.topup-amt')?.dataset.amt
     if (amt) topUp(Number(amt))
@@ -342,6 +367,17 @@ function applyWallet(w) {
     $('balance').classList.add('muted')
   } else {
     $('balance').textContent = fmt(w.balanceUsd)
+  }
+  // Paybox agent signing key: when connected via Paybox without one, offer the
+  // pbxk1. key inline — it enables instant in-process MPC signing.
+  if (state.wallet === 'paybox') {
+    fetch('/api/paybox/signing-key')
+      .then((x) => x.json())
+      .then((r) => {
+        const row = $('signkey-row')
+        if (row) row.classList.toggle('hidden', Boolean(r?.canSign))
+      })
+      .catch(() => {})
   }
   // Tender: show what's actually owed after netting the idle-attention credit,
   // and surface the credit itself when present.

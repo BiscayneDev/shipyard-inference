@@ -18,7 +18,7 @@ import { payboxSigner } from 'shipyard-inference'
  * against the portal's own gate. Returns the X402Upto-verified open (escrow
  * already broadcast on-chain).
  */
-export async function payWithPaybox({ oauth, upto, ceiling, rpcUrl }) {
+export async function payWithPaybox({ oauth, signingKey, upto, ceiling, rpcUrl }) {
   const { PayboxClient } = await import('@paybox-sh/sdk')
   let tokens = oauth
   const expiringSoon = tokens.expiresAt !== undefined && tokens.expiresAt - Date.now() < 5 * 60_000
@@ -31,11 +31,16 @@ export async function payWithPaybox({ oauth, upto, ceiling, rpcUrl }) {
       // A dead token surfaces as a 401 on the request itself.
     }
   }
+  // In-process MPC signing: a pbxk1. agent key lets payments clear instantly
+  // within the user's grant limits; without it every payment parks in
+  // pending_signature until the user approves each one with a passkey.
+  const key = signingKey ?? process.env.PAYBOX_SIGNING_KEY
   const client = new PayboxClient({
     baseUrl: process.env.PAYBOX_BASE_URL ?? 'https://api.paybox.sh',
     token: tokens.accessToken,
-    ...(process.env.PAYBOX_SIGNING_KEY ? { signingKey: process.env.PAYBOX_SIGNING_KEY } : {}),
+    ...(key ? { signingKey: key } : {}),
   })
+  console.log(`[portal] Paybox payment: in-process signing ${client.canSign ? 'ENABLED (pbxk1 key)' : 'off — each payment waits for passkey approval'}`)
 
   // Pick the user's Solana wallet credential (first wallet-kind credential).
   const credentials = await client.listCredentials()
