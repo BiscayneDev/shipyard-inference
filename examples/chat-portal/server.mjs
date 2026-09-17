@@ -59,6 +59,14 @@ try {
 } catch {
   console.warn('[portal] @solana/pay-kit not installed — x402 `upto` billing disabled')
 }
+import {
+  startConnect,
+  completeConnect,
+  CONNECT_STATE_COOKIE,
+  CONNECT_VERIFIER_COOKIE,
+  CONNECT_CLIENT_COOKIE,
+} from './paybox-connect.mjs'
+import { payWithPaybox } from './paybox-payer.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT ?? 8788)
@@ -249,6 +257,7 @@ const upto = await (async () => {
   })
 })()
 const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
+
 /** Settled amount for one message: real metered cost + margin, floored at the
  *  per-token retail price, capped at the ceiling. Never negative. */
 function uptoChargeFor(usage, actualCostUsd) {
@@ -468,6 +477,34 @@ function walletSnapshot(session) {
 const app = new Hono()
 app.use('/api/*', cors())
 
+// Browser payer debug beacon: the wallet's exact sent/received transaction
+// bytes, diffed so signature mismatches can be pinned down.
+app.post('/api/upto-debug', async (c) => {
+  const { from, sent, received } = await c.req.json().catch(() => ({}))
+  try {
+    const { VersionedTransaction } = await import('@solana/web3.js')
+    const sentTx = VersionedTransaction.deserialize(Buffer.from(sent, 'base64'))
+    const recTx = VersionedTransaction.deserialize(Buffer.from(received, 'base64'))
+    const msgEqual = Buffer.compare(
+      Buffer.from(sentTx.message.serialize()),
+      Buffer.from(recTx.message.serialize()),
+    ) === 0
+    const sentSigs = sentTx.signatures.map((s) => s.some((b) => b !== 0))
+    const recSigs = recTx.signatures.map((s) => s.some((b) => b !== 0))
+    console.error(
+      `[upto-beacon] from=${from} messageBytesEqual=${msgEqual} sentSigs=${JSON.stringify(sentSigs)} receivedSigs=${JSON.stringify(recSigs)} sigCount(sent→rec)=${sentTx.signatures.length}→${recTx.signatures.length}`,
+    )
+    if (!msgEqual) {
+      console.error(
+        `[upto-beacon] MESSAGE CHANGED BY WALLET — sent ${sentTx.message.serialize().length}B, received ${recTx.message.serialize().length}B`,
+      )
+    }
+  } catch (err) {
+    console.error('[upto-beacon] parse failed:', err?.message ?? err)
+  }
+  return c.json({ ok: true })
+})
+
 app.get('/api/upto-config', (c) => {
   // Browser x402 `upto` payers need the RPC + network to build the channel
   // open. Absent when upto billing is off.
@@ -495,8 +532,74 @@ app.get('/api/models', (c) => {
   })
 })
 
+// Paybox OAuth callback: exchange the code, bind the tokens to this browser's
+// portal session, and return to the chat.
+app.get('/api/paybox/connect/callback', async (c) => {
+  const url = new URL(c.req.url)
+  const code = url.searchParams.get('code')
+  const state = url.searchParams.get('state')
+  const cookie = (name) => c.req.header('cookie')?.match(new RegExp(`${name}=([^;]+)`))?.[1]
+  try {
+    if (!code) throw new Error('no authorization code in callback')
+    if (state !== cookie(CONNECT_STATE_COOKIE)) throw new Error('OAuth state mismatch')
+    const oauth = await completeConnect(url.origin, code, cookie(CONNECT_VERIFIER_COOKIE), cookie(CONNECT_CLIENT_COOKIE))
+    // Bind to (or create) this browser's session.
+    const sid = cookie('portal.session')
+    let session = sid ? sessions.get(sid) : undefined
+    if (!session) {
+      const id = randomBytes(12).toString('hex')
+      session = {
+        id,
+        address: '',
+        wallet: 'paybox',
+        mode: 'paybox',
+        balanceUsd: 0,
+        pendingUsd: 0,
+        spentUsd: 0,
+        savedUsd: 0,
+        messages: 0,
+        settlements: [],
+        realInference: true,
+      }
+      sessions.set(id, session)
+    }
+    session.paybox = { oauth, onRefresh: (t) => (session.paybox.oauth = t) }
+    for (const cookie of [
+      `portal.session=${session.id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`,
+      `${CONNECT_STATE_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
+      `${CONNECT_VERIFIER_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
+      `${CONNECT_CLIENT_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
+    ]) {
+      c.header('set-cookie', cookie, { append: true })
+    }
+    return c.redirect('/')
+  } catch (err) {
+    return c.redirect(`/?payboxError=${encodeURIComponent(String(err?.message ?? err).slice(0, 180))}`)
+  }
+})
+
 app.post('/api/wallet/connect', async (c) => {
   const body = await c.req.json().catch(() => ({}))
+  // Paybox connects via OAuth, not a session POST — the browser is redirected
+  // to Paybox for passkey approval and comes back through the callback.
+  if (body.wallet === 'paybox') {
+    const origin = new URL(c.req.url).origin
+    const start = await startConnect(origin)
+    // Each cookie must be its own Set-Cookie header — Hono appends when the
+    // append option is set; a single newline-joined value is invalid.
+    for (const [name, value] of [
+      [CONNECT_STATE_COOKIE, start.state],
+      [CONNECT_VERIFIER_COOKIE, start.verifier],
+      [CONNECT_CLIENT_COOKIE, start.clientId],
+    ]) {
+      c.header(
+        'set-cookie',
+        `${name}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+        { append: true },
+      )
+    }
+    return c.json({ redirect: start.authorizeUrl })
+  }
   let session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (!session) {
     const id = randomBytes(12).toString('hex')
@@ -969,7 +1072,26 @@ app.post('/api/chat', async (c) => {
   // channel-open verified + escrowed BEFORE inference runs, and the actual
   // metered cost is settled + refunded after the reply streams.
   let uptoVerified
-  if (upto) {
+  const chatSession = body.sessionId ? sessions.get(body.sessionId) : undefined
+  if (upto && chatSession?.paybox) {
+    // Connected Paybox wallet: pay server-side from the user's wallet (MPC
+    // signing within their grant) — no 402 round-trip to the browser.
+    try {
+      uptoVerified = await payWithPaybox({
+        oauth: chatSession.paybox.oauth,
+        upto,
+        ceiling: uptoCeiling(),
+        rpcUrl: uptoConfig.rpcUrl,
+      })
+      chatSession.paybox.oauth = chatSession.paybox.oauth // token rotation handled in payer
+    } catch (err) {
+      console.error('[portal] Paybox payment failed:', err)
+      return c.json(
+        { error: `Paybox payment failed: ${err instanceof Error ? err.message : String(err)}` },
+        402,
+      )
+    }
+  } else if (upto) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
     if (!paymentHeader) {
       const requirements = await upto.accepts(uptoCeiling())
@@ -987,6 +1109,32 @@ app.post('/api/chat', async (c) => {
       uptoVerified = await upto.verifyOpen(c.req.raw, uptoCeiling())
     } catch (err) {
       // Re-challenge with the failure reason, pay-kit style.
+      console.error('[portal] x402 upto verifyOpen failed:', err)
+      // DEBUG — dissect the client's payment to pin down signature failures.
+      try {
+        const { decodePaymentSignatureHeader } = await import('@x402/core/http')
+        const { VersionedTransaction } = await import('@solana/web3.js')
+        const nacl = (await import('tweetnacl')).default
+        const header = c.req.header('x-payment') ?? c.req.header('payment-signature')
+        const payload = decodePaymentSignatureHeader(header)?.payload ?? {}
+        const vtx = VersionedTransaction.deserialize(Buffer.from(payload.openTransaction, 'base64'))
+        const keys = vtx.message.staticAccountKeys.map((k) => k.toBase58())
+        const fromIdx = keys.indexOf(payload.from)
+        const nonzero = vtx.signatures.map((s) => s.some((b) => b !== 0))
+        console.error(
+          `[portal] upto-debug from=${payload.from} fromIdx=${fromIdx} signers=${vtx.message.header.numRequiredSignatures} nonzeroSigs=${JSON.stringify(nonzero)} keys=${keys.slice(0, 4).join(',')}`,
+        )
+        if (fromIdx >= 0 && nonzero[fromIdx]) {
+          const sigOk = nacl.sign.detached.verify(
+            vtx.message.serialize(),
+            vtx.signatures[fromIdx],
+            new (await import('@solana/web3.js')).PublicKey(payload.from).toBytes(),
+          )
+          console.error(`[portal] upto-debug local signature verify for from: ${sigOk}`)
+        }
+      } catch (dbgErr) {
+        console.error('[portal] upto-debug failed:', dbgErr?.message ?? dbgErr)
+      }
       const requirements = await upto.accepts(uptoCeiling())
       const headers = await upto.challengeHeaders(uptoCeiling(), c.req.raw, requirements)
       return c.json(

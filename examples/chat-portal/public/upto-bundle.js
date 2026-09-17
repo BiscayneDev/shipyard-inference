@@ -50635,6 +50635,12 @@ Message: ${transactionMessage}.
 
   // examples/chat-portal/public/src/upto.js
   var provider = () => window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null);
+  var u8ToB64 = (u82) => {
+    let s = "";
+    for (let i2 = 0; i2 < u82.length; i2++) s += String.fromCharCode(u82[i2]);
+    return btoa(s);
+  };
+  var lastWalletTx = null;
   function phantomSigner(address2) {
     return {
       address: address2,
@@ -50644,16 +50650,36 @@ Message: ${transactionMessage}.
         const dictionaries = [];
         for (const tx of transactions) {
           const messageBytes = new Uint8Array(tx.messageBytes);
-          const versioned = (messageBytes[0] & 128) !== 0;
-          const numSigs = versioned ? messageBytes[1] : messageBytes[0];
-          const envelope = new Uint8Array(1 + numSigs * 64 + messageBytes.length);
-          envelope[0] = numSigs;
-          envelope.set(messageBytes, 1 + numSigs * 64);
-          const vtx = VersionedTransaction.deserialize(envelope);
-          const signed = await p.signTransaction(vtx);
-          const idx = signed.message.staticAccountKeys.findIndex((k) => k.toString() === address2);
-          if (idx === -1) throw new Error("payer not found in transaction signers");
-          dictionaries.push({ [address2]: new Uint8Array(signed.signatures[idx]) });
+          const p2 = provider();
+          let signatureBytes2;
+          if (typeof p2.signTransaction === "function") {
+            const numSigs = (messageBytes[0] & 128) !== 0 ? messageBytes[1] : messageBytes[0];
+            const envelope = new Uint8Array(1 + numSigs * 64 + messageBytes.length);
+            envelope[0] = numSigs;
+            envelope.set(messageBytes, 1 + numSigs * 64);
+            const vtx = VersionedTransaction.deserialize(envelope);
+            const phantomResult = await p2.signTransaction(vtx);
+            const signed = phantomResult instanceof VersionedTransaction ? phantomResult : VersionedTransaction.deserialize(phantomResult.serialize());
+            lastWalletTx = signed;
+            try {
+              await fetch("/api/upto-debug", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ from: address2, sent: u8ToB64(vtx.serialize()), received: u8ToB64(signed.serialize()) })
+              });
+            } catch {
+            }
+            const idx = signed.message.staticAccountKeys.findIndex((k) => k.toString() === address2);
+            if (idx === -1) throw new Error("payer not found in transaction signers");
+            signatureBytes2 = new Uint8Array(signed.signatures[idx]);
+          } else if (typeof p2.signMessage === "function") {
+            const { signature: signature3 } = await p2.signMessage(messageBytes, "utf8");
+            signatureBytes2 = new Uint8Array(signature3);
+            lastWalletTx = null;
+          } else {
+            throw new Error("Wallet supports neither signTransaction nor signMessage.");
+          }
+          dictionaries.push({ [address2]: signatureBytes2 });
         }
         return dictionaries;
       }
@@ -50675,6 +50701,9 @@ Message: ${transactionMessage}.
     if (probe.status !== 402) return probe;
     const required = http.getPaymentRequiredResponse((name) => probe.headers.get(name));
     const payload = await http.createPaymentPayload(required);
+    if (lastWalletTx) {
+      payload.payload.openTransaction = u8ToB64(lastWalletTx.serialize());
+    }
     const payHeaders = http.encodePaymentSignatureHeader(payload);
     const headers = { ...init.headers ?? {} };
     for (const [name, value] of Object.entries(payHeaders)) headers[name] = value;

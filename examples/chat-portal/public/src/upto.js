@@ -30,6 +30,8 @@ const b64ToU8 = (b64) => {
  * keyed by signer address. Phantom signs the underlying versioned message
  * through its own prompt — the user approves, the key never leaves the wallet.
  */
+let lastWalletTx = null // the wallet's own returned transaction (message may differ from what we sent — e.g. added priority-fee instructions)
+
 function phantomSigner(address) {
   return {
     address,
@@ -41,22 +43,48 @@ function phantomSigner(address) {
         // kit hands us the compiled message as raw bytes (ReadonlyUint8Array),
         // and expects raw 64-byte signature bytes back, keyed by address.
         const messageBytes = new Uint8Array(tx.messageBytes)
-        // Wrap the bare compiled message in a versioned transaction envelope
-        // for Phantom: [sigCount][numSigs × zero-filled 64B placeholders][message].
-        // Zeroed placeholders are the standard partial-signature shape; Phantom
-        // fills in the ones for its keys. The message may carry the versioned
-        // prefix (0x80|version) — the header starts one byte in when present.
-        const versioned = (messageBytes[0] & 0x80) !== 0
-        const numSigs = versioned ? messageBytes[1] : messageBytes[0] // header: required signers
-        const envelope = new Uint8Array(1 + numSigs * 64 + messageBytes.length)
-        envelope[0] = numSigs // compact-u16 signature count (≤255 signers)
-        envelope.set(messageBytes, 1 + numSigs * 64)
-        const vtx = VersionedTransaction.deserialize(envelope)
-        const signed = await p.signTransaction(vtx)
-        // Our signature's slot = our position among the static account keys.
-        const idx = signed.message.staticAccountKeys.findIndex((k) => k.toString() === address)
-        if (idx === -1) throw new Error('payer not found in transaction signers')
-        dictionaries.push({ [address]: new Uint8Array(signed.signatures[idx]) })
+        // Sign the MESSAGE BYTES directly via signMessage — wallets can (and
+        // do) mutate transactions handed to signTransaction (adding priority
+        // fees or assertion instructions like Lighthouse), which invalidates
+        // the signature over the original message. Raw message signing leaves
+        // nothing to mutate: the wallet signs exactly these bytes.
+        const p = provider()
+        let signatureBytes
+        if (typeof p.signTransaction === 'function') {
+          // Transaction signing: the wallet may mutate the message (priority
+          // fees, Lighthouse assertions) — handled by overriding the payload's
+          // openTransaction with the wallet's own returned transaction.
+          const numSigs = (messageBytes[0] & 0x80) !== 0 ? messageBytes[1] : messageBytes[0]
+          const envelope = new Uint8Array(1 + numSigs * 64 + messageBytes.length)
+          envelope[0] = numSigs
+          envelope.set(messageBytes, 1 + numSigs * 64)
+          const vtx = VersionedTransaction.deserialize(envelope)
+          const phantomResult = await p.signTransaction(vtx)
+          const signed =
+            phantomResult instanceof VersionedTransaction
+              ? phantomResult
+              : VersionedTransaction.deserialize(phantomResult.serialize())
+          lastWalletTx = signed
+          try {
+            await fetch('/api/upto-debug', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ from: address, sent: u8ToB64(vtx.serialize()), received: u8ToB64(signed.serialize()) }),
+            })
+          } catch { /* non-fatal */ }
+          const idx = signed.message.staticAccountKeys.findIndex((k) => k.toString() === address)
+          if (idx === -1) throw new Error('payer not found in transaction signers')
+          signatureBytes = new Uint8Array(signed.signatures[idx])
+        } else if (typeof p.signMessage === 'function') {
+          // Fallback — raw message signing (some wallets block this for
+          // transaction-shaped bytes; leaves nothing to mutate).
+          const { signature } = await p.signMessage(messageBytes, 'utf8')
+          signatureBytes = new Uint8Array(signature)
+          lastWalletTx = null
+        } else {
+          throw new Error('Wallet supports neither signTransaction nor signMessage.')
+        }
+        dictionaries.push({ [address]: signatureBytes })
       }
       return dictionaries
     },
@@ -89,6 +117,15 @@ async function payAndRetry(url, init = {}, rpcUrl) {
 
   const required = http.getPaymentRequiredResponse((name) => probe.headers.get(name))
   const payload = await http.createPaymentPayload(required)
+  // Wallets may normalize/mutate the message before signing (e.g. Phantom adds
+  // priority-fee instructions), which invalidates the signature over the
+  // original message. The wallet's own returned transaction carries a valid
+  // signature over ITS message — use that as the open transaction. The channel
+  // PDA derives from seeds (payer/payee/mint/signer/salt/openSlot), not from
+  // the message bytes, so every other payload field stays consistent.
+  if (lastWalletTx) {
+    payload.payload.openTransaction = u8ToB64(lastWalletTx.serialize())
+  }
   const payHeaders = http.encodePaymentSignatureHeader(payload)
   const headers = { ...(init.headers ?? {}) }
   for (const [name, value] of Object.entries(payHeaders)) headers[name] = value
