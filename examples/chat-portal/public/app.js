@@ -36,6 +36,20 @@ async function init() {
   for (const b of document.querySelectorAll('.infmode-opt')) {
     b.addEventListener('click', () => setInferenceMode(b.dataset.infmode))
   }
+  // x402 wallet-pay: when the portal bills per message (upto), the prepaid
+  // balance widget is meaningless — payment escrows from the connected
+  // wallet on each message. Default to paid mode and show that instead.
+  const UPTO = await fetch('/api/upto-config')
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+  if (UPTO?.enabled) {
+    window.__SHIPYARD_UPTO__ = UPTO
+    $('balance').textContent = 'wallet-pay'
+    $('balance').classList.add('muted')
+    $('balance').title = `Each message escrows up to $${UPTO.ceilingUsd} USDC from your connected wallet and settles the metered actual.`
+    $('topup-toggle').classList.add('hidden')
+    if (state.productionAvailable) setInferenceMode('production')
+  }
   $('placement-cta')?.addEventListener('click', recordClick)
   $('cashout')?.addEventListener('click', cashOut)
   $('topup-toggle').addEventListener('click', () => $('topup').classList.toggle('hidden'))
@@ -304,7 +318,14 @@ function applyWallet(w) {
   $('wallet-label').textContent = WALLET_LABEL[w.wallet] ?? 'Wallet'
   $('addr').textContent = w.address
   $('addr').title = w.address
-  $('balance').textContent = fmt(w.balanceUsd)
+  // In x402 wallet-pay (upto) mode there is no prepaid balance — keep the
+  // wallet-pay label instead of the (meaningless $0) UsePod balance.
+  if (window.__SHIPYARD_UPTO__?.enabled) {
+    $('balance').textContent = 'wallet-pay'
+    $('balance').classList.add('muted')
+  } else {
+    $('balance').textContent = fmt(w.balanceUsd)
+  }
   // Tender: show what's actually owed after netting the idle-attention credit,
   // and surface the credit itself when present.
   const credit = w.tenderCreditUsd || 0
