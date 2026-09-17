@@ -1,6 +1,7 @@
 // Chat portal client — talks to the portal server's /api/* endpoints, streams
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
 import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
+import { initSpendTicker, initRoutePreview, renderWaterfall } from './economy.js'
 const $ = (id) => document.getElementById(id)
 const fmt = (n, d = 6) => '$' + (Number(n) || 0).toFixed(d)
 
@@ -25,6 +26,9 @@ const blended = (m) =>
 // ---------------------------------------------------------------------------
 init()
 async function init() {
+  // Economy primitives (economy.js): spend ticker + route preview.
+  initSpendTicker()
+  initRoutePreview()
   // The Paybox OAuth callback appends ?portalSession=<id> — adopt it into
   // localStorage so the UI picks up the connected session after the redirect.
   const fromUrl = new URLSearchParams(location.search).get('portalSession')
@@ -526,6 +530,8 @@ async function runTurn() {
         assistant.dataset.raw = acc
         const meta = JSON.parse(data)
         renderRoutingTrace(assistant, meta) // Thinking — routing trace
+        renderWaterfall(assistant, meta) // Latency waterfall
+        window.dispatchEvent(new CustomEvent('portal:meta', { detail: meta })) // Spend ticker
         renderChips(assistant, meta)
         renderActions(assistant)
         if (meta.wallet) applyWallet(meta.wallet)
@@ -533,13 +539,17 @@ async function runTurn() {
       } else if (evt === 'receipt') {
         // beautifului-style payment trace: expandable proof of payment
         // (escrow → settled → refunded → on-chain signature).
-        buildPaymentTrace(assistant, JSON.parse(data))
+        const r = JSON.parse(data)
+        buildPaymentTrace(assistant, r)
+        window.dispatchEvent(new CustomEvent('portal:receipt', { detail: r })) // Spend ticker
       } else if (evt === 'placement') {
         // Tender side channel: render the sponsored line in chrome, OUTSIDE the
         // message bubble — never appended to `acc` / the model output.
         renderPlacement(JSON.parse(data))
       } else if (evt === 'attestation') {
-        renderAttestation(JSON.parse(data))
+        const a = JSON.parse(data)
+        renderAttestation(a)
+        window.dispatchEvent(new CustomEvent('portal:attestation', { detail: a })) // Spend ticker
       } else if (evt === 'placement_clear') {
         clearPlacement()
       } else if (evt === 'error') {

@@ -273,8 +273,10 @@ function renderAnswer(state, qobj, body) {
   const results = $('dec-results')
   results.prepend(wrap)
 
-  // Wallet demo accounting: hand the snapshot to app.js's wallet renderer.
+  // Hand the snapshot to app.js's wallet renderer.
   if (body.wallet) window.dispatchEvent(new CustomEvent('portal:wallet', { detail: body.wallet }))
+  // Feed the spend ticker its decision event.
+  window.dispatchEvent(new CustomEvent('portal:decision', { detail: body }))
 }
 
 function chip(k, v, cls = '') {

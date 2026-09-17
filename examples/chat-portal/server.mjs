@@ -1388,6 +1388,70 @@ app.post('/api/decisions', async (c) => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Route preview — the "pre-flight x-ray" (beautifului-adjacent, invented here):
+// runs the SAME costOptimized selection the chat route uses, without calling a
+// model, so the composer can show what `auto` would pick and the metered
+// estimate vs. baseline while the user is still typing.
+// ---------------------------------------------------------------------------
+app.post('/api/route-preview', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || !Array.isArray(body.messages)) {
+    return c.json({ error: '`messages` is required' }, 400)
+  }
+  const wantProd = body.mode === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+  const session = body.sessionId ? sessions.get(body.sessionId) : undefined
+  const params = toChatParams({ ...body, model: 'auto' }, rt.modelToCandidate)
+  if (session) params.metadata = { userId: session.id }
+
+  // Dry-run the router's own selection: same candidates, same strategy, same
+  // hints — but no provider call. The Router class keeps `plan` private, so
+  // replicate its non-pinned path directly against the strategy.
+  const strategy = costOptimized()
+  const estimatedOutputTokens = Number(body.estimatedOutputTokens ?? 500)
+  let selection
+  try {
+    selection = strategy.select({
+      params,
+      candidates: (wantProd ? prodRT : demoRT) === prodRT ? prodInference.candidates : demoInference.candidates,
+      attempt: 0,
+      previousErrors: [],
+    })
+  } catch {
+    selection = []
+  }
+  if (!selection.length) return c.json({ available: false })
+
+  const decision = selection[0]
+  const model = decision.model ?? params.model
+  // Estimate at the catalog's real prices: input from the draft, output assumed.
+  const estInTok = params.messages.reduce((n, m) => n + Math.max(1, Math.ceil((m.content || '').length / 4)), 0) + Math.max(1, Math.ceil((params.system || '').length / 4))
+  const meta = decision.meta ?? {}
+  const estCost =
+    (estInTok / 1_000_000) * (Number(meta.inputCostPerMTok) || 0) +
+    (estimatedOutputTokens / 1_000_000) * (Number(meta.outputCostPerMTok) || 0)
+  const baselineModel = rt.baselineModel
+  const baseMeta = (wantProd ? prodInference : demoInference).candidates
+    .flatMap((cd) => cd.models ?? [])
+    .find((m) => m.model === baselineModel)
+  const baselineCost = baseMeta
+    ? (estInTok / 1_000_000) * (Number(baseMeta.inputCostPerMTok) || 0) +
+      (estimatedOutputTokens / 1_000_000) * (Number(baseMeta.outputCostPerMTok) || 0)
+    : undefined
+  return c.json({
+    available: true,
+    model,
+    provider: decision.candidate?.id,
+    tier: meta.tier,
+    estimatedCostUsd: estCost > 0 ? estCost : undefined,
+    baselineCostUsd: baselineCost,
+    baselineModel,
+    estimatedInputTokens: estInTok,
+    estimatedOutputTokens,
+  })
+})
+
 app.post('/api/chat', async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !Array.isArray(body.messages)) {
@@ -1499,6 +1563,8 @@ app.post('/api/chat', async (c) => {
     // via a side-channel SSE event; it is NEVER spliced into the `delta` stream
     // (the placement invariant). The wait observer below holds no stream writer.
     const requestId = `req-${randomBytes(8).toString('hex')}`
+    const turnStartMs = Date.now() // latency waterfall: total turn duration
+    let firstTokenAtMs // latency waterfall: time to first token
     const surface = {
       id: 'portal-ide',
       async render(placement) {
@@ -1532,6 +1598,7 @@ app.post('/api/chat', async (c) => {
             // meter() — the gateway's measured wait the payout scales to.
             onFirstToken: (ms) => {
               measuredWaitMs = ms
+              firstTokenAtMs = Date.now() - turnStartMs
             },
           },
           { minWaitMs: TENDER_MIN_WAIT_MS },
@@ -1611,6 +1678,7 @@ app.post('/api/chat', async (c) => {
           chargedUsd: charged === undefined ? undefined : round6(charged),
           usage: ctx.usage,
           trace: ctx.trace ?? [],
+          timing: { ttftMs: firstTokenAtMs, totalMs: Date.now() - turnStartMs },
           wallet: session ? walletSnapshot(session) : undefined,
         }),
       })
@@ -1715,6 +1783,7 @@ const STATIC = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/beautiful.js': ['beautiful.js', 'text/javascript; charset=utf-8'],
   '/decisions.js': ['decisions.js', 'text/javascript; charset=utf-8'],
+  '/economy.js': ['economy.js', 'text/javascript; charset=utf-8'],
   '/wallet-bundle.js': ['wallet-bundle.js', 'text/javascript; charset=utf-8'],
   '/upto-bundle.js': ['upto-bundle.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],

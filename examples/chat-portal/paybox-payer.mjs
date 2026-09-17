@@ -10,7 +10,7 @@
  */
 import { x402Client, x402HTTPClient } from '@x402/core/client'
 import { UptoSvmScheme } from '@x402/svm/upto/client'
-import { VersionedTransaction } from '@solana/web3.js'
+import { VersionedMessage } from '@solana/web3.js'
 import { payboxSigner } from 'shipyard-inference'
 
 /**
@@ -75,10 +75,21 @@ export async function payWithPaybox({ oauth, signingKey, upto, ceiling, rpcUrl }
         envelope[0] = numSigs
         envelope.set(messageBytes, 1 + numSigs * 64)
         const signedBytes = await pb.signTransaction(envelope)
-        const signed = VersionedTransaction.deserialize(signedBytes)
-        const idx = signed.message.staticAccountKeys.findIndex((k) => k.toString() === pb.publicKey)
+        // The envelope comes back in the same legacy wire shape we sent:
+        // [numSigs][sig slots][message]. VersionedTransaction.deserialize
+        // can't parse that — split it manually and deserialize only the
+        // message half to locate the payer's signature slot.
+        const n = signedBytes[0]
+        const sigs = []
+        for (let i = 0; i < n; i++) {
+          sigs.push(signedBytes.subarray(1 + i * 64, 1 + (i + 1) * 64))
+        }
+        const msgBytes = signedBytes.subarray(1 + n * 64)
+        const vm = VersionedMessage.deserialize(msgBytes)
+        const idx = vm.staticAccountKeys.findIndex((k) => k.toString() === pb.publicKey)
         if (idx === -1) throw new Error('payer not found in Paybox-signed transaction')
-        dictionaries.push({ [pb.publicKey]: new Uint8Array(signed.signatures[idx]) })
+        if (idx >= n) throw new Error(`payer signature missing (slot ${idx}/${n})`)
+        dictionaries.push({ [pb.publicKey]: new Uint8Array(sigs[idx]) })
       }
       return dictionaries
     },
