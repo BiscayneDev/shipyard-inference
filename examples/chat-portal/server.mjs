@@ -328,11 +328,31 @@ const reporter = process.env.OPERATOR_URL
   : undefined
 
 // Telemetry capture shared by the default router and any per-session router.
+// Also records a per-request routing trace (beautifului's Thinking pattern):
+// every candidate the router considered, cache hits, retries, and the final
+// choice with estimated + actual cost — surfaced in the meta SSE event.
 function routerOnEvent(event) {
   reporter?.onEvent(event)
   const ctx = als.getStore()
   if (!ctx) return
-  if (event.type === 'route_selected' || event.type === 'route_success') {
+  ctx.trace ??= []
+  if (event.type === 'route_selected') {
+    ctx.trace.push({
+      type: 'considered',
+      provider: event.candidateId,
+      model: event.model,
+      estimatedCostUsd: event.estimatedCostUsd,
+      attempt: event.attempt,
+    })
+  } else if (event.type === 'cache_hit') {
+    ctx.trace.push({ type: 'cache_hit', key: event.key.slice(0, 12) + '…' })
+  } else if (event.type === 'retry') {
+    ctx.trace.push({ type: 'retry', provider: event.candidateId, model: event.model, retryAttempt: event.retryAttempt, delayMs: event.delayMs })
+  } else if (event.type === 'failover') {
+    ctx.trace.push({ type: 'failover', from: event.candidateId, model: event.model, error: String(event.error?.message ?? event.error ?? '').slice(0, 140) })
+  } else if (event.type === 'route_success') {
+    ctx.trace.push({ type: 'served', provider: event.candidateId, model: event.model, attempt: event.attempt })
+  } else if (event.type === 'route_selected' || event.type === 'route_success') {
     ctx.provider = event.candidateId
     if (event.model) ctx.model = event.model
   } else if (event.type === 'request_completed') {
@@ -1557,6 +1577,7 @@ app.post('/api/chat', async (c) => {
           savedUsd: saved,
           chargedUsd: charged === undefined ? undefined : round6(charged),
           usage: ctx.usage,
+          trace: ctx.trace ?? [],
           wallet: session ? walletSnapshot(session) : undefined,
         }),
       })
@@ -1659,6 +1680,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/beautiful.js': ['beautiful.js', 'text/javascript; charset=utf-8'],
   '/decisions.js': ['decisions.js', 'text/javascript; charset=utf-8'],
   '/wallet-bundle.js': ['wallet-bundle.js', 'text/javascript; charset=utf-8'],
   '/upto-bundle.js': ['upto-bundle.js', 'text/javascript; charset=utf-8'],

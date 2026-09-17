@@ -1,5 +1,6 @@
 // Chat portal client — talks to the portal server's /api/* endpoints, streams
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
+import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
 const $ = (id) => document.getElementById(id)
 const fmt = (n, d = 6) => '$' + (Number(n) || 0).toFixed(d)
 
@@ -121,6 +122,7 @@ async function loadModels() {
     applyInferenceModeUI()
     renderModelMenu()
     selectModel(state.model, { silent: true })
+    extendPaletteModels(models) // ⌘K palette picks up model switching
   } catch {
     state.catalog = [{ id: 'auto', label: 'Auto — cheapest capable', tier: 'auto' }]
     renderModelMenu()
@@ -231,6 +233,11 @@ function selectModel(id, { silent } = {}) {
   }
   if (!silent) closeModelMenu()
 }
+
+// Hooks for the ⌘K palette (beautiful.js) — regenerate + model switching
+// without exporting portal internals.
+window.__portalRegenerate = regenerateLast
+window.__portalPickModel = (id) => selectModel(id, { silent: true })
 
 function toggleModelMenu() {
   const menu = $('model-menu')
@@ -518,6 +525,7 @@ async function runTurn() {
         contentEl.innerHTML = renderMarkdown(acc)
         assistant.dataset.raw = acc
         const meta = JSON.parse(data)
+        renderRoutingTrace(assistant, meta) // Thinking — routing trace
         renderChips(assistant, meta)
         renderActions(assistant)
         if (meta.wallet) applyWallet(meta.wallet)
