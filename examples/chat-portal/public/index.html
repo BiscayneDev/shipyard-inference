@@ -187,10 +187,64 @@
           <div class="composer-hint">Wallet-funded · routed to the cheapest capable model · metered to the token</div>
         </div>
       </main>
+
+      <!-- Decisions view — System One models (TypeSafe Jev): typed questions in,
+           probabilistic typed answers out. Same wallet billing as chat. -->
+      <main class="chat dec hidden" id="decisions" aria-label="Decisions">
+        <header class="topbar">
+          <span class="mode-badge" id="dec-mode-badge" title="">decisions</span>
+          <span class="dec-sub">System One · state in → typed answers out · metered to the token</span>
+          <button class="btn ghost" id="dec-clear">Clear</button>
+        </header>
+
+        <div class="dec-scroll">
+          <div class="dec-empty" id="dec-empty">
+            <div class="empty-mark">⩆</div>
+            <h1>Decisions, <span class="grad">not strings</span></h1>
+            <p>Describe any state — a ticket, a record, a paragraph — and ask typed questions.
+               Every answer comes back as a typed value with calibrated probabilities and
+               confidence your code can branch on. Billed per call from your wallet.</p>
+            <div class="examples">
+              <button class="example" id="dec-preset-ticket">
+                <span class="example-k">Triage</span>
+                Support-ticket triage (TypeSafe's demo)
+              </button>
+              <button class="example" id="dec-preset-router">
+                <span class="example-k">Route</span>
+                Which model should serve this prompt?
+              </button>
+            </div>
+          </div>
+
+          <div class="dec-grid hidden" id="dec-grid">
+            <section class="dec-builder">
+              <div class="dec-card">
+                <div class="dec-card-title">State</div>
+                <textarea id="dec-state" rows="5" placeholder="Paste any text or JSON — the situation your questions are judged against…"></textarea>
+              </div>
+              <div class="dec-card">
+                <div class="dec-card-head">
+                  <div class="dec-card-title">Questions</div>
+                  <div class="dec-q-add">
+                    <button class="btn ghost tiny dec-add" data-type="noul">+ Noul</button>
+                    <button class="btn ghost tiny dec-add" data-type="choice">+ Choice</button>
+                    <button class="btn ghost tiny dec-add" data-type="score">+ Score</button>
+                  </div>
+                </div>
+                <div id="dec-questions"></div>
+              </div>
+              <button class="btn primary block" id="dec-ask">Ask ⩆ <span class="mono" id="dec-ask-price"></span></button>
+            </section>
+
+            <section class="dec-results" id="dec-results"></section>
+          </div>
+        </div>
+      </main>
     </div>
 
     <script src="./wallet-bundle.js"></script>
     <script src="./upto-bundle.js"></script>
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./decisions.js"></script>
   </body>
 </html>

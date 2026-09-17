@@ -352,6 +352,12 @@ const WALLET_LABEL = {
   metamask: 'MetaMask wallet',
 }
 
+// Decisions view (decisions.js) hands wallet snapshots over via this event —
+// same renderer, no duplicated logic.
+window.addEventListener('portal:wallet', (e) => {
+  if (e.detail) applyWallet(e.detail)
+})
+
 function applyWallet(w) {
   state.wallet = w.wallet
   state.usepodToken = w.usepodToken
