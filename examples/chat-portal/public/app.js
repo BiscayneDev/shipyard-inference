@@ -24,6 +24,14 @@ const blended = (m) =>
 // ---------------------------------------------------------------------------
 init()
 async function init() {
+  // The Paybox OAuth callback appends ?portalSession=<id> — adopt it into
+  // localStorage so the UI picks up the connected session after the redirect.
+  const fromUrl = new URLSearchParams(location.search).get('portalSession')
+  if (fromUrl) {
+    state.sessionId = fromUrl
+    localStorage.setItem('portal.session', fromUrl)
+    history.replaceState(null, '', location.pathname)
+  }
   await loadModels()
   if (state.sessionId) await refreshWallet()
 

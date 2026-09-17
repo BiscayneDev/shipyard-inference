@@ -572,7 +572,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
     ]) {
       c.header('set-cookie', cookie, { append: true })
     }
-    return c.redirect('/')
+    return c.redirect(`/?portalSession=${session.id}`)
   } catch (err) {
     return c.redirect(`/?payboxError=${encodeURIComponent(String(err?.message ?? err).slice(0, 180))}`)
   }
