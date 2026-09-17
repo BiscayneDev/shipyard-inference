@@ -711,8 +711,14 @@ app.get('/api/paybox/wallet', async (c) => {
     // Discover the user's Solana wallet credential + on-chain USDC balance.
     const credentials = await client.listCredentials()
     const list = Array.isArray(credentials) ? credentials : credentials?.credentials ?? []
-    const walletCred = list.find((c2) => (c2.type ?? c2.kind ?? '').toLowerCase().includes('wallet'))
-    const address = session.paybox.address ?? walletCred?.metadata?.address ?? walletCred?.credential?.metadata?.address
+    const typeOf = (c2) =>
+      [c2?.credential_type, c2?.type, c2?.kind, c2?.credential?.credential_type, c2?.credential?.type]
+        .find((t) => typeof t === 'string') ?? ''
+    const walletCred = list.find((c2) => typeOf(c2).toLowerCase().includes('wallet'))
+    const address =
+      session.paybox.address ??
+      walletCred?.metadata?.address ??
+      walletCred?.credential?.metadata?.address
     let usdc
     if (address) {
       try {

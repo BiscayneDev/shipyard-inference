@@ -45,14 +45,20 @@ export async function payWithPaybox({ oauth, signingKey, upto, ceiling, rpcUrl }
   // Pick the user's Solana wallet credential (first wallet-kind credential).
   const credentials = await client.listCredentials()
   const list = Array.isArray(credentials) ? credentials : credentials?.credentials ?? []
-  const walletCred = list.find((c2) => (c2.type ?? c2.kind ?? '').toLowerCase().includes('wallet'))
+  // Pick the user's Solana wallet credential. The credential shape varies
+  // (flat or nested under `credential`); `credential_type` is the real field.
+  const typeOf = (c2) =>
+    [c2?.credential_type, c2?.type, c2?.kind, c2?.credential?.credential_type, c2?.credential?.type]
+      .find((t) => typeof t === 'string') ?? ''
+  const idOf = (c2) => c2?.id ?? c2?.credentialId ?? c2?.credential?.id
+  const walletCred = list.find((c2) => typeOf(c2).toLowerCase().includes('wallet'))
   if (!walletCred) {
     throw new Error(
       'no wallet in your Paybox account yet — open the Paybox app (paybox.sh) → Wallets → Add wallet, ' +
       'fund it with USDC on Solana, then reconnect here and try again',
     )
   }
-  const credentialId = walletCred.id ?? walletCred.credentialId
+  const credentialId = idOf(walletCred)
 
   const pb = await payboxSigner({ client, credentialId })
 
