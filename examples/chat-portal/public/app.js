@@ -481,8 +481,7 @@ async function runTurn() {
       try {
         const cfg = await (await fetch('/api/upto-config')).json()
         if (cfg?.enabled) {
-          contentEl.textContent = ''
-          contentEl.insertAdjacentHTML('beforeend', 'connecting wallet… <span class="cursor">▍</span>')
+          startLoader(contentEl, 'Paying via wallet…')
           res = await window.ShipyardUpto.payAndRetry('/api/chat', chatInit, cfg.rpcUrl)
         }
       } catch (payErr) {
@@ -518,25 +517,9 @@ async function runTurn() {
         if (meta.wallet) applyWallet(meta.wallet)
         await settle(assistant)
       } else if (evt === 'receipt') {
-        // x402 `upto` settlement receipt: actual paid + refunded, with the
-        // on-chain signature. The proof this message was wallet-paid.
-        const r = JSON.parse(data)
-        const chips = assistant.querySelector('.chips')
-        if (chips) {
-          const paid = document.createElement('span')
-          paid.className = 'chip settle'
-          paid.textContent = `paid $${Number(r.amountUsd).toFixed(4)} · refunded $${Number(r.refundedUsd ?? 0).toFixed(4)}`
-          chips.appendChild(paid)
-          if (r.signature) {
-            const link = document.createElement('a')
-            link.className = 'chip'
-            link.textContent = 'tx ↗'
-            link.href = `https://explorer.solana.com/tx/${r.signature}${r.network === 'localnet' || r.network === 'devnet' ? '?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899' : ''}`
-            link.target = '_blank'
-            link.rel = 'noreferrer'
-            chips.appendChild(link)
-          }
-        }
+        // beautifului-style payment trace: expandable proof of payment
+        // (escrow → settled → refunded → on-chain signature).
+        buildPaymentTrace(assistant, JSON.parse(data))
       } else if (evt === 'placement') {
         // Tender side channel: render the sponsored line in chrome, OUTSIDE the
         // message bubble — never appended to `acc` / the model output.
@@ -561,6 +544,39 @@ async function runTurn() {
     state.sending = false
     setSending(false)
   }
+}
+
+// beautifului-style loading state: pixel-grid shimmer + elapsed time.
+function startLoader(el, label) {
+  el.innerHTML =
+    '<div class="pay-loader"><span class="pay-grid">' +
+    '<i></i>'.repeat(9) +
+    `</span><span class="pay-lbl">${label}</span><span class="pay-elapsed">0.0s</span></div>`
+  const t0 = performance.now()
+  const tick = setInterval(() => {
+    const s = el.querySelector('.pay-elapsed')
+    if (!s) return clearInterval(tick)
+    s.textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'
+  }, 100)
+  return () => clearInterval(tick)
+}
+
+// beautifului-style payment trace: expandable, thinking-style proof of payment.
+function buildPaymentTrace(assistant, r) {
+  const contentEl = assistant.querySelector('.content')
+  if (!contentEl) return
+  contentEl.insertAdjacentHTML(
+    'afterend',
+    `<details class="paytrace">
+      <summary><span class="caret">▶</span> paid <span class="mono">$${Number(r.amountUsd).toFixed(4)}</span> · refunded <span class="mono">$${Number(r.refundedUsd ?? 0).toFixed(4)}</span></summary>
+      <div class="paytrace-body">
+        <div class="paytrace-step"><span class="dot"></span><span class="k">escrow</span><span class="v">$${Number(r.ceilingUsd ?? 0).toFixed(2)} authorized via wallet</span></div>
+        <div class="paytrace-step"><span class="dot"></span><span class="k">settled</span><span class="v">$${Number(r.amountUsd).toFixed(4)} on-chain (${r.network})</span></div>
+        <div class="paytrace-step"><span class="dot"></span><span class="k">refunded</span><span class="v">$${Number(r.refundedUsd ?? 0).toFixed(4)} returned to wallet</span></div>
+        ${r.signature ? `<div class="paytrace-step"><span class="dot"></span><span class="k">signature</span><a href="https://explorer.solana.com/tx/${r.signature}${r.network === 'localnet' || r.network === 'devnet' ? '?cluster=devnet' : ''}" target="_blank" rel="noreferrer">${r.signature.slice(0, 20)}… ↗</a></div>` : ''}
+      </div>
+    </details>`,
+  )
 }
 
 async function settle(assistant) {

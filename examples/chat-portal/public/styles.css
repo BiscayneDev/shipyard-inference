@@ -451,3 +451,46 @@ textarea::placeholder { color: var(--faint); }
   .sidebar { display: none; }
   .examples { grid-template-columns: 1fr; }
 }
+
+/* ---------- beautifului-inspired primitives ---------- */
+
+/* Loading State — pixel-grid shimmer + elapsed time */
+.pay-loader { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.pay-grid { display: grid; grid-template-columns: repeat(3, 4px); grid-auto-rows: 4px; gap: 3px; }
+.pay-grid i { border-radius: 1px; background: var(--faint); opacity: .35; animation: paycell 1.2s infinite; }
+.pay-grid i:nth-child(2) { animation-delay: .08s } .pay-grid i:nth-child(3) { animation-delay: .16s }
+.pay-grid i:nth-child(4) { animation-delay: .24s } .pay-grid i:nth-child(5) { animation-delay: .32s }
+.pay-grid i:nth-child(6) { animation-delay: .40s } .pay-grid i:nth-child(7) { animation-delay: .48s }
+.pay-grid i:nth-child(8) { animation-delay: .56s } .pay-grid i:nth-child(9) { animation-delay: .64s }
+@keyframes paycell { 0%, 100% { opacity: .25; background: var(--faint); } 50% { opacity: 1; background: var(--accent); } }
+.pay-elapsed { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--faint); }
+
+/* Payment Trace — expandable, thinking-style */
+.paytrace { margin-top: 8px; border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; background: var(--glass); }
+.paytrace > summary {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer;
+  list-style: none; font-size: 12px; color: var(--muted); user-select: none;
+}
+.paytrace > summary::-webkit-details-marker { display: none; }
+.paytrace > summary:hover { background: var(--glass-2); }
+.paytrace > summary .caret { transition: transform .15s ease; color: var(--faint); font-size: 10px; }
+.paytrace[open] > summary .caret { transform: rotate(90deg); }
+.paytrace-body { padding: 4px 10px 10px; display: flex; flex-direction: column; gap: 5px; }
+.paytrace-step {
+  display: flex; align-items: baseline; gap: 10px; font-size: 12px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+}
+.paytrace-step .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-2); flex: none; transform: translateY(-2px); }
+.paytrace-step .k { color: var(--faint); min-width: 92px; }
+.paytrace-step .v { color: var(--text); }
+.paytrace-step a { font-size: 12px; }
+
+/* Tool-chip row polish (receipts) */
+.chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 10px; }
+.chips .chip {
+  border: 1px solid var(--hair); border-radius: 999px; padding: 2px 9px;
+  font-size: 11px; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  background: var(--glass); color: var(--muted);
+}
+.chips .chip.settle { border-color: rgba(47, 224, 172, .35); color: var(--accent-2); }
+.chips a.chip:hover { border-color: var(--hair-2); color: var(--text); }
