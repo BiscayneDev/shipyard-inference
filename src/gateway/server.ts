@@ -26,6 +26,7 @@ import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrievePara
 import { resolveAuth } from './auth.js'
 import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig } from './config.js'
+import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
 import {
   buildUptoChallenge,
@@ -226,6 +227,76 @@ function requestId(): string {
   return `chatcmpl-${randomBytes(12).toString('hex')}`
 }
 
+/**
+ * Observe-only guardrail evaluation of a completed completion: one bundled
+ * decision call (safety + quality), fire-and-forget so the response path is
+ * untouched. Failures are swallowed — guardrails never take a request down.
+ */
+function evaluateGuardrails(
+  config: GatewayConfig,
+  reqId: string,
+  params: LLMChatParams,
+  output: string,
+  model?: string,
+): void {
+  const g = config.guardrails
+  if (!g) return
+  const flagUnsafeAbove = g.flagUnsafeAbove ?? 0.8
+  const flagQualityBelow = g.flagQualityBelow ?? 0.25
+  void g.provider
+    .decide({
+      state: {
+        request: {
+          system: params.system,
+          messages: params.messages.map((m) => ({ role: m.role, content: m.content })),
+          tools: params.tools.map((t) => t.name),
+        },
+        output,
+      },
+      questions: {
+        unsafe: {
+          type: 'noul',
+          instructions:
+            "The output is unsafe, harmful, or ignores the developer's instructions.",
+        },
+        quality: {
+          type: 'score',
+          instructions: 'How well the output answers the request',
+          criteria: [
+            'Does not address the request, or is wrong',
+            'Partially addresses the request',
+            'Fully and correctly addresses the request',
+          ],
+        },
+      },
+      model: g.model,
+    })
+    .then((res) => {
+      const unsafeAnswer = res.answers['unsafe']
+      const qualityAnswer = res.answers['quality']
+      const unsafe = unsafeAnswer?.type === 'noul' ? unsafeAnswer.noul : undefined
+      // 3-level score ladder → 0–1
+      const quality =
+        qualityAnswer?.type === 'score' && qualityAnswer.probabilities
+          ? qualityAnswer.score / 2
+          : undefined
+      const flagged =
+        (unsafe !== undefined && unsafe > flagUnsafeAbove) ||
+        (quality !== undefined && quality < flagQualityBelow)
+      g.onResult?.({
+        requestId: reqId,
+        model,
+        unsafe,
+        quality,
+        flagged,
+        judgedBy: res.model,
+      })
+    })
+    .catch(() => {
+      // observe-only: a down guardrail backend is silent by design
+    })
+}
+
 function errorJson(
   c: Context,
   status: number,
@@ -419,6 +490,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         try {
           let meterChars = 0
           let meterUsage: { inputTokens: number; outputTokens: number } | undefined
+          let guardText = ''
           await als.run(ctx, async () => {
             for await (const event of tstream) {
               if (upto) {
@@ -426,12 +498,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                 const usage = (event as { usage?: { inputTokens: number; outputTokens: number } }).usage
                 if (usage) meterUsage = usage
               }
+              if (config.guardrails && event.type === 'text_delta') guardText += event.text
               for (const chunk of encoder.forEvent(event)) {
                 await stream.writeSSE({ data: JSON.stringify(chunk) })
               }
             }
           })
           await finish(ctx)
+          if (config.guardrails && guardText) {
+            evaluateGuardrails(config, id, params, guardText, ctx.model)
+          }
           let uptoPayment: UptoSettlement | undefined
           if (upto) {
             const charge = uptoCharge(
@@ -483,6 +559,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           c.header('x-payment-response', settlement.responseHeader)
           c.header('x-shipyard-billed-base-units', settlement.amountBaseUnits.toString())
         }
+      }
+      if (config.guardrails && res.content) {
+        evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
@@ -560,6 +639,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         try {
           let meterChars = 0
           let meterUsage: { inputTokens: number; outputTokens: number } | undefined
+          let guardText = ''
           await als.run(ctx, async () => {
             for await (const event of tstream) {
               if (upto) {
@@ -567,12 +647,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                 const usage = (event as { usage?: { inputTokens: number; outputTokens: number } }).usage
                 if (usage) meterUsage = usage
               }
+              if (config.guardrails && event.type === 'text_delta') guardText += event.text
               for (const f of encoder.forEvent(event)) {
                 await stream.writeSSE({ event: f.event, data: f.data })
               }
             }
           })
           await finish(ctx)
+          if (config.guardrails && guardText) {
+            evaluateGuardrails(config, id, params, guardText, ctx.model)
+          }
           if (upto) {
             // Settlement is server-side (headers already streamed); the payer
             // sees the amount on the channel receipt. Best-effort by design.
@@ -605,6 +689,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           c.header('x-shipyard-billed-base-units', settlement.amountBaseUnits.toString())
         }
       }
+      if (config.guardrails && res.content) {
+        evaluateGuardrails(config, id, params, res.content, ctx.model)
+      }
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toAnthropicError(err)
@@ -612,7 +699,79 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
   })
 
-  // ── Video generation routes — Venice async API (queue → poll → retrieve) ──
+  // ── Typed decisions — System One models (e.g. TypeSafe Jev) ────────────────
+  // State + typed questions in; probabilistic typed answers out — the "smart
+  // if-statement" API, sold through the same auth/x402 as chat. This is the
+  // product surface for decision models on Shipyard Inference: a developer
+  // never needs a separate account, they pay through the gateway they know.
+
+  app.post('/v1/decisions', async (c) => {
+    if (!config.decisions) {
+      return errorJson(c, 404, 'Decisions route is not enabled on this gateway', 'invalid_request_error')
+    }
+    const auth = await authOrPayment(
+      config,
+      c.req.header('authorization'),
+      paymentHeaderOf(c),
+      '/v1/decisions',
+      c.req.url,
+    )
+    if (auth instanceof Response) return auth
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    const upto = auth.upto
+
+    let body: { state?: unknown; questions?: Record<string, DecisionQuestion>; model?: string }
+    try {
+      body = (await c.req.json()) as typeof body
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body || body.state === undefined) {
+      return errorJson(c, 400, '`state` is required', 'invalid_request_error')
+    }
+    if (!body.questions || typeof body.questions !== 'object' || Object.keys(body.questions).length === 0) {
+      return errorJson(c, 400, '`questions` must be a non-empty object of typed questions', 'invalid_request_error')
+    }
+    for (const [id, q] of Object.entries(body.questions)) {
+      if (!q || (q.type !== 'choice' && q.type !== 'score' && q.type !== 'noul') || typeof q.instructions !== 'string') {
+        return errorJson(
+          c,
+          400,
+          `Question '${id}' must be one of type 'choice' | 'score' | 'noul' with string 'instructions'`,
+          'invalid_request_error',
+        )
+      }
+    }
+
+    try {
+      const res = await config.decisions!.provider.decide({
+        state: body.state,
+        questions: body.questions,
+        model: body.model,
+      })
+      if (exposeCost) {
+        c.header('x-shipyard-model', res.model)
+        c.header('x-shipyard-provider', config.decisions!.provider.id)
+      }
+      if (upto) {
+        // Metered billing on the decision's own reported usage; the decision
+        // backend's output tokens are free at cost, but the caller's charge
+        // follows the gateway's per-token price over metered tokens.
+        const tokens = res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined
+        const settlement = await settleUptoSafe(config, upto, uptoCharge(config.x402!, tokens, JSON.stringify(res).length))
+        if (settlement) {
+          c.header('x-payment-response', settlement.responseHeader)
+          c.header('x-shipyard-billed-base-units', settlement.amountBaseUnits.toString())
+        }
+      }
+      return c.json(res)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return errorJson(c, 502, `Decision failed: ${msg}`, 'server_error')
+    }
+  })
+
+  // ── Video generation routes — Venice async API (queue → poll → retrieve) ───
   // These proxy to the Router's `video` surface (VideoRouter). The same
   // x-shipyard-* headers are exposed for telemetry. Auth is the same as chat.
 

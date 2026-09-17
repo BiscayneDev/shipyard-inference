@@ -58,6 +58,9 @@ export * from './tender/index.js'
 // Cost-aware routing
 export * from './router/index.js'
 
+// Typed-decision inference — System One models (TypeSafe Jev et al.)
+export * from './decisions/index.js'
+
 // x402-on-Solana payment layer
 export * from './payment/index.js'
 

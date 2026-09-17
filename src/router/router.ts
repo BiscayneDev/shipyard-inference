@@ -104,10 +104,13 @@ export interface RouterOptions {
    * Per-request quality floor. When `true`, the router infers a tier from each
    * request (prompt size, tools, output budget — see `inferTier`) and applies it
    * as `routingHints.tier`, so selection picks the cheapest model that's *good
-   * enough* rather than the globally cheapest. Pass a function for custom logic.
+   * enough* rather than the globally cheapest. Pass a function for custom logic —
+   * it may be async (e.g. `createJevTierInferrer`, which asks a System One
+   * model to judge request content before routing; its timeout/fallback keeps
+   * routing available when the decision backend is down).
    * An explicit `params.routingHints.tier` always overrides this.
    */
-  autoTier?: boolean | ((params: LLMChatParams) => ModelTier)
+  autoTier?: boolean | ((params: LLMChatParams) => ModelTier | Promise<ModelTier>)
   /** Candidates with video-capable models, forwarded to {@link VideoRouter}. */
   videoCandidates?: ProviderCandidate[]
   /** Poll interval (ms) for video generation polling. Default 5000. */
@@ -164,7 +167,7 @@ export class Router implements LLMProvider {
       this.emit({ type: 'cache_miss', key })
     }
 
-    const decisions = this.plan(compressed)
+    const decisions = await this.plan(compressed)
     if (decisions.length === 0) {
       throw new NoCapableModelError(
         '[shipyard-inference] No candidate model satisfies the routing hints',
@@ -267,7 +270,7 @@ export class Router implements LLMProvider {
       this.emit({ type: 'cache_miss', key })
     }
 
-    const decisions = this.plan(compressed)
+    const decisions = await this.plan(compressed)
     if (decisions.length === 0) {
       throw new NoCapableModelError(
         '[shipyard-inference] No candidate model satisfies the routing hints',
@@ -365,7 +368,7 @@ export class Router implements LLMProvider {
     }
   }
 
-  private plan(params: LLMChatParams): RoutingDecision[] {
+  private async plan(params: LLMChatParams): Promise<RoutingDecision[]> {
     // Hard pin short-circuits selection entirely.
     const pin = params.routingHints?.pin
     if (pin) {
@@ -393,7 +396,7 @@ export class Router implements LLMProvider {
     }
 
     return this.strategy.select({
-      params: this.applyAutoTier(params),
+      params: await this.applyAutoTier(params),
       candidates: this.opts.candidates,
       attempt: 0,
       previousErrors: [],
@@ -403,13 +406,14 @@ export class Router implements LLMProvider {
 
   /**
    * Apply the per-request quality floor when `autoTier` is on and the caller
-   * hasn't pinned a tier. Returns params unchanged otherwise.
+   * hasn't pinned a tier. Returns params unchanged otherwise. Async so the
+   * inferrer may consult an external decision model (with its own fallback).
    */
-  private applyAutoTier(params: LLMChatParams): LLMChatParams {
+  private async applyAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
     if (!this.opts.autoTier) return params
     if (params.routingHints?.tier) return params // explicit tier wins
     const tier =
-      typeof this.opts.autoTier === 'function' ? this.opts.autoTier(params) : inferTier(params)
+      typeof this.opts.autoTier === 'function' ? await this.opts.autoTier(params) : inferTier(params)
     return { ...params, routingHints: { ...params.routingHints, tier } }
   }
 

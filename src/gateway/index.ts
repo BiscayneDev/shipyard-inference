@@ -2,7 +2,14 @@ export { createGatewayApp } from './server.js'
 export { startGateway } from './serve.js'
 export type { RunningGateway } from './serve.js'
 export { resolveModelList } from './config.js'
-export type { GatewayConfig, GatewayModel, X402PaymentInfo } from './config.js'
+export type {
+  GatewayConfig,
+  GatewayModel,
+  X402PaymentInfo,
+  DecisionsConfig,
+  GuardrailsConfig,
+  GuardrailResult,
+} from './config.js'
 export { checkBearer, resolveAuth } from './auth.js'
 export type { AuthResult } from './auth.js'
 export { x402Config, buildChallenge, verifyX402Payment } from './x402.js'

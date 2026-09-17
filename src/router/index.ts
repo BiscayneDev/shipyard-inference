@@ -34,6 +34,8 @@ export type {
 export { isCapable } from './capabilities.js'
 export { inferTier } from './auto-tier.js'
 export type { AutoTierThresholds } from './auto-tier.js'
+export { createJevTierInferrer } from './jev-tier.js'
+export type { JevTierInferrerOptions, JevTierResult } from './jev-tier.js'
 export { estimateInputTokens } from './estimate.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
 export { backoffDelayMs, retryAfterMs, nextRetryDelayMs } from './retry.js'

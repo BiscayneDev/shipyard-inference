@@ -6,6 +6,7 @@ import type { UsageRecorder } from '../router/usage.js'
 import type { TelemetryReporter } from '../operator/reporter.js'
 import type { ApiKeyStore } from './keys.js'
 import type { X402Config } from './x402.js'
+import type { DecisionProvider } from '../decisions/types.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -20,6 +21,59 @@ export interface X402PaymentInfo {
 export interface GatewayModel {
   id: string
   ownedBy?: string
+}
+
+/**
+ * `/v1/decisions` route: typed-decision inference from a System One model
+ * (e.g. TypeSafe Jev) — state + typed questions in, probabilistic typed
+ * answers out. The route rides the same auth as chat: API keys, or a verified
+ * x402 payment (`exact` flat or `upto` metered on the decision's usage).
+ */
+export interface DecisionsConfig {
+  /** Decision backend serving the route. */
+  provider: DecisionProvider
+  /**
+   * Models to advertise under `GET /v1/models` (owned by the provider, e.g.
+   * `jev-latest`). Defaults to the provider's declared models, else
+   * `jev-latest`.
+   */
+  models?: GatewayModel[]
+}
+
+/** One guardrail evaluation of a completed completion, quality + safety. */
+export interface GuardrailResult {
+  /** Request id of the evaluated completion. */
+  requestId: string
+  /** Model that produced the output, when known. */
+  model?: string
+  /** Probability the output is unsafe/harmful/off-instruction (0–1). */
+  unsafe?: number
+  /** Normalized answer quality (0–1, 1 = fully addresses the request). */
+  quality?: number
+  /** True when the evaluation crossed a flag threshold. */
+  flagged: boolean
+  /** Model that judged, for auditability. */
+  judgedBy?: string
+}
+
+/**
+ * Observe-only output guardrails: after a completion finishes, a decision
+ * model scores the output for safety and answer quality — a fraction of a
+ * cent at ~100ms, fire-and-forget so it never adds latency to the response.
+ * Results flow to `onResult` for telemetry/escalation; responses are never
+ * blocked or altered in this mode.
+ */
+export interface GuardrailsConfig {
+  /** Decision backend used to judge outputs. */
+  provider: DecisionProvider
+  /** Backend model id per call; the provider applies its own default. */
+  model?: string
+  /** Flag when the unsafe probability exceeds this. Default 0.8. */
+  flagUnsafeAbove?: number
+  /** Flag when normalized quality falls below this. Default 0.25. */
+  flagQualityBelow?: number
+  /** Called with every evaluation result (fire-and-forget, never blocks). */
+  onResult?: (result: GuardrailResult) => void
 }
 
 /** Minimal Tender surface the gateway needs (satisfied by `GatewayTender`). */
@@ -107,20 +161,55 @@ export interface GatewayConfig {
   tender?: GatewayTenderHook
   /** Emit `x-shipyard-*` cost headers / trailer. Default true. */
   exposeCostHeaders?: boolean
+  /**
+   * Typed-decision route (`POST /v1/decisions`) served by a System One model
+   * (e.g. TypeSafe Jev). Off when omitted — the route 404s.
+   */
+  decisions?: DecisionsConfig
+  /**
+   * Observe-only output guardrails over completed completions. Off when
+   * omitted. Never blocks or alters responses; results flow to `onResult`.
+   */
+  guardrails?: GuardrailsConfig
   /** Port for `startGateway`. Default 8787. */
   port?: number
 }
 
-/** Models to advertise: explicit list, else the union of candidates' declared models. */
+/**
+ * Models to advertise: explicit list, else the union of candidates' declared
+ * models. Decision models (when `/v1/decisions` is on) are always appended —
+ * callers can ask for them by name even when the deployment pins an explicit
+ * chat catalog.
+ */
 export function resolveModelList(config: GatewayConfig): GatewayModel[] {
-  if (config.models && config.models.length > 0) return config.models
-  const seen = new Set<string>()
   const out: GatewayModel[] = []
-  for (const candidate of config.candidates) {
-    for (const model of candidate.models ?? []) {
-      if (seen.has(model.model)) continue
-      seen.add(model.model)
-      out.push({ id: model.model, ownedBy: candidate.id })
+  const seen = new Set<string>()
+  if (config.models && config.models.length > 0) {
+    for (const m of config.models) {
+      if (seen.has(m.id)) continue
+      seen.add(m.id)
+      out.push(m)
+    }
+  } else {
+    for (const candidate of config.candidates) {
+      for (const model of candidate.models ?? []) {
+        if (seen.has(model.model)) continue
+        seen.add(model.model)
+        out.push({ id: model.model, ownedBy: candidate.id })
+      }
+    }
+  }
+  if (config.decisions) {
+    const models =
+      config.decisions.models ??
+      (config.decisions.provider.models ?? ['jev-latest']).map((id) => ({
+        id,
+        ownedBy: config.decisions!.provider.id,
+      }))
+    for (const m of models) {
+      if (seen.has(m.id)) continue
+      seen.add(m.id)
+      out.push(m)
     }
   }
   return out
