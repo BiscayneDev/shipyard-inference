@@ -58,7 +58,8 @@ const init: RequestInit = {
 }
 
 const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8899'
-const res = await ShipyardUpto.payAndRetry('http://localhost:8788/api/chat', init, RPC_URL)
+const PORTAL_URL = process.env.PORTAL_URL ?? 'http://localhost:8788'
+const res = await ShipyardUpto.payAndRetry(`${PORTAL_URL}/api/chat`, init, RPC_URL)
 log(`paid retry: HTTP ${res.status}`)
 if (res.status !== 200) throw new Error(`payment failed: ${(await res.text()).slice(0, 600)}`)
 
