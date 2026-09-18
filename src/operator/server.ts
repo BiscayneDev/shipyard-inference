@@ -27,6 +27,13 @@ const STATIC: Record<string, [string, string]> = {
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  // The landing page advertises the SPA at /dashboard/ — serve it there too.
+  // The SPA calls /api/* by absolute path, which still resolves at the root.
+  '/dashboard': ['index.html', 'text/html; charset=utf-8'],
+  '/dashboard/': ['index.html', 'text/html; charset=utf-8'],
+  '/dashboard/index.html': ['index.html', 'text/html; charset=utf-8'],
+  '/dashboard/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/dashboard/styles.css': ['styles.css', 'text/css; charset=utf-8'],
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url))

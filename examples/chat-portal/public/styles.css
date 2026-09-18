@@ -487,6 +487,19 @@ textarea::placeholder { color: var(--faint); }
 .chips .chip.settle { border-color: rgba(47, 224, 172, .35); color: var(--accent-2); }
 .chips a.chip:hover { border-color: var(--hair-2); color: var(--text); }
 
+/* Error-recovery actions — one-tap escapes from a payment wall. */
+.chips .err-actions { display: inline-flex; gap: 5px; margin-left: 2px; }
+.chips button.chip.act {
+  cursor: pointer; color: var(--text); border-color: var(--hair-2);
+  transition: border-color .15s, color .15s, transform .15s;
+}
+.chips button.chip.act:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.chips button.chip.act:active { transform: scale(.96); }
+.chips button.chip.act.primary {
+  border-color: color-mix(in srgb, var(--accent-2) 55%, transparent);
+  color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+}
+
 /* ---------- Prompt Bar (composer with model pill + dictation) ---------- */
 .composer { gap: 6px; }
 .promptbar-side { display: flex; align-items: center; flex: none; }

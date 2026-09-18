@@ -76,6 +76,12 @@ export function initWalletSheet() {
   openBtn.addEventListener('click', openSheet)
 }
 
+/** Open the connect-wallet sheet programmatically (e.g. from an inline
+ *  "connect a wallet" error action). Safe to call repeatedly. */
+export function openWalletSheet() {
+  openSheet()
+}
+
 function walletCard(w, i, opts = {}) {
   const detected = w.detect?.()
   const stateChip = opts.showState

@@ -353,10 +353,12 @@ fetch('api/decisions/config')
     const badge = $('dec-mode-badge')
     badge.textContent = c.live ? `jev · live (${c.backend ?? 'typesafe'})` : 'jev · stub'
     badge.title = c.live
-      ? c.backend === 'openrouter'
-        ? 'Live TypeSafe Jev via OpenRouter — typed decisions, billed through OpenRouter'
-        : 'Live TypeSafe Jev — typed decisions from api.typesafe.ai'
-      : 'Offline stub backend — set TYPESAFE_API_KEY or OPENROUTER_API_KEY on the server for live Jev. Same wire shape, neutral answers.'
+      ? c.backend === 'vercel-gateway'
+        ? 'Live TypeSafe Jev via the Vercel AI Gateway — typed decisions, billed on the Vercel invoice'
+        : c.backend === 'openrouter'
+          ? 'Live TypeSafe Jev via OpenRouter — typed decisions, billed through OpenRouter'
+          : 'Live TypeSafe Jev — typed decisions from api.typesafe.ai'
+      : 'Offline stub backend — set AI_GATEWAY_API_KEY (Vercel), OPENROUTER_API_KEY, or TYPESAFE_API_KEY for live Jev. Same wire shape, neutral answers.'
   })
 // Rough ask-price hint: ~state tokens × list input price (output free).
 $('dec-state').addEventListener('input', () => {

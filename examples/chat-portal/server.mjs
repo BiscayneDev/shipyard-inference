@@ -28,6 +28,7 @@ import {
   costOptimized,
   createTypeSafeProvider,
   createOpenRouterDecisionProvider,
+  createVercelGatewayDecisionProvider,
   createStubDecisionProvider,
   createUsePodProvider,
   createWalletInference,
@@ -282,15 +283,19 @@ const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
 // waitlist — just an OPENROUTER_API_KEY), else the offline stub.
 const decisionProvider = process.env.TYPESAFE_API_KEY
   ? createTypeSafeProvider({ apiKey: process.env.TYPESAFE_API_KEY })
-  : process.env.OPENROUTER_API_KEY
-    ? createOpenRouterDecisionProvider({ apiKey: process.env.OPENROUTER_API_KEY })
-    : createStubDecisionProvider({ id: 'stub-typesafe' })
-const DECISIONS_LIVE = Boolean(process.env.TYPESAFE_API_KEY ?? process.env.OPENROUTER_API_KEY)
+  : process.env.AI_GATEWAY_API_KEY
+    ? createVercelGatewayDecisionProvider({ apiKey: process.env.AI_GATEWAY_API_KEY })
+    : process.env.OPENROUTER_API_KEY
+      ? createOpenRouterDecisionProvider({ apiKey: process.env.OPENROUTER_API_KEY })
+      : createStubDecisionProvider({ id: 'stub-typesafe' })
+const DECISIONS_LIVE = Boolean(process.env.TYPESAFE_API_KEY ?? process.env.AI_GATEWAY_API_KEY ?? process.env.OPENROUTER_API_KEY)
 const DECISIONS_BACKEND = process.env.TYPESAFE_API_KEY
   ? 'typesafe'
-  : process.env.OPENROUTER_API_KEY
-    ? 'openrouter'
-    : 'stub'
+  : process.env.AI_GATEWAY_API_KEY
+    ? 'vercel-gateway'
+    : process.env.OPENROUTER_API_KEY
+      ? 'openrouter'
+      : 'stub'
 /** TypeSafe list pricing: $0.042/MTok input, output free — the metered basis. */
 const JEV_INPUT_PER_MTOK = 0.042
 function decisionCostUsd(usage) {
@@ -1645,13 +1650,20 @@ app.post('/api/chat', async (c) => {
     return c.json({ error: '`messages` is required' }, 400)
   }
 
-  // x402 `upto` gate: each message is one metered, wallet-paid call. Keyless
-  // requests get the 402 challenge; requests carrying X-PAYMENT have their
-  // channel-open verified + escrowed BEFORE inference runs, and the actual
-  // metered cost is settled + refunded after the reply streams.
+  // Inference mode toggle (default Demo). Production routes to the real backend
+  // when one is configured; otherwise it falls back to Demo. Demo is ALWAYS
+  // free — the x402 gate below only applies to production turns, so a first-
+  // time visitor can chat with zero setup.
+  const wantProd = body.mode === 'production' && prodRT
+  const rt = wantProd ? prodRT : demoRT
+
+  // x402 `upto` gate: each PRODUCTION message is one metered, wallet-paid
+  // call. Keyless requests get the 402 challenge; requests carrying X-PAYMENT
+  // have their channel-open verified + escrowed BEFORE inference runs, and the
+  // actual metered cost is settled + refunded after the reply streams.
   let uptoVerified
   const chatSession = body.sessionId ? sessions.get(body.sessionId) : undefined
-  if (upto && chatSession?.paybox) {
+  if (wantProd && upto && chatSession?.paybox) {
     // Connected Paybox wallet: pay server-side from the user's wallet (MPC
     // signing within their grant) — no 402 round-trip to the browser.
     try {
@@ -1677,7 +1689,7 @@ app.post('/api/chat', async (c) => {
         402,
       )
     }
-  } else if (upto) {
+  } else if (wantProd && upto) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
     if (!paymentHeader) {
       const requirements = await upto.accepts(uptoCeiling())
@@ -1735,10 +1747,6 @@ app.post('/api/chat', async (c) => {
     }
   }
 
-  // Inference mode toggle (default Demo). Production routes to the real backend
-  // when one is configured; otherwise it falls back to Demo.
-  const wantProd = body.mode === 'production' && prodRT
-  const rt = wantProd ? prodRT : demoRT
   const params = toChatParams(body, rt.modelToCandidate)
   const session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (session) params.metadata = { userId: session.id }

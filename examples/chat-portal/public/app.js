@@ -2,7 +2,7 @@
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
 import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
 import { initSpendTicker, initRoutePreview, initSavingsToast, renderWaterfall } from './economy.js'
-import { initWalletSheet } from './wallet-sheet.js'
+import { initWalletSheet, openWalletSheet } from './wallet-sheet.js'
 const $ = (id) => document.getElementById(id)
 const fmt = (n, d = 6) => '$' + (Number(n) || 0).toFixed(d)
 
@@ -550,7 +550,9 @@ async function runTurn() {
         const chal = await res.json().catch(() => ({}))
         const req = chal.accepts?.[0]
         const amount = req ? `$${(Number(req.maxAmountRequired ?? req.amount ?? 0) / 1e6).toFixed(2)}` : ''
-        throw new Error(`Payment required — connect a wallet to pay ${amount} per message (x402)`)
+        const err = new Error(`Payment required — connect a wallet to pay ${amount} per message (x402)`)
+        err.paymentRequired = true
+        throw err
       }
       throw new Error(`HTTP ${res.status}`)
     }
@@ -599,7 +601,7 @@ async function runTurn() {
     if (acc) state.messages.push({ role: 'assistant', content: acc })
   } catch (err) {
     contentEl.innerHTML = renderMarkdown(acc)
-    renderError(assistant, err.message)
+    renderError(assistant, err.message, { paymentRequired: err.paymentRequired })
   } finally {
     contentEl.querySelector('.cursor')?.remove()
     contentEl.classList.remove('streaming')
@@ -803,7 +805,7 @@ function renderActions(assistant) {
   body.appendChild(row)
 }
 
-function renderError(assistant, message) {
+function renderError(assistant, message, opts = {}) {
   const body = assistant.querySelector('.body')
   let chips = body.querySelector('.chips')
   if (!chips) { chips = document.createElement('div'); chips.className = 'chips'; body.appendChild(chips) }
@@ -811,6 +813,27 @@ function renderError(assistant, message) {
   c.className = 'chip err'
   c.textContent = `error: ${message}`
   chips.appendChild(c)
+
+  // A payment wall on a first-time visitor is the #1 drop-off moment — pair
+  // the error with one-tap escapes: connect a wallet, or retry the SAME
+  // message in Demo (free, no setup). Recovering the turn beats a dead end.
+  if (opts.paymentRequired) {
+    const actions = document.createElement('span')
+    actions.className = 'err-actions'
+    const mk = (label, fn, primary) => {
+      const b = document.createElement('button')
+      b.className = 'chip act' + (primary ? ' primary' : '')
+      b.textContent = label
+      b.addEventListener('click', fn)
+      actions.appendChild(b)
+    }
+    mk('⚓ Connect a wallet', () => openWalletSheet(), true)
+    mk('✨ Retry in Demo (free)', async () => {
+      await setInferenceMode('demo')
+      regenerateLast()
+    })
+    chips.appendChild(actions)
+  }
 }
 
 function setSending(on) {

@@ -37,6 +37,8 @@ import {
   newPaymentReference,
   buildDepositIntent,
   verifyDeposit,
+  createJevTierInferrer,
+  createVercelGatewayDecisionProvider,
   type CampaignStore,
 } from './dist/index.js'
 import {
@@ -286,13 +288,27 @@ const pricingOverrides = Object.fromEntries(
   candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
 )
 
+// Jev-judged routing: with an AI Gateway key on the same Vercel account,
+// every `auto` request is content-judged by TypeSafe Jev (~$0.0001, 100-500ms)
+// to pick the cheapest model that clears its needed quality tier — falling
+// back to the structural heuristic on error/timeout/low confidence.
+const jevDecisionProvider = process.env.AI_GATEWAY_API_KEY
+  ? createVercelGatewayDecisionProvider({ apiKey: process.env.AI_GATEWAY_API_KEY })
+  : undefined
+
 const gateway = createGatewayApp({
   candidates,
   strategy: costOptimized(),
   // Requests that name a catalog model get exactly that model; `auto` (or an
   // unknown id) routes to the cheapest model that clears the request's inferred
-  // quality tier (tools/large prompts ⇒ standard, frontier work ⇒ frontier).
-  autoTier: true,
+  // quality tier — Jev-judged when the AI Gateway key is present (content-aware:
+  // topic, complexity, reasoning depth), else the structural heuristic
+  // (tools/large prompts ⇒ standard, frontier work ⇒ frontier).
+  autoTier: jevDecisionProvider
+    ? createJevTierInferrer({ provider: jevDecisionProvider, combine: 'max' })
+    : true,
+  // The typed-decision product surface — live Jev through the same key.
+  ...(jevDecisionProvider ? { decisions: { provider: jevDecisionProvider } } : {}),
   baselineModel,
   pricingOverrides,
   // Advertise the full catalog plus the `auto` alias in GET /v1/models.

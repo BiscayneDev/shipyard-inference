@@ -1,4 +1,4 @@
-import type { ProviderCandidate, ModelMetadata } from '../router/candidates.js'
+import type { ProviderCandidate, ModelMetadata, ModelTier } from '../router/candidates.js'
 import type { RoutingStrategy } from '../router/strategy.js'
 import type { RouterEvent } from '../router/router.js'
 import type { CacheStore } from '../router/cache.js'
@@ -137,9 +137,11 @@ export interface GatewayConfig {
    * (or name `auto`): the Router infers a minimum tier from the request shape
    * (prompt size, tools, requested output) and `costOptimized` then picks the
    * cheapest model that clears it. Explicit model names are always honored and
-   * bypass the floor. Default off (plain cost-optimized routing).
+   * bypass the floor. Default off (plain cost-optimized routing). Pass a
+   * function (may be async — e.g. `createJevTierInferrer`, content-aware
+   * judgment) for custom logic.
    */
-  autoTier?: boolean
+  autoTier?: boolean | ((params: import('../types.js').LLMChatParams) => ModelTier | Promise<ModelTier>)
   /**
    * Per-user API key store. When set, a request's `sk-shipyard-…` bearer resolves
    * to an account and the request is auto-attributed to that account's `userId`
