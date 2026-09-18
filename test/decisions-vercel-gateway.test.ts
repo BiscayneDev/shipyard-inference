@@ -124,10 +124,10 @@ test('jev tier inferrer works over the vercel gateway provider (routing path)', 
     )) as typeof fetch
   const provider = createVercelGatewayDecisionProvider({ apiKey: 'k', fetch: fetchMock })
   const inferrer = createJevTierInferrer({ provider })
-  const tier = await inferrer({
+  const decision = await inferrer({
     system: 'sys',
     messages: [{ role: 'user', content: 'Design a multi-tenant billing schema' }],
     tools: [],
   })
-  assert.equal(tier, 'frontier')
+  assert.equal(decision.tier, 'frontier')
 })

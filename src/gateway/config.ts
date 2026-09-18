@@ -1,4 +1,5 @@
 import type { ProviderCandidate, ModelMetadata, ModelTier } from '../router/candidates.js'
+import type { AutoTierResult } from '../router/jev-tier.js'
 import type { RoutingStrategy } from '../router/strategy.js'
 import type { RouterEvent } from '../router/router.js'
 import type { CacheStore } from '../router/cache.js'
@@ -141,7 +142,7 @@ export interface GatewayConfig {
    * function (may be async — e.g. `createJevTierInferrer`, content-aware
    * judgment) for custom logic.
    */
-  autoTier?: boolean | ((params: import('../types.js').LLMChatParams) => ModelTier | Promise<ModelTier>)
+  autoTier?: boolean | ((params: import('../types.js').LLMChatParams) => AutoTierResult | Promise<AutoTierResult>)
   /**
    * Per-user API key store. When set, a request's `sk-shipyard-…` bearer resolves
    * to an account and the request is auto-attributed to that account's `userId`

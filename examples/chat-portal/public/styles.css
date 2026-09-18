@@ -1106,3 +1106,10 @@ main.page.hidden { display: none !important; }
 .setting-row:last-child { border-bottom: 0; }
 .setting-k { color: var(--muted); }
 .setting-v { color: var(--text); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+
+/* Jev routing chip — the content judgment behind the model choice */
+.chip.jevchip {
+  color: var(--accent, #e56d24);
+  border-color: color-mix(in srgb, var(--accent, #e56d24) 35%, transparent);
+  cursor: help;
+}

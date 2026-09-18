@@ -208,6 +208,17 @@ interface RequestContext {
   model?: string
   provider?: string
   costUsd?: number
+  routing?: {
+    tier: string
+    source: 'jev' | 'structural'
+    jevTier?: string
+    structuralTier?: string
+    confidence?: number
+    needsReasoning?: number
+    latencyMs?: number
+    decidedBy?: string
+    usage?: { inputTokens: number; outputTokens: number }
+  }
 }
 
 const als = new AsyncLocalStorage<RequestContext>()
@@ -220,6 +231,18 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
     ctx.provider = event.candidateId
     if (event.model) ctx.model = event.model
     ctx.costUsd = event.actualCostUsd
+  } else if (event.type === 'tier_decided') {
+    ctx.routing = {
+      tier: event.tier,
+      source: event.source,
+      ...(event.jevTier !== undefined ? { jevTier: event.jevTier } : {}),
+      ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
+      ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
+      ...(event.needsReasoning !== undefined ? { needsReasoning: event.needsReasoning } : {}),
+      ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
+      ...(event.decidedBy !== undefined ? { decidedBy: event.decidedBy } : {}),
+      ...(event.usage ? { usage: event.usage } : {}),
+    }
   }
 }
 
@@ -534,6 +557,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                   model: ctx.model,
                   provider: ctx.provider,
                   costUsd: ctx.costUsd,
+                  ...(ctx.routing
+                    ? {
+                        routing: ctx.routing,
+                      }
+                    : {}),
                   ...(uptoPayment
                     ? {
                         payment: {
@@ -560,6 +588,12 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
         if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+        if (ctx.routing) {
+          c.header('x-shipyard-tier', ctx.routing.tier)
+          c.header('x-shipyard-tier-source', ctx.routing.source)
+          if (ctx.routing.confidence !== undefined)
+            c.header('x-shipyard-jev-confidence', String(ctx.routing.confidence))
+        }
       }
       if (upto) {
         const tokens = res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined
@@ -689,6 +723,12 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
         if (ctx.costUsd !== undefined) c.header('x-shipyard-cost-usd', String(ctx.costUsd))
+        if (ctx.routing) {
+          c.header('x-shipyard-tier', ctx.routing.tier)
+          c.header('x-shipyard-tier-source', ctx.routing.source)
+          if (ctx.routing.confidence !== undefined)
+            c.header('x-shipyard-jev-confidence', String(ctx.routing.confidence))
+        }
       }
       if (upto) {
         const tokens = res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined

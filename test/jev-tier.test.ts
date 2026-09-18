@@ -40,23 +40,23 @@ const bigPrompt = chatParams({
 
 test('jev tier routes a simple prompt up when Jev judges it hard', async () => {
   const inferrer = createJevTierInferrer({ provider: answering('frontier') })
-  assert.equal(await inferrer(simple), 'frontier')
+  assert.equal((await inferrer(simple)).tier, 'frontier')
 })
 
 test("'max' combine: structural floor wins when Jev underestimates a big prompt", async () => {
   const inferrer = createJevTierInferrer({ provider: answering('economy') })
-  assert.equal(await inferrer(bigPrompt), 'frontier')
+  assert.equal((await inferrer(bigPrompt)).tier, 'frontier')
   assert.equal(inferTier(bigPrompt), 'frontier') // sanity: floor is structural
 })
 
 test("'jev' combine trusts Jev over the structural signal", async () => {
   const inferrer = createJevTierInferrer({ provider: answering('economy'), combine: 'jev' })
-  assert.equal(await inferrer(bigPrompt), 'economy')
+  assert.equal((await inferrer(bigPrompt)).tier, 'economy')
 })
 
 test('a strong needs_reasoning signal floors economy at standard', async () => {
   const inferrer = createJevTierInferrer({ provider: answering('economy', { noul: 0.9 }) })
-  assert.equal(await inferrer(simple), 'standard')
+  assert.equal((await inferrer(simple)).tier, 'standard')
 })
 
 test('provider failure falls back to the structural tier', async () => {
@@ -71,8 +71,8 @@ test('provider failure falls back to the structural tier', async () => {
     provider: broken,
     onResult: (r) => onResults.push({ tier: r.tier, fallback: r.fallback }),
   })
-  assert.equal(await inferrer(simple), 'economy')
-  assert.equal(await inferrer(bigPrompt), 'frontier')
+  assert.equal((await inferrer(simple)).tier, 'economy')
+  assert.equal((await inferrer(bigPrompt)).tier, 'frontier')
   assert.ok(onResults.every((r) => r.fallback))
 })
 
@@ -82,12 +82,12 @@ test('timeout falls back to the structural tier', async () => {
     decide: () => new Promise<DecisionResponse>(() => {}),
   }
   const inferrer = createJevTierInferrer({ provider: hanging, timeoutMs: 20 })
-  assert.equal(await inferrer(simple), 'economy')
+  assert.equal((await inferrer(simple)).tier, 'economy')
 })
 
 test('low-confidence Jev answer falls back to the structural tier', async () => {
   const inferrer = createJevTierInferrer({ provider: answering('frontier', { confidence: 0.1 }), minConfidence: 0.5 })
-  assert.equal(await inferrer(simple), 'economy')
+  assert.equal((await inferrer(simple)).tier, 'economy')
 })
 
 test('async autoTier works through the Router: Jev judgment picks the frontier model', async () => {
@@ -140,6 +140,32 @@ test('explicit routingHints.tier still overrides the inferrer', async () => {
 
 test('stub provider as Jev backend yields the structural tier (offline dev path)', async () => {
   const inferrer = createJevTierInferrer({ provider: createStubDecisionProvider() })
-  assert.equal(await inferrer(simple), 'economy')
-  assert.equal(await inferrer(bigPrompt), 'frontier')
+  assert.equal((await inferrer(simple)).tier, 'economy')
+  assert.equal((await inferrer(bigPrompt)).tier, 'frontier')
+})
+
+test('rich decision evidence flows through the Router as a tier_decided event', async () => {
+  const events: Array<Record<string, unknown>> = []
+  const provider = answering('standard')
+  const premium = mockProvider(async () => ({ content: 'premium', toolCalls: [], stopReason: 'end_turn' as const }))
+  const cheap = mockProvider(async () => ({ content: 'cheap', toolCalls: [], stopReason: 'end_turn' as const }))
+  const router = new Router({
+    candidates: [
+      candidate('premium', premium, [model('frontier-model', { inputCostPerMTok: 10, outputCostPerMTok: 10, tier: 'frontier' })]),
+      candidate('cheap', cheap, [model('economy-model', { inputCostPerMTok: 0.1, outputCostPerMTok: 0.1, tier: 'economy' })]),
+    ],
+    autoTier: createJevTierInferrer({ provider }),
+    onEvent: (e) => {
+      if (e.type === 'tier_decided') events.push(e as unknown as Record<string, unknown>)
+    },
+  })
+  const res = await router.chat(simple)
+  assert.equal(res.content, 'premium') // standard cleared the frontier model
+  assert.equal(events.length, 1)
+  const ev = events[0]!
+  assert.equal(ev['type'], 'tier_decided')
+  assert.equal(ev['source'], 'jev')
+  assert.equal(ev['tier'], 'standard')
+  assert.equal(ev['structuralTier'], 'economy')
+  assert.equal(typeof ev['latencyMs'], 'number')
 })

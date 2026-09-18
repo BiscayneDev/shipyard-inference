@@ -26,6 +26,7 @@ import { serve } from '@hono/node-server'
 import {
   Router,
   costOptimized,
+  createJevTierInferrer,
   createTypeSafeProvider,
   createOpenRouterDecisionProvider,
   createVercelGatewayDecisionProvider,
@@ -391,6 +392,27 @@ function routerOnEvent(event) {
     ctx.trace.push({ type: 'retry', provider: event.candidateId, model: event.model, retryAttempt: event.retryAttempt, delayMs: event.delayMs })
   } else if (event.type === 'failover') {
     ctx.trace.push({ type: 'failover', from: event.candidateId, model: event.model, error: String(event.error?.message ?? event.error ?? '').slice(0, 140) })
+  } else if (event.type === 'tier_decided') {
+    // Jev's judgment of the request: the why behind the model choice.
+    ctx.routing = {
+      tier: event.tier,
+      source: event.source,
+      jevTier: event.jevTier,
+      structuralTier: event.structuralTier,
+      confidence: event.confidence,
+      needsReasoning: event.needsReasoning,
+      latencyMs: event.latencyMs,
+      decidedBy: event.decidedBy,
+    }
+    ctx.trace.push({
+      type: 'tier_decided',
+      tier: event.tier,
+      source: event.source,
+      jevTier: event.jevTier,
+      confidence: event.confidence,
+      latencyMs: event.latencyMs,
+      decidedBy: event.decidedBy,
+    })
   } else if (event.type === 'route_success') {
     ctx.trace.push({ type: 'served', provider: event.candidateId, model: event.model, attempt: event.attempt })
   } else if (event.type === 'route_selected' || event.type === 'route_success') {
@@ -433,17 +455,25 @@ function buildRuntime(inf) {
     strategy: costOptimized(),
     baselineModel,
     pricingOverrides,
+    autoTier: jevTierInferrer,
     onEvent: routerOnEvent,
   })
   return { mode: inf.mode, baselineModel, modelToCandidate, modelCatalog, router }
 }
+
+// Content-aware routing: Jev judges each auto request and picks the quality
+// floor; costOptimized then serves the cheapest model that clears it. Falls
+// back to structural heuristics if the decision backend is unreachable —
+// routing never depends on the decider being up.
+const jevTierInferrer = decisionProvider
+  ? createJevTierInferrer({ provider: decisionProvider, combine: 'max' })
+  : true
 
 const demoRT = buildRuntime(demoInference)
 const prodRT = prodInference ? buildRuntime(prodInference) : null
 // Map the UI toggle ('demo' | 'production') to a runtime; default Demo.
 const runtimeFor = (m) => (m === 'production' && prodRT ? prodRT : demoRT)
 
-// Catalog of models a per-session UsePod token serves (bring-your-own-wallet).
 const USEPOD_SESSION_MODELS = [
   { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200000, tier: 'economy', capabilities: ['tools'] },
   { model: 'claude-sonnet-4-5', inputCostPerMTok: 3, outputCostPerMTok: 15, contextWindow: 200000, tier: 'standard', capabilities: ['tools'] },
@@ -1971,6 +2001,7 @@ app.post('/api/chat', async (c) => {
         data: JSON.stringify({
           model: ctx.model,
           provider: ctx.provider,
+          routing: ctx.routing,
           actualCostUsd: actual,
           baselineCostUsd: baseline,
           savedUsd: saved,

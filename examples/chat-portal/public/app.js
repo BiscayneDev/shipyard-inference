@@ -803,6 +803,22 @@ function renderChips(assistant, meta) {
   const add = (cls, html) => { const c = document.createElement('span'); c.className = `chip ${cls}`; c.innerHTML = html; chips.appendChild(c) }
 
   if (meta.model) add('', `<b>${escapeHtml(meta.model)}</b>${meta.provider ? ' · ' + escapeHtml(meta.provider) : ''}`)
+  const r = meta.routing
+  if (r) {
+    const who = r.source === 'jev' ? `jev judged <b>${escapeHtml(r.jevTier ?? r.tier)}</b>` : `structural <b>${escapeHtml(r.tier)}</b>`
+    const bits = [who]
+    if (r.confidence !== undefined) bits.push(`${Math.round(r.confidence * 100)}%`)
+    if (r.latencyMs !== undefined) bits.push(`${r.latencyMs}ms`)
+    const chip = add(r.source === 'jev' ? 'jevchip' : '', bits.join(' · '))
+    if (r.source === 'jev') {
+      const notes = []
+      if (r.needsReasoning !== undefined && r.needsReasoning > 0.5) notes.push('reasoning-heavy')
+      if (r.structuralTier && r.jevTier && r.structuralTier !== r.jevTier && r.tier === r.jevTier)
+        notes.push(`raised above structural ${r.structuralTier}`)
+      if (r.decidedBy) notes.push(r.decidedBy)
+      chip.title = notes.join(' · ') || 'TypeSafe Jev content judgment'
+    }
+  }
   if (meta.usage) add('', `${meta.usage.inputTokens}→${meta.usage.outputTokens} tok`)
   if (meta.actualCostUsd !== undefined) add('', `cost <b>${fmt(meta.actualCostUsd)}</b>`)
   if (meta.savedUsd > 0 && meta.baselineCostUsd !== undefined) {

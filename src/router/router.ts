@@ -7,6 +7,7 @@ import type {
   LLMStreamOptions,
 } from '../types.js'
 import type { ModelMetadata, ModelTier, ProviderCandidate } from './candidates.js'
+import type { AutoTierResult, TierDecision } from './jev-tier.js'
 import { inferTier } from './auto-tier.js'
 import type { CacheStore } from './cache.js'
 import { cacheKey } from './cache.js'
@@ -36,6 +37,19 @@ export type RouterEvent =
     }
   | { type: 'route_success'; candidateId: string; model?: string; attempt: number }
   | { type: 'failover'; candidateId: string; model?: string; attempt: number; error: unknown }
+  | {
+      /** The quality floor chosen for an `auto` request, with its evidence. */
+      type: 'tier_decided'
+      tier: ModelTier
+      source: 'jev' | 'structural'
+      jevTier?: ModelTier
+      structuralTier?: ModelTier
+      confidence?: number
+      needsReasoning?: number
+      latencyMs?: number
+      decidedBy?: string
+      usage?: { inputTokens: number; outputTokens: number }
+    }
   | {
       type: 'retry'
       candidateId: string
@@ -110,7 +124,7 @@ export interface RouterOptions {
    * routing available when the decision backend is down).
    * An explicit `params.routingHints.tier` always overrides this.
    */
-  autoTier?: boolean | ((params: LLMChatParams) => ModelTier | Promise<ModelTier>)
+  autoTier?: boolean | ((params: LLMChatParams) => AutoTierResult | Promise<AutoTierResult>)
   /** Candidates with video-capable models, forwarded to {@link VideoRouter}. */
   videoCandidates?: ProviderCandidate[]
   /** Poll interval (ms) for video generation polling. Default 5000. */
@@ -412,9 +426,25 @@ export class Router implements LLMProvider {
   private async applyAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
     if (!this.opts.autoTier) return params
     if (params.routingHints?.tier) return params // explicit tier wins
-    const tier =
+    const raw: AutoTierResult =
       typeof this.opts.autoTier === 'function' ? await this.opts.autoTier(params) : inferTier(params)
-    return { ...params, routingHints: { ...params.routingHints, tier } }
+    const d = raw as TierDecision | undefined
+    if (!d || typeof d !== 'object' || d.tier === undefined) {
+      return { ...params, routingHints: { ...params.routingHints, tier: raw as ModelTier } }
+    }
+    this.emit({
+      type: 'tier_decided',
+      tier: d.tier,
+      source: d.source,
+      ...(d.jevTier !== undefined ? { jevTier: d.jevTier } : {}),
+      ...(d.structuralTier !== undefined ? { structuralTier: d.structuralTier } : {}),
+      ...(d.confidence !== undefined ? { confidence: d.confidence } : {}),
+      ...(d.needsReasoning !== undefined ? { needsReasoning: d.needsReasoning } : {}),
+      ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
+      ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
+      ...(d.usage ? { usage: d.usage } : {}),
+    })
+    return { ...params, routingHints: { ...params.routingHints, tier: d.tier } }
   }
 
   private emit(event: RouterEvent): void {

@@ -50,7 +50,45 @@ export interface JevTierResult {
   fallback: boolean
   /** Set when the fallback fired. */
   error?: unknown
+  /** Jev's calibrated confidence in the tier choice (0–1). */
+  confidence?: number
+  /** Jev's `needs_reasoning` score (0–1), when answered. */
+  needsReasoning?: number
+  /** Decision-call latency in ms. */
+  latencyMs?: number
+  /** Backend model that judged (e.g. `jev-1.13.0`). */
+  decidedBy?: string
+  /** Decision-call token usage, for per-request cost accounting. */
+  usage?: { inputTokens: number; outputTokens: number }
 }
+
+/**
+ * A routing decision with its evidence. Inferrers may return this instead of a
+ * bare tier; the Router unwraps it, routes on `tier`, and emits the evidence
+ * as a `tier_decided` event (surfaced on the gateway API and in the portal).
+ */
+export interface TierDecision {
+  tier: ModelTier
+  /** Where the tier came from. */
+  source: 'jev' | 'structural'
+  /** Jev's chosen tier, before combining with the structural floor. */
+  jevTier?: ModelTier
+  /** Structural tier from the heuristics. */
+  structuralTier?: ModelTier
+  /** Calibrated confidence in the tier choice (0–1). */
+  confidence?: number
+  /** `needs_reasoning` score (0–1), when the backend answered it. */
+  needsReasoning?: number
+  /** Decision-call latency in ms. */
+  latencyMs?: number
+  /** Backend model that judged (e.g. `jev-1.13.0`). */
+  decidedBy?: string
+  /** Decision-call token usage. */
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
+/** What `autoTier` may return: a tier, or a tier with evidence. */
+export type AutoTierResult = ModelTier | TierDecision
 
 /** The exact questions asked per request — stable so answers stay comparable. */
 const TIER_QUESTIONS = {
@@ -87,7 +125,7 @@ const TIER_QUESTIONS = {
  */
 export function createJevTierInferrer(
   opts: JevTierInferrerOptions,
-): (params: LLMChatParams) => Promise<ModelTier> {
+): (params: LLMChatParams) => Promise<AutoTierResult> {
   const combine = opts.combine ?? 'max'
   const structural = opts.fallback ?? inferTier
   const timeoutMs = opts.timeoutMs ?? 2000
@@ -125,8 +163,9 @@ export function createJevTierInferrer(
     })
   }
 
-  return async (params: LLMChatParams): Promise<ModelTier> => {
+  return async (params: LLMChatParams): Promise<AutoTierResult> => {
     const structuralTier = structural(params)
+    const t0 = Date.now()
     try {
       const res = await withTimeout(
         opts.provider.decide({
@@ -135,6 +174,7 @@ export function createJevTierInferrer(
           model: opts.model,
         }),
       )
+      const latencyMs = Date.now() - t0
       const tierAnswer = res.answers['tier']
       const reasoningAnswer = res.answers['needs_reasoning']
       if (tierAnswer?.type !== 'choice' || !(tierAnswer.choice in TIER_QUESTIONS.tier.criteria)) {
@@ -151,11 +191,23 @@ export function createJevTierInferrer(
         jevTier = 'standard'
       }
       const tier = combine === 'max' && TIER_RANK[structuralTier] > TIER_RANK[jevTier] ? structuralTier : jevTier
-      opts.onResult?.({ tier, jevTier, structuralTier, fallback: false })
-      return tier
+      const decision: TierDecision = {
+        tier,
+        source: 'jev',
+        jevTier,
+        structuralTier,
+        confidence: tierAnswer.confidence,
+        ...(reasoningAnswer?.type === 'noul' ? { needsReasoning: reasoningAnswer.noul } : {}),
+        latencyMs,
+        decidedBy: res.model,
+        ...(res.usage ? { usage: res.usage } : {}),
+      }
+      opts.onResult?.({ tier, jevTier, structuralTier, fallback: false, confidence: tierAnswer.confidence, ...(reasoningAnswer?.type === 'noul' ? { needsReasoning: reasoningAnswer.noul } : {}), latencyMs, decidedBy: res.model, ...(res.usage ? { usage: res.usage } : {}) })
+      return decision
     } catch (error) {
-      opts.onResult?.({ tier: structuralTier, structuralTier, fallback: true, error })
-      return structuralTier
+      const latencyMs = Date.now() - t0
+      opts.onResult?.({ tier: structuralTier, structuralTier, fallback: true, error, latencyMs })
+      return { tier: structuralTier, source: 'structural', structuralTier, latencyMs } satisfies TierDecision
     }
   }
 }
