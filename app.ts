@@ -480,7 +480,7 @@ ${navHtml('connect')}
     <strong>Any OpenAI SDK / env</strong>
     <pre><span class="copy" data-copy="#env">copy</span><span id="env"></span></pre>
   </div>
-  <p class="note">Track your savings + kickbacks on the <a href="/dashboard/">dashboard</a>.</p>
+  <p class="note">Track your savings + kickbacks on the <a href="/me" id="meline">earnings page</a>.</p>
 </div>
 <script>
 const base = location.origin + '/v1';
@@ -496,7 +496,8 @@ $('#gen').addEventListener('click', async ()=>{
     $('#claude').textContent='export ANTHROPIC_BASE_URL="'+location.origin+'"\\nexport ANTHROPIC_AUTH_TOKEN="'+d.key+'"\\nclaude';
     $('#cursor').textContent='Base URL: '+base+'\\nAPI Key:  '+d.key;
     $('#cont').textContent=JSON.stringify({models:[{title:'Shipyard',provider:'openai',model:'auto',apiBase:base,apiKey:d.key}]},null,2);
-    $('#env').textContent='export OPENAI_BASE_URL="'+base+'"\\nexport OPENAI_API_KEY="'+d.key+'"';
+    $('#env').textContent='export OPENAI_BASE_URL="'+base+'\\nexport OPENAI_API_KEY="'+d.key+'"';
+    $('#meline').href='/me?key='+encodeURIComponent(d.key);
     $('#out').classList.remove('hidden');
   }catch(e){alert('Could not generate a key: '+e.message)}
   $('#gen').disabled=false; $('#gen').textContent='Generate key';

@@ -161,7 +161,7 @@ export async function fetchEarnings(
 ): Promise<Earnings | null> {
   const f = opts.fetchImpl ?? fetch
   const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? 1500)
+  const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? 4000)
   try {
     const res = await f(`${trimSlashes(gatewayUrl)}/api/me`, {
       headers: { authorization: `Bearer ${key}` },

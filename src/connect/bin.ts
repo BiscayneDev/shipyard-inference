@@ -82,7 +82,7 @@ async function connect(): Promise<void> {
         `  ANTHROPIC_AUTH_TOKEN = ${key.slice(0, 16)}…\n\n` +
         `Run \`claude\` — your traffic now routes through Shipyard (cheapest-capable\n` +
         `model = savings) and your wait-time earns kickbacks.${walletTip}\n` +
-        `  Earnings: ${url}/me\n`,
+        `  Earnings: ${url}/me?key=${key}\n`,
     )
   } else {
     process.stdout.write(
@@ -92,7 +92,7 @@ async function connect(): Promise<void> {
         `Anthropic key. A sponsored line now shows in Claude's spinner during waits,\n` +
         `plus a live-earnings status bar; your wait-time can earn kickbacks.${walletTip}\n` +
         `  Want cheaper inference too? Re-run with --route to route through Shipyard.\n` +
-        `  Earnings: ${url}/me\n`,
+        `  Earnings: ${url}/me?key=${key}\n`,
     )
   }
 }
