@@ -762,7 +762,19 @@ app.get('/api/paybox/wallet', async (c) => {
         }
         walk(portfolio)
         const sol = found.find((f) => JSON.stringify(f).toLowerCase().includes('solana')) ?? found[0]
-        const amount = sol?.balance ?? sol?.amount ?? sol?.uiAmount ?? sol?.formatted
+        // Human units first (uiAmount/formatted); raw integer `balance`/`amount`
+        // fields are base units (micro-USDC on Solana) — scale by decimals.
+        const pick = (n) => {
+          for (const k of ['uiAmount', 'formatted', 'uiAmountString']) {
+            if (n[k] !== undefined && n[k] !== null && n[k] !== '') return Number(n[k])
+          }
+          const rawVal = n.balance ?? n.amount
+          if (rawVal === undefined || rawVal === null) return undefined
+          const dec = typeof n.decimals === 'number' ? n.decimals : 6
+          const s = String(rawVal)
+          return s.includes('.') ? Number(rawVal) : Number(rawVal) / 10 ** dec
+        }
+        const amount = pick(sol ?? {})
         if (amount !== undefined) usdc = Number(amount)
       } catch (err) {
         console.warn('[portal] Paybox portfolio failed:', err?.message ?? err)
