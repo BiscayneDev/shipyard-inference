@@ -1,37 +1,103 @@
 // Wallet Sheet — the connect-wallet moment, designed to delight.
-// One elegant primary button opens a sheet: wallets as cards with icon,
-// name, one-line promise, and a "why this" whisper. Spring-eased entrance,
-// staggered card reveal, scrim blur, fluid dismiss (click-out, Esc, X).
+// Two steps, one sheet:
+//   Step 1: Paybox, front and center (the recommended rail), plus a quiet
+//           "Other wallets" chip beneath it.
+//   Step 2: The ecosystem — Phantom, MetaMask, Solflare, Backpack, Ledger —
+//           each card explaining what it is and whether it's detected.
+// Spring-eased entrance, staggered card reveal, scrim blur, fluid step
+// transition (shared-axis slide), dismiss from scrim/Esc/X.
 // The actual connect logic stays in app.js — this only owns the moment.
 const $ = (id) => document.getElementById(id)
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&#38;', '<': '&#60;', '>': '&#62;', '"': '&#34;', "'": '&#39;' })[c])
 
-const WALLETS = [
-  {
-    id: 'paybox',
-    icon: '◈',
-    name: 'Paybox',
-    promise: 'Shipyard\'s USDC smart account',
-    whisper: 'Passkey login, instant signing with an agent key, funds each request within your grant.',
-    badge: 'recommended',
-  },
+const PAYBOX = {
+  id: 'paybox',
+  icon: '◈',
+  name: 'Paybox',
+  promise: 'Shipyard\'s USDC smart account',
+  whisper: 'Passkey login, instant signing with an agent key, funds each request within your grant.',
+  badge: 'recommended',
+}
+
+const OTHER_WALLETS = [
   {
     id: 'phantom',
     icon: '◇',
     name: 'Phantom',
-    promise: 'Your existing Solana wallet',
+    promise: 'The most popular Solana wallet',
     whisper: 'Non-custodial — you approve every channel open in the wallet extension.',
-    badge: null,
+    detect: () => (window.phantom?.solana ? 'detected' : null),
+  },
+  {
+    id: 'metamask',
+    icon: '▲',
+    name: 'MetaMask',
+    promise: 'EVM wallet — Ethereum & friends',
+    whisper: 'This rail settles USDC on Solana; MetaMask support is on the roadmap.',
+    detect: () => (window.ethereum?.isMetaMask ? 'detected' : null),
+  },
+  {
+    id: 'solflare',
+    icon: '✳',
+    name: 'Solflare',
+    promise: 'Solana web + extension wallet',
+    whisper: 'Coming soon to this portal — the Solana rail is already live.',
+    detect: () => (window.solflare ? 'detected' : null),
+    soon: true,
+  },
+  {
+    id: 'backpack',
+    icon: '▣',
+    name: 'Backpack',
+    promise: 'xNFT wallet by the Mad Lads crew',
+    whisper: 'Coming soon to this portal — the Solana rail is already live.',
+    detect: () => (window.backpack ? 'detected' : null),
+    soon: true,
+  },
+  {
+    id: 'ledger',
+    icon: '⬢',
+    name: 'Ledger',
+    promise: 'Hardware wallet — cold storage',
+    whisper: 'Coming soon — pair via a Solana connector.',
+    detect: () => null,
+    soon: true,
   },
 ]
 
 let sheetOpen = false
+let step = 1
 
 export function initWalletSheet() {
   const openBtn = $('connect-open')
   if (!openBtn) return
   openBtn.addEventListener('click', openSheet)
+}
+
+function walletCard(w, i, opts = {}) {
+  const detected = w.detect?.()
+  const stateChip = opts.showState
+    ? detected
+      ? `<span class="wsheet-state on">detected</span>`
+      : w.soon
+        ? `<span class="wsheet-state">soon</span>`
+        : ''
+    : ''
+  return `
+    <button class="wsheet-wallet${w.soon ? ' soon' : ''}" data-wallet="${w.id}" style="--i:${i}">
+      <span class="wsheet-icon">${w.icon}</span>
+      <span class="wsheet-main">
+        <span class="wsheet-name-row">
+          <span class="wsheet-name">${esc(w.name)}</span>
+          ${w.badge ? `<span class="wsheet-badge">${esc(w.badge)}</span>` : ''}
+          ${stateChip}
+        </span>
+        <span class="wsheet-promise">${esc(w.promise)}</span>
+        <span class="wsheet-whisper">${esc(w.whisper)}</span>
+      </span>
+      <span class="wsheet-go">${w.soon ? '·' : '→'}</span>
+    </button>`
 }
 
 function buildSheet() {
@@ -45,29 +111,38 @@ function buildSheet() {
     <div class="wsheet-scrim" data-close></div>
     <div class="wsheet-card">
       <div class="wsheet-head">
-        <div>
-          <div class="wsheet-title">Connect a wallet</div>
-          <div class="wsheet-sub">Fund inference per request — metered to the token, settled in USDC.</div>
+        <div class="wsheet-head-inner">
+          <button class="wsheet-back hidden" id="wsheet-back" aria-label="Back">←</button>
+          <div>
+            <div class="wsheet-title" id="wsheet-title">Connect a wallet</div>
+            <div class="wsheet-sub" id="wsheet-sub">Fund inference per request — metered to the token, settled in USDC.</div>
+          </div>
         </div>
         <button class="wsheet-x" data-close aria-label="Close">✕</button>
       </div>
-      <div class="wsheet-list">
-        ${WALLETS.map(
-          (w, i) => `
-          <button class="wsheet-wallet" data-wallet="${w.id}" style="--i:${i}">
-            <span class="wsheet-icon">${w.icon}</span>
+
+      <div class="wsheet-panes">
+        <div class="wsheet-pane" id="wsheet-pane-1">
+          <div class="wsheet-list">
+            ${walletCard(PAYBOX, 0)}
+          </div>
+          <button class="wsheet-other" id="wsheet-other" style="--i:1">
+            <span class="wsheet-other-icon">◇ ▲ ✳</span>
             <span class="wsheet-main">
-              <span class="wsheet-name-row">
-                <span class="wsheet-name">${esc(w.name)}</span>
-                ${w.badge ? `<span class="wsheet-badge">${esc(w.badge)}</span>` : ''}
-              </span>
-              <span class="wsheet-promise">${esc(w.promise)}</span>
-              <span class="wsheet-whisper">${esc(w.whisper)}</span>
+              <span class="wsheet-name-row"><span class="wsheet-name">Other wallets</span></span>
+              <span class="wsheet-promise">Phantom, MetaMask, Solflare, Backpack, Ledger…</span>
             </span>
             <span class="wsheet-go">→</span>
-          </button>`,
-        ).join('')}
+          </button>
+        </div>
+
+        <div class="wsheet-pane" id="wsheet-pane-2" hidden>
+          <div class="wsheet-list wsheet-list-tall">
+            ${OTHER_WALLETS.map((w, i) => walletCard(w, i, { showState: true })).join('')}
+          </div>
+        </div>
       </div>
+
       <div class="wsheet-foot">Settles on Solana · your keys never leave your wallet</div>
     </div>`
   document.body.appendChild(el)
@@ -77,9 +152,24 @@ function buildSheet() {
       closeSheet()
       return
     }
+    if (e.target.closest('#wsheet-other')) {
+      gotoStep(2)
+      return
+    }
+    if (e.target.closest('#wsheet-back')) {
+      gotoStep(1)
+      return
+    }
     const card = e.target.closest('.wsheet-wallet')
     if (card) {
-      // hand off to app.js's existing connect flow, then close the moment
+      if (card.classList.contains('soon')) {
+        // soft feedback: the card breathes; the whisper already explains.
+        card.animate(
+          [{ transform: 'translateX(0)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }],
+          { duration: 220, easing: 'ease-out' },
+        )
+        return
+      }
       closeSheet()
       document.dispatchEvent(new CustomEvent('portal:connect-wallet', { detail: card.dataset.wallet }))
     }
@@ -89,10 +179,49 @@ function buildSheet() {
   })
 }
 
+/** Fluid step transition — shared-axis slide: out toward the side, in from the other. */
+function gotoStep(n) {
+  const panes = [$('wsheet-pane-1'), $('wsheet-pane-2')]
+  const back = $('wsheet-back')
+  const title = $('wsheet-title')
+  const sub = $('wsheet-sub')
+  const dir = n === 2 ? 1 : -1
+  const [fromPane, toPane] = n === 2 ? [panes[0], panes[1]] : [panes[1], panes[0]]
+
+  toPane.hidden = false
+  fromPane.animate(
+    [{ transform: 'translateX(0)', opacity: 1 }, { transform: `translateX(${-28 * dir}px)`, opacity: 0 }],
+    { duration: 200, easing: 'ease-out', fill: 'forwards' },
+  )
+  toPane.animate(
+    [{ transform: `translateX(${28 * dir}px)`, opacity: 0 }, { transform: 'translateX(0)', opacity: 1 }],
+    { duration: 260, easing: 'cubic-bezier(.3, 1, .4, 1)' },
+  )
+  setTimeout(() => {
+    fromPane.hidden = true
+  }, 210)
+
+  back.classList.toggle('hidden', n === 1)
+  title.textContent = n === 2 ? 'Other wallets' : 'Connect a wallet'
+  sub.textContent =
+    n === 2
+      ? 'Bring the wallet you already have — detected wallets are ready.'
+      : 'Fund inference per request — metered to the token, settled in USDC.'
+  step = n
+  // Restagger the incoming pane's cards.
+  for (const card of toPane.querySelectorAll('.wsheet-wallet, .wsheet-other')) {
+    card.style.animation = 'none'
+    void card.offsetWidth
+    card.style.animation = ''
+  }
+}
+
 function openSheet() {
   buildSheet()
   const el = $('wallet-sheet')
   sheetOpen = true
+  // always open on step 1 (Paybox front and center)
+  if (step !== 1) gotoStep(1)
   el.classList.remove('closing')
   el.classList.add('open')
 }

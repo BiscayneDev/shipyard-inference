@@ -926,11 +926,12 @@ main.dec { display: flex; flex-direction: column; }
   background: var(--glass); border: 1px solid var(--hair); border-radius: 14px;
   padding: 13px 14px; cursor: pointer; font-family: inherit; color: var(--text);
   transition: transform .22s var(--ease), border-color .2s, background .2s;
-  /* staggered reveal */
-  opacity: 0; transform: translateY(10px);
+  opacity: 1;
 }
-.wsheet.open .wsheet-wallet { animation: wcard-in .4s var(--ease) forwards; animation-delay: calc(var(--i) * 70ms + 60ms); }
-@keyframes wcard-in { to { opacity: 1; transform: translateY(0); } }
+/* entrance decorates from a hidden start; base state stays visible so a
+   cancelled/throttled animation can never leave a card unpainted */
+.wsheet.open .wsheet-wallet { animation: wcard-in .4s var(--ease) backwards; animation-delay: calc(var(--i) * 70ms + 60ms); }
+@keyframes wcard-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .wsheet-wallet:hover { transform: translateY(-2px); border-color: var(--hair-2); background: var(--glass-2); }
 .wsheet-wallet:hover .wsheet-go { transform: translateX(3px); color: var(--text); }
 .wsheet-wallet:active { transform: translateY(0) scale(.99); }
@@ -949,3 +950,46 @@ main.dec { display: flex; flex-direction: column; }
 
 /* old inline wallet options removed */
 .connect-or, .wallet-options { display: none !important; }
+
+/* ---------- wallet sheet: two-step panes ---------- */
+.wsheet-head-inner { display: flex; align-items: flex-start; gap: 10px; }
+.wsheet-back {
+  background: var(--glass); border: 1px solid var(--hair); color: var(--muted);
+  font-size: 13px; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+  display: grid; place-items: center; flex: none; margin-top: 1px;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.wsheet-back:hover { color: var(--text); background: var(--glass-2); border-color: var(--hair-2); }
+.wsheet-back.hidden { display: none; }
+.wsheet-panes { position: relative; }
+.wsheet-pane { will-change: transform; }
+
+/* the 'Other wallets' chip — quieter than a wallet card, clearly a door */
+.wsheet-other {
+  display: flex; align-items: center; gap: 13px; width: calc(100% - 28px);
+  margin: 8px 14px 0 14px; padding: 11px 14px; text-align: left;
+  background: transparent; border: 1px dashed var(--hair-2); border-radius: 14px;
+  cursor: pointer; font-family: inherit; color: var(--muted);
+  transition: border-color .2s, color .2s, background .2s, transform .22s var(--ease);
+  opacity: 1;
+}
+.wsheet.open .wsheet-other { animation: wcard-in .4s var(--ease) backwards; animation-delay: calc(var(--i) * 70ms + 60ms); }
+.wsheet-other:hover { color: var(--text); border-color: var(--hair-2); background: var(--glass); transform: translateY(-1px); }
+.wsheet-other-icon { font-size: 11px; color: var(--faint); width: 42px; text-align: center; flex: none; letter-spacing: 1px; }
+.wsheet-other .wsheet-promise { font-size: 10.5px; color: var(--faint); }
+.wsheet-other:hover .wsheet-go { transform: translateX(3px); color: var(--text); }
+
+/* ecosystem list — taller, scrolls in place */
+.wsheet-list-tall { max-height: 46vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hair-2) transparent; }
+
+/* state chips */
+.wsheet-state {
+  font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+  border: 1px solid var(--hair); border-radius: 999px; padding: 1px 6px; background: var(--glass);
+}
+.wsheet-state.on { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 30%, transparent); background: color-mix(in srgb, var(--accent-2) 8%, transparent); }
+
+/* 'soon' cards are visibly inert but still explorable */
+.wsheet-wallet.soon { cursor: default; }
+.wsheet-wallet.soon .wsheet-icon, .wsheet-wallet.soon .wsheet-name, .wsheet-wallet.soon .wsheet-promise { opacity: .55; }
+.wsheet-wallet.soon:hover { transform: none; border-color: var(--hair); background: var(--glass); }
