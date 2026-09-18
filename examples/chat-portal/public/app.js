@@ -1,7 +1,7 @@
 // Chat portal client — talks to the portal server's /api/* endpoints, streams
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
 import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
-import { initSpendTicker, initRoutePreview, renderWaterfall } from './economy.js'
+import { initSpendTicker, initRoutePreview, initSavingsToast, renderWaterfall } from './economy.js'
 const $ = (id) => document.getElementById(id)
 const fmt = (n, d = 6) => '$' + (Number(n) || 0).toFixed(d)
 
@@ -26,9 +26,10 @@ const blended = (m) =>
 // ---------------------------------------------------------------------------
 init()
 async function init() {
-  // Economy primitives (economy.js): spend ticker + route preview.
+  // Economy primitives (economy.js): spend ticker + route preview + toast.
   initSpendTicker()
   initRoutePreview()
+  initSavingsToast()
   // The Paybox OAuth callback appends ?portalSession=<id> — adopt it into
   // localStorage so the UI picks up the connected session after the redirect.
   const fromUrl = new URLSearchParams(location.search).get('portalSession')

@@ -54,6 +54,48 @@ const ticker = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// 4. Savings Toast — a gentle, celebratory moment when a reply saves money.
+//    Soft warm glow, drifts up, never nagging. Anti-cyberpunk by design.
+// ---------------------------------------------------------------------------
+let savingsToastTimer = null
+let savingsTotalSeen = 0
+
+export function initSavingsToast() {
+  window.addEventListener('portal:meta', (e) => {
+    const m = e.detail ?? {}
+    if (!m.savedUsd || m.savedUsd <= 0) return
+    // Celebrate the FIRST save of a session and every $1 crossed.
+    const prev = savingsTotalSeen
+    savingsTotalSeen += m.savedUsd
+    if (prev === 0 || Math.floor(savingsTotalSeen) > Math.floor(prev)) {
+      showToast(m.savedUsd, m.baselineModel)
+    }
+  })
+}
+
+function showToast(savedUsd, baselineModel) {
+  clearTimeout(savingsToastTimer)
+  let el = document.getElementById('savings-toast')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'savings-toast'
+    el.className = 'savings-toast'
+    document.body.appendChild(el)
+  }
+  el.innerHTML = `
+    <span class="st-icon">🕯</span>
+    <div class="st-body">
+      <div class="st-line">You saved <span class="mono st-amt">${usd(savedUsd, 4)}</span></div>
+      <div class="st-sub">vs ${esc(String(baselineModel ?? 'the baseline model'))} — routed to the cheapest capable model</div>
+    </div>`
+  el.classList.remove('show')
+  // force reflow so the animation restarts
+  void el.offsetWidth
+  el.classList.add('show')
+  savingsToastTimer = setTimeout(() => el.classList.remove('show'), 4200)
+}
+
 export function initSpendTicker() {
   const host = document.createElement('aside')
   host.className = 'ticker'

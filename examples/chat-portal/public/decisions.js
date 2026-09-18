@@ -11,21 +11,51 @@ let questions = [] // {type, instructions, criteria}
 let asking = false
 
 // ---------------------------------------------------------------------------
-// View switching
+// View switching — beautifului Sidebar Nav: gliding hover pill + collapse rail
 // ---------------------------------------------------------------------------
 const chatMain = document.querySelector('main.chat:not(.dec)')
 const decMain = $('decisions')
+const viewnav = $('viewnav')
+const glider = $('nav-glider')
+
+/** Position the gliding pill behind the hovered/active option. */
+function glideTo(btn) {
+  if (!glider || !btn) return
+  glider.style.top = btn.offsetTop + 'px'
+  glider.style.height = btn.offsetHeight + 'px'
+}
 
 function setView(view) {
   for (const b of document.querySelectorAll('.viewnav-opt')) {
     b.classList.toggle('active', b.dataset.view === view)
+    if (b.dataset.view === view) glideTo(b)
   }
   chatMain?.classList.toggle('hidden', view !== 'chat')
   decMain.classList.toggle('hidden', view !== 'decisions')
 }
 for (const b of document.querySelectorAll('.viewnav-opt')) {
   b.addEventListener('click', () => setView(b.dataset.view))
+  b.addEventListener('mouseenter', () => glideTo(b))
 }
+viewnav?.addEventListener('mouseleave', () => {
+  glideTo(document.querySelector('.viewnav-opt.active'))
+})
+
+// Collapse to an icon rail (persisted).
+const collapseBtn = $('nav-collapse')
+if (collapseBtn) {
+  if (localStorage.getItem('portal.nav-collapsed') === '1') viewnav?.classList.add('viewnav-collapsed')
+  collapseBtn.addEventListener('click', () => {
+    const collapsed = viewnav.classList.toggle('viewnav-collapsed')
+    localStorage.setItem('portal.nav-collapsed', collapsed ? '1' : '0')
+    collapseBtn.textContent = collapsed ? '»' : '«'
+    // the active option may shift as the rail reflows — re-glide after layout
+    requestAnimationFrame(() => glideTo(document.querySelector('.viewnav-opt.active')))
+  })
+  collapseBtn.textContent = viewnav.classList.contains('viewnav-collapsed') ? '»' : '«'
+}
+// Initial glide once layout settles.
+requestAnimationFrame(() => glideTo(document.querySelector('.viewnav-opt.active')))
 
 // ---------------------------------------------------------------------------
 // Question builder

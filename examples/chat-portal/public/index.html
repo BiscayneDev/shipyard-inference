@@ -77,9 +77,11 @@
           </div>
         </section>
 
-        <nav class="viewnav" aria-label="Views">
-          <button class="viewnav-opt active" data-view="chat" id="nav-chat">💬 Chat</button>
-          <button class="viewnav-opt" data-view="decisions" id="nav-decisions">⩆ Decisions</button>
+        <nav class="viewnav" id="viewnav" aria-label="Views">
+          <div class="glider" id="nav-glider"></div>
+          <button class="viewnav-opt active" data-view="chat" id="nav-chat"><span class="nav-icon">💬</span><span class="nav-label">Chat</span></button>
+          <button class="viewnav-opt" data-view="decisions" id="nav-decisions"><span class="nav-icon">⩆</span><span class="nav-label">Decisions</span></button>
+          <button class="viewnav-toggle" id="nav-collapse" title="Collapse to icons" aria-label="Collapse navigation">«</button>
         </nav>
 
         <section class="savings">
