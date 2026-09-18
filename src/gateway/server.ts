@@ -25,7 +25,7 @@ import { TENDER_DEFAULTS } from '../tender/types.js'
 import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrieveParams, VideoCompleteParams, VideoGenerateParams } from '../types.js'
 import { resolveAuth } from './auth.js'
 import type { AuthResult } from './auth.js'
-import { resolveModelList, type GatewayConfig } from './config.js'
+import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
 import {
@@ -205,6 +205,8 @@ function uptoCharge(x402: NonNullable<GatewayConfig['x402']>, tokens: number | u
 }
 
 interface RequestContext {
+  /** Request id, used to join tier decisions with guardrail outcomes. */
+  id?: string
   model?: string
   provider?: string
   costUsd?: number
@@ -306,14 +308,16 @@ function evaluateGuardrails(
       const flagged =
         (unsafe !== undefined && unsafe > flagUnsafeAbove) ||
         (quality !== undefined && quality < flagQualityBelow)
-      g.onResult?.({
+      const result: GuardrailResult = {
         requestId: reqId,
         model,
         unsafe,
         quality,
         flagged,
         judgedBy: res.model,
-      })
+      }
+      config.decisionFeedback?.recordGuardrail(result)
+      g.onResult?.(result)
     })
     .catch(() => {
       // observe-only: a down guardrail backend is silent by design
@@ -357,6 +361,20 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     onEvent: (event) => {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)
+      if (event.type === 'tier_decided' && ctx?.id && config.decisionFeedback) {
+        config.decisionFeedback.recordTier(ctx.id, {
+          tier: event.tier,
+          source: event.source,
+          ...(event.jevTier !== undefined ? { jevTier: event.jevTier } : {}),
+          ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
+          ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
+          ...(event.needsReasoning !== undefined ? { needsReasoning: event.needsReasoning } : {}),
+          ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
+          ...(event.decidedBy !== undefined ? { decidedBy: event.decidedBy } : {}),
+          ...(event.usage ? { usage: event.usage } : {}),
+          ...(event.cached !== undefined ? { cached: event.cached } : {}),
+        })
+      }
       // Fire-and-forget: the reporter's bounded queue never throws or blocks.
       config.telemetry?.onEvent(event)
       config.onEvent?.(event)
@@ -491,7 +509,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       }
     }
     const id = requestId()
-    const ctx: RequestContext = {}
+    const ctx: RequestContext = { id }
 
     if (body.stream) {
       return streamSSE(c, async (stream) => {
@@ -666,7 +684,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (explicitHints) params.routingHints = explicitHints
     if (auth.account?.userId) params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
     const id = `msg_${randomBytes(12).toString('hex')}`
-    const ctx: RequestContext = {}
+    const ctx: RequestContext = { id }
 
     if (body.stream) {
       return streamSSE(c, async (stream) => {
@@ -755,6 +773,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   // product surface for decision models on Shipyard Inference: a developer
   // never needs a separate account, they pay through the gateway they know.
 
+  // Judgment-loop calibration: per-tier quality (does economy routing actually
+  // degrade answers?), Jev fallback rate/latency/cost, cache hits. Read-only
+  // aggregate; enabled only when a `decisionFeedback` recorder is configured.
+  app.get('/v1/decisions/feedback', (c) => {
+    const report = config.decisionFeedback?.report?.()
+    if (!report) {
+      return errorJson(c, 404, 'Decision feedback is not enabled on this gateway', 'invalid_request_error')
+    }
+    return c.json(report)
+  })
+
   app.post('/v1/decisions', async (c) => {
     if (!config.decisions) {
       return errorJson(c, 404, 'Decisions route is not enabled on this gateway', 'invalid_request_error')
@@ -791,6 +820,14 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           'invalid_request_error',
         )
       }
+      // Per-type criteria shape: reject malformed input with a 400 BEFORE it
+      // reaches the backend (otherwise it surfaces as a 502 server error).
+      if (q.type === 'choice' && (typeof q.criteria !== 'object' || q.criteria === null || Array.isArray(q.criteria) || Object.keys(q.criteria).length === 0)) {
+        return errorJson(c, 400, `Question '${id}' (choice) needs a non-empty criteria object mapping option ids to descriptions`, 'invalid_request_error')
+      }
+      if (q.type === 'score' && (!Array.isArray(q.criteria) || q.criteria.length === 0 || !q.criteria.every((l) => typeof l === 'string'))) {
+        return errorJson(c, 400, `Question '${id}' (score) needs a non-empty criteria array of ordered level descriptions`, 'invalid_request_error')
+      }
     }
 
     try {
@@ -801,7 +838,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       })
       if (exposeCost) {
         c.header('x-shipyard-model', res.model)
-        c.header('x-shipyard-provider', config.decisions!.provider.id)
+        // A chain tags which member actually answered — prefer that over the
+        // configured provider id (which may be "chain(a → b → stub)").
+        c.header('x-shipyard-provider', res.provider ?? config.decisions!.provider.id)
       }
       if (upto) {
         // Metered billing on the decision's own reported usage; the decision

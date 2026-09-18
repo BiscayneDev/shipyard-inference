@@ -39,6 +39,9 @@ import {
   verifyDeposit,
   createJevTierInferrer,
   createVercelGatewayDecisionProvider,
+  createOpenRouterDecisionProvider,
+  createStubDecisionProvider,
+  createChainedDecisionProvider,
   type CampaignStore,
 } from './dist/index.js'
 import {
@@ -292,9 +295,25 @@ const pricingOverrides = Object.fromEntries(
 // every `auto` request is content-judged by TypeSafe Jev (~$0.0001, 100-500ms)
 // to pick the cheapest model that clears its needed quality tier — falling
 // back to the structural heuristic on error/timeout/low confidence.
-const jevDecisionProvider = process.env.AI_GATEWAY_API_KEY
-  ? createVercelGatewayDecisionProvider({ apiKey: process.env.AI_GATEWAY_API_KEY })
-  : undefined
+// Provider CHAIN, not a single pick: the AI Gateway can be blocked by account
+// state (403 `customer_verification_required` until a card is on file), which
+// would otherwise 502 the /v1/decisions product route and silently no-op the
+// tier inferrer. The chain degrades: AI Gateway → OpenRouter → stub (neutral
+// answers, confidence 0 — the tier inferrer treats those as low-confidence
+// and falls back to the structural heuristic), and every response carries
+// `provider` saying which member answered.
+const openRouterKey = process.env.OPENROUTER_API_KEY
+const jevChain = createChainedDecisionProvider({
+  providers: [
+    ...(process.env.AI_GATEWAY_API_KEY
+      ? [createVercelGatewayDecisionProvider({ apiKey: process.env.AI_GATEWAY_API_KEY })]
+      : []),
+    ...(openRouterKey ? [createOpenRouterDecisionProvider({ apiKey: openRouterKey })] : []),
+    createStubDecisionProvider(),
+  ],
+})
+const jevDecisionProvider =
+  process.env.AI_GATEWAY_API_KEY || openRouterKey ? jevChain : undefined
 
 const gateway = createGatewayApp({
   candidates,

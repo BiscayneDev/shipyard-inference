@@ -86,6 +86,9 @@ export interface DecisionResponse {
   /** Answers under the caller-chosen ids from the request. */
   answers: Record<string, DecisionAnswer>
   usage?: DecisionUsage
+  /** Telemetry: which backend actually answered (chain members tag this;
+   *  `stub` means neutral answers — treat low confidence accordingly). */
+  provider?: string
 }
 
 /**

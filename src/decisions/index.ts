@@ -20,3 +20,5 @@ export { createVercelGatewayDecisionProvider, VercelGatewayDecisionError } from 
 export type { VercelGatewayDecisionProviderOptions } from './vercel-gateway.js'
 export { createStubDecisionProvider } from './stub.js'
 export type { StubDecisionProviderOptions } from './stub.js'
+export { createChainedDecisionProvider } from './chain.js'
+export type { ChainedDecisionProviderOptions } from './chain.js'
