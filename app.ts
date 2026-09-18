@@ -927,8 +927,6 @@ app.post('/api/tender/claim', async (c) => {
   return c.json({ paid: true, amountUsdc: r6(balanceUsd), wallet, signature: result.signature })
 })
 
-app.route('/', operator)
-
 // ---------------------------------------------------------------------------
 // Chat portal — the Paybox-wallet chat UI, mounted at /portal. It's a plain
 // .mjs Hono app (examples/chat-portal/server.mjs); import it lazily inside a
@@ -937,6 +935,9 @@ app.route('/', operator)
 // ---------------------------------------------------------------------------
 import { Hono as _Hono } from 'hono'
 const portalMount = new _Hono()
+// /portal (no trailing slash) → /portal/, so the page's relative asset and
+// API paths resolve under the mount instead of the site root.
+portalMount.get('/', (c) => c.redirect('/portal/'))
 portalMount.all('*', async (c) => {
   // Plain-JS portal app outside src/ — the bundler resolves and traces this
   // fine at build time; only bare 'tsc app.ts' (framework preset's type
@@ -945,8 +946,25 @@ portalMount.all('*', async (c) => {
   // ('./examples' resolves from the repo root locally AND from the bundled
   // function root on Vercel, where build-web copies the portal tree.)
   const { portalApp } = await import('./examples/chat-portal/server.mjs')
-  return portalApp.fetch(c.req.raw)
+  // The portal sees clean paths: strip the /portal mount prefix from the
+  // request URL (Hono hands us the raw Request with the full path), and
+  // re-add it to any Location redirects so OAuth round-trips stay under /portal.
+  const url = new URL(c.req.url)
+  const path = url.pathname.replace(/^\/portal/, '') || '/'
+  const req = new Request(new URL(path + url.search, url.origin), c.req.raw)
+  const res = await portalApp.fetch(req)
+  const location = res.headers.get('location')
+  if (location && location.startsWith('/')) {
+    const headers = new Headers(res.headers)
+    headers.set('location', '/portal' + location)
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+  }
+  return res
 })
 app.route('/portal', portalMount)
+
+app.route('/', operator)
+
+
 
 export default app

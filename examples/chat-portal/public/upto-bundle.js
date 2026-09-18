@@ -50662,7 +50662,7 @@ Message: ${transactionMessage}.
             const signed = phantomResult instanceof VersionedTransaction ? phantomResult : VersionedTransaction.deserialize(phantomResult.serialize());
             lastWalletTx = signed;
             try {
-              await fetch("/api/upto-debug", {
+              await fetch("api/upto-debug", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({ from: address2, sent: u8ToB64(vtx.serialize()), received: u8ToB64(signed.serialize()) })

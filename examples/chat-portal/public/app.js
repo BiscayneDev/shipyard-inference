@@ -122,7 +122,7 @@ async function init() {
 
 async function loadModels() {
   try {
-    const res = await fetch(`/api/models?mode=${state.inferenceMode}`)
+    const res = await fetch(`api/models?mode=${state.inferenceMode}`)
     const { models, baselineModel, backend, productionAvailable } = await res.json()
     state.catalog = models
     state.baselineModel = baselineModel
@@ -318,7 +318,7 @@ async function disconnectWallet() {
 
 async function refreshWallet() {
   try {
-    const w = await (await fetch(`/api/wallet/${state.sessionId}`)).json()
+    const w = await (await fetch(`api/wallet/${state.sessionId}`)).json()
     if (w.error) { state.sessionId = null; localStorage.removeItem('portal.session'); return }
     applyWallet(w)
   } catch { /* offline-ok */ }

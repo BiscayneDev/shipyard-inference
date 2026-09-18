@@ -66,7 +66,7 @@ function phantomSigner(address) {
               : VersionedTransaction.deserialize(phantomResult.serialize())
           lastWalletTx = signed
           try {
-            await fetch('/api/upto-debug', {
+            await fetch('api/upto-debug', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ from: address, sent: u8ToB64(vtx.serialize()), received: u8ToB64(signed.serialize()) }),
