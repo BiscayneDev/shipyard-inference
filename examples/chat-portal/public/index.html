@@ -73,11 +73,23 @@
           </div>
         </section>
 
-        <nav class="viewnav" id="viewnav" aria-label="Views">
-          <div class="glider" id="nav-glider"></div>
-          <button class="viewnav-opt active" data-view="chat" id="nav-chat"><span class="nav-icon">💬</span><span class="nav-label">Chat</span></button>
-          <button class="viewnav-opt" data-view="decisions" id="nav-decisions"><span class="nav-icon">⩆</span><span class="nav-label">Decisions</span></button>
-          <button class="viewnav-toggle" id="nav-collapse" title="Collapse to icons" aria-label="Collapse navigation">«</button>
+        <nav class="navrail" id="navrail" aria-label="Portal">
+          <div class="navrail-section">
+            <div class="navrail-label">Workspace</div>
+            <button class="navrail-opt active" data-view="chat" id="nav-chat"><span class="nav-icon">💬</span><span class="nav-label">Chat</span></button>
+            <button class="navrail-opt" data-view="decisions" id="nav-decisions"><span class="nav-icon">⩆</span><span class="nav-label">Decisions</span></button>
+          </div>
+          <div class="navrail-section">
+            <div class="navrail-label">Insight</div>
+            <button class="navrail-opt" data-view="history" id="nav-history"><span class="nav-icon">🗂</span><span class="nav-label">History</span></button>
+            <button class="navrail-opt" data-view="activity" id="nav-activity"><span class="nav-icon">◆</span><span class="nav-label">Activity</span></button>
+            <button class="navrail-opt" data-view="guardrails" id="nav-guardrails"><span class="nav-icon">⛨</span><span class="nav-label">Guardrails</span></button>
+          </div>
+          <div class="navrail-section">
+            <div class="navrail-label">Portal</div>
+            <button class="navrail-opt" data-view="settings" id="nav-settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+          </div>
+          <button class="navrail-toggle" id="nav-collapse" title="Collapse to icons" aria-label="Collapse navigation">«</button>
         </nav>
 
         <section class="savings">
@@ -238,11 +250,48 @@
           </div>
         </div>
       </main>
+
+      <!-- Insight + Portal pages — rendered into by nav.js -->
+      <main class="chat page hidden" id="page-history" aria-label="History">
+        <header class="topbar">
+          <span class="mode-badge">history</span>
+          <span class="dec-sub">Your chat threads, newest first</span>
+          <button class="btn ghost" id="history-refresh">Refresh</button>
+        </header>
+        <div class="page-scroll"><div class="page-body" id="history-body"></div></div>
+      </main>
+
+      <main class="chat page hidden" id="page-activity" aria-label="Activity">
+        <header class="topbar">
+          <span class="mode-badge">activity</span>
+          <span class="dec-sub">Every metered event — replies, decisions, settlements</span>
+          <button class="btn ghost" id="activity-refresh">Refresh</button>
+        </header>
+        <div class="page-scroll"><div class="page-body" id="activity-body"></div></div>
+      </main>
+
+      <main class="chat page hidden" id="page-guardrails" aria-label="Guardrails">
+        <header class="topbar">
+          <span class="mode-badge">guardrails</span>
+          <span class="dec-sub">Safety + quality judgments over every reply</span>
+          <button class="btn ghost" id="guardrails-refresh">Refresh</button>
+        </header>
+        <div class="page-scroll"><div class="page-body" id="guardrails-body"></div></div>
+      </main>
+
+      <main class="chat page hidden" id="page-settings" aria-label="Settings">
+        <header class="topbar">
+          <span class="mode-badge">settings</span>
+          <span class="dec-sub">This deployment, at a glance</span>
+        </header>
+        <div class="page-scroll"><div class="page-body" id="settings-body"></div></div>
+      </main>
     </div>
 
     <script src="./wallet-bundle.js"></script>
     <script src="./upto-bundle.js"></script>
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./nav.js"></script>
     <script type="module" src="./beautiful.js"></script>
     <script type="module" src="./economy.js"></script>
     <script type="module" src="./wallet-sheet.js"></script>

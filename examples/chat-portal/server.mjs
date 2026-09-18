@@ -456,6 +456,104 @@ class PersistentSessions extends Map {
 }
 const sessions = new PersistentSessions()
 
+// ---------------------------------------------------------------------------
+// Threads — persisted chat history per session. The portal previously had no
+// thread memory (New chat = reload); the nav rail surfaces real History.
+// ---------------------------------------------------------------------------
+const THREADS_FILE = new URL('./.data/threads.json', import.meta.url)
+class PersistentThreads extends Map {
+  constructor() {
+    super()
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(THREADS_FILE, 'utf8')) ?? {})) {
+        super.set(k, v)
+      }
+    } catch {}
+  }
+  persist() {
+    clearTimeout(this._t)
+    this._t = setTimeout(() => {
+      try {
+        fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
+        // cap persisted threads so the file can't grow unbounded
+        const entries = [...this.entries()]
+          .sort((a, b) => (b[1].updatedAt ?? 0) - (a[1].updatedAt ?? 0))
+          .slice(0, 100)
+        fs.writeFileSync(THREADS_FILE, JSON.stringify(entries))
+      } catch {}
+    }, 250)
+  }
+  set(k, v) { super.set(k, v); this.persist(); return this }
+  delete(k) { super.delete(k); this.persist(); return true }
+}
+const threads = new PersistentThreads()
+
+/** Create a thread for a session (or return the existing current one). */
+function threadFor(sessionId) {
+  if (!sessionId) return null
+  let t = threads.get(sessionId)
+  if (!t) {
+    t = { id: sessionId, title: null, messages: [], createdAt: Date.now(), updatedAt: Date.now() }
+    threads.set(sessionId, t)
+  }
+  return t
+}
+
+/** First user message becomes the thread title; later ones can refresh it. */
+function threadAppend(sessionId, role, content) {
+  const t = threadFor(sessionId)
+  if (!t) return
+  t.messages.push({ role, content: String(content).slice(0, 10_000), at: Date.now() })
+  if (t.messages.length > 200) t.messages = t.messages.slice(-200) // rolling window
+  if (role === 'user' && (!t.title || t.messages.filter((m) => m.role === 'user').length === 1)) {
+    t.title = String(content).slice(0, 64) || 'New chat'
+  }
+  t.updatedAt = Date.now()
+  threads.set(t.id, t)
+}
+
+// ---------------------------------------------------------------------------
+// Activity — append-only feed of metered/economic events (the mempool
+// promoted to a full page). Also powers the sidebar ticker.
+// ---------------------------------------------------------------------------
+const ACTIVITY_FILE = new URL('./.data/activity.json', import.meta.url)
+let activity = []
+try {
+  activity = JSON.parse(fs.readFileSync(ACTIVITY_FILE, 'utf8')) ?? []
+} catch {}
+function logActivity(entry) {
+  activity.unshift({ at: Date.now(), ...entry })
+  if (activity.length > 500) activity = activity.slice(0, 500)
+  clearTimeout(logActivity._t)
+  logActivity._t = setTimeout(() => {
+    try {
+      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
+      fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(activity))
+    } catch {}
+  }, 400)
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails — the Jev-judged safety/quality evaluations from the gateway
+// config, surfaced as their own page when the backend is wired.
+// ---------------------------------------------------------------------------
+const GUARDRAILS_FILE = new URL('./.data/guardrails.json', import.meta.url)
+let guardrailResults = []
+try {
+  guardrailResults = JSON.parse(fs.readFileSync(GUARDRAILS_FILE, 'utf8')) ?? []
+} catch {}
+function logGuardrail(result) {
+  guardrailResults.unshift({ at: Date.now(), ...result })
+  if (guardrailResults.length > 300) guardrailResults = guardrailResults.slice(0, 300)
+  clearTimeout(logGuardrail._t)
+  logGuardrail._t = setTimeout(() => {
+    try {
+      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
+      fs.writeFileSync(GUARDRAILS_FILE, JSON.stringify(guardrailResults))
+    } catch {}
+  }, 400)
+}
+
 // Address shaped to the chosen wallet: MetaMask is EVM (0x-hex), Paybox and
 // Phantom are Solana (base58). Demo sessions mint a throwaway one.
 function newAddress(wallet) {
@@ -595,6 +693,68 @@ app.get('/api/models', (c) => {
     productionAvailable,
     network: inference.network,
     payer: inference.payer,
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Nav pages — History (threads), Activity (metered events), Guardrails,
+// Settings (read-only facts about this deployment for now).
+// ---------------------------------------------------------------------------
+app.get('/api/threads', (c) => {
+  const list = [...threads.values()]
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .slice(0, 50)
+    .map((t) => ({
+      id: t.id,
+      title: t.title ?? 'New chat',
+      messages: t.messages.length,
+      updatedAt: t.updatedAt,
+      preview:
+        (t.messages.find((m) => m.role === 'user')?.content ?? '').slice(0, 90) || '—',
+    }))
+  return c.json({ threads: list })
+})
+
+app.get('/api/threads/:id', (c) => {
+  const t = threads.get(c.req.param('id'))
+  if (!t) return c.json({ error: 'no such thread' }, 404)
+  return c.json({ id: t.id, title: t.title ?? 'New chat', messages: t.messages })
+})
+
+app.delete('/api/threads/:id', (c) => {
+  threads.delete(c.req.param('id'))
+  return c.json({ ok: true })
+})
+
+app.get('/api/activity', (c) => {
+  const limit = Math.min(200, Number(c.req.query('limit') ?? 100))
+  return c.json({ events: activity.slice(0, limit) })
+})
+
+app.get('/api/guardrails', (c) => {
+  const live = Boolean(process.env.TYPESAFE_API_KEY)
+  return c.json({ live, model: live ? 'jev-latest' : 'stub-latest', results: guardrailResults.slice(0, 100) })
+})
+
+app.get('/api/settings', (c) => {
+  return c.json({
+    portal: {
+      marginPct: Math.round(MARGIN * 100),
+      mode: inference.mode,
+      productionAvailable,
+      baselineModel: demoRT.baselineModel,
+      uptoCeilingUsd: UPTO_CEILING_USD,
+    },
+    decisions: {
+      live: Boolean(process.env.TYPESAFE_API_KEY),
+      model: process.env.TYPESAFE_API_KEY ? 'jev-latest' : 'stub-latest',
+      inputPerMTok: JEV_INPUT_PER_MTOK,
+    },
+    guardrails: {
+      // Guardrails are evaluated by the local gateway when configured; this
+      // portal reports its own judge results via /api/guardrails.
+      backend: 'shipyard-inference gateway (config.guardrails)',
+    },
   })
 })
 
@@ -1364,6 +1524,14 @@ app.post('/api/decisions', async (c) => {
     session.pendingUsd += chargedUsd
     session.messages += 1
   }
+  logActivity({
+    kind: 'decision',
+    sessionId: body.sessionId ?? null,
+    questions: Object.keys(body.questions ?? {}).length,
+    model: res.model,
+    tokens: res.usage ? res.usage.inputTokens + res.usage.outputTokens : undefined,
+    costUsd: chargedUsd,
+  })
 
   let receipt
   if (uptoVerified) {
@@ -1596,6 +1764,7 @@ app.post('/api/chat', async (c) => {
     }
 
     try {
+      let replyText = '' // accumulated reply — threads record it after the stream
       await als.run(ctx, async () => {
         const observed = observeWaitWindow(
           activeRouter.chatStream(params, { signal: controller.signal }),
@@ -1617,6 +1786,7 @@ app.post('/api/chat', async (c) => {
         )
         for await (const event of observed) {
           if (event.type === 'text_delta') {
+            replyText += event.text
             await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: event.text }) })
           }
         }
@@ -1639,6 +1809,28 @@ app.post('/api/chat', async (c) => {
         session.savedUsd += saved ?? 0
         session.messages += 1
       }
+
+      // Thread + activity records: the reply is history and a metered event.
+      // Threads persist for anonymous browsers too — derive a stable thread id
+      // from the session when present, else the caller's anonymous id.
+      {
+        const tid = body.sessionId ?? body.threadId ?? null
+        if (tid) {
+          const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === 'user')
+          if (lastUser?.content) threadAppend(tid, 'user', lastUser.content)
+          if (replyText) threadAppend(tid, 'assistant', replyText)
+        }
+      }
+      logActivity({
+        kind: 'reply',
+        sessionId: body.sessionId ?? null,
+        model: ctx.model ?? undefined,
+        provider: ctx.provider ?? undefined,
+        tokens: ctx.usage ? ctx.usage.inputTokens + ctx.usage.outputTokens : undefined,
+        costUsd: charged ?? actual ?? undefined,
+        savedUsd: saved ?? 0,
+        baselineModel: baseline !== undefined ? rt.baselineModel : undefined,
+      })
 
       // Tender attestation + credit accrual. Built before `meta` so the wallet
       // snapshot reflects the new credit. accrueSettlement runs the release gate
@@ -1793,6 +1985,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/nav.js': ['nav.js', 'text/javascript; charset=utf-8'],
   '/beautiful.js': ['beautiful.js', 'text/javascript; charset=utf-8'],
   '/decisions.js': ['decisions.js', 'text/javascript; charset=utf-8'],
   '/economy.js': ['economy.js', 'text/javascript; charset=utf-8'],

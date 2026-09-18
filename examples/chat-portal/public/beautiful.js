@@ -136,8 +136,10 @@ window.addEventListener('resize', hideSelectionBar)
 // 3. Search — ⌘K command palette (live filtering + empty state)
 // ---------------------------------------------------------------------------
 const COMMANDS = [
-  { id: 'view:chat', label: 'Go to Chat', hint: 'view', run: () => document.querySelector('.viewnav-opt[data-view="chat"]')?.click() },
-  { id: 'view:decisions', label: 'Go to Decisions', hint: 'view', run: () => document.querySelector('.viewnav-opt[data-view="decisions"]')?.click() },
+  { id: 'view:chat', label: 'Go to Chat', hint: 'view', run: () => document.querySelector('.navrail-opt[data-view="chat"]')?.click() },
+  { id: 'view:decisions', label: 'Go to Decisions', hint: 'view', run: () => document.querySelector('.navrail-opt[data-view="decisions"]')?.click() },
+  { id: 'view:history', label: 'Go to History', hint: 'view', run: () => document.querySelector('.navrail-opt[data-view="history"]')?.click() },
+  { id: 'view:activity', label: 'Go to Activity', hint: 'view', run: () => document.querySelector('.navrail-opt[data-view="activity"]')?.click() },
   { id: 'act:new', label: 'New chat', hint: 'action', run: () => $('new-chat')?.click() },
   { id: 'act:regen', label: 'Regenerate last reply', hint: 'action', run: () => window.__portalRegenerate?.() },
   { id: 'act:toggle-prod', label: 'Toggle Demo / Production', hint: 'action', run: () => document.querySelector('.infmode-opt:not(.active)')?.click() },
@@ -148,7 +150,7 @@ const COMMANDS = [
   { id: 'ex:tagline', label: 'Draft taglines for a wallet-funded gateway', hint: 'prompt', run: () => runExample('Draft a short product tagline for a wallet-funded AI gateway.') },
 ]
 function runExample(prompt) {
-  document.querySelector('.viewnav-opt[data-view="chat"]')?.click()
+  document.querySelector('.navrail-opt[data-view="chat"]')?.click()
   const input = $('input')
   input.value = prompt
   $('composer')?.requestSubmit()

@@ -375,6 +375,18 @@ window.addEventListener('portal:wallet', (e) => {
   if (e.detail) applyWallet(e.detail)
 })
 
+// History (nav.js) hands a full thread over via this event — rehydrate it
+// into the chat state and repaint the thread.
+window.addEventListener('portal:open-thread', (e) => {
+  const t = e.detail
+  if (!t?.messages) return
+  state.messages = t.messages.map((m) => ({ role: m.role, content: m.content }))
+  const thread = $('thread')
+  thread.innerHTML = ''
+  for (const m of state.messages) renderMessage(m.role, m.content)
+  $('empty')?.remove()
+})
+
 function applyWallet(w) {
   state.wallet = w.wallet
   state.usepodToken = w.usepodToken
@@ -443,8 +455,9 @@ function applyWallet(w) {
 // Chat
 // ---------------------------------------------------------------------------
 function resetChat() {
-  // Session (and thus wallet + savings) lives in localStorage, so a reload
-  // gives a clean thread while keeping the connected wallet.
+  // New chat = fresh thread: mint a new anonymous id, then reload (session/
+  // wallet live in localStorage and survive; the old thread stays in History).
+  localStorage.setItem('portal.thread', 'anon-' + crypto.randomUUID())
   location.reload()
 }
 
@@ -461,6 +474,17 @@ async function onSubmit(e) {
   state.messages.push({ role: 'user', content: text })
   renderMessage('user', text)
   await runTurn()
+}
+
+/** Anonymous thread id — the unit History lists. New chat mints a fresh one;
+ *  a connected wallet's session overrides it server-side. */
+function threadId() {
+  let t = localStorage.getItem('portal.thread')
+  if (!t) {
+    t = 'anon-' + crypto.randomUUID()
+    localStorage.setItem('portal.thread', t)
+  }
+  return t
 }
 
 // Re-run the last turn: drop the previous assistant reply (thread + history)
@@ -493,6 +517,7 @@ async function runTurn() {
         messages: state.messages,
         model: state.model,
         sessionId: state.sessionId,
+        threadId: threadId(),
         mode: state.inferenceMode,
       }),
     }
