@@ -88,14 +88,16 @@ export async function startConnect(origin, prefix = '') {
   }
 }
 
-export async function completeConnect(origin, code, verifier, clientId) {
+export async function completeConnect(origin, code, verifier, clientId, prefix = '') {
   const baseUrl = payboxApiBase()
   const meta = await metadata(baseUrl)
   const resource = `${baseUrl}/mcp`
   const form = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: `${origin}/api/paybox/connect/callback`,
+    // MUST byte-match the authorize call's redirect_uri — including the mount
+    // prefix (/portal on prod) — or the exchange is rejected.
+    redirect_uri: `${origin}${prefix}/api/paybox/connect/callback`,
     code_verifier: verifier,
     // Public clients (token_endpoint_auth_method: none) authenticate via the
     // client_id in the body — Paybox 422s without it.

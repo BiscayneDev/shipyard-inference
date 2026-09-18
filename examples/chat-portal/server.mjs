@@ -762,7 +762,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
   try {
     if (!code) throw new Error('no authorization code in callback')
     if (state !== cookie(CONNECT_STATE_COOKIE)) throw new Error('OAuth state mismatch')
-    const oauth = await completeConnect(url.origin, code, cookie(CONNECT_VERIFIER_COOKIE), cookie(CONNECT_CLIENT_COOKIE))
+    const oauth = await completeConnect(url.origin, code, cookie(CONNECT_VERIFIER_COOKIE), cookie(CONNECT_CLIENT_COOKIE), MOUNT_PREFIX)
     // Bind to (or create) this browser's session.
     const sid = cookie('portal.session')
     let session = sid ? sessions.get(sid) : undefined
