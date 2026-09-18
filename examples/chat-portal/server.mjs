@@ -430,63 +430,45 @@ function buildSessionRouter(token) {
 // Sessions are persisted to disk: portal restarts must not disconnect the
 // user's Paybox wallet (OAuth tokens + signing key live here) — an in-memory
 // map silently broke that and dropped requests to the keyless 402 path.
-const SESSIONS_FILE = new URL('./.data/sessions.json', import.meta.url)
-class PersistentSessions extends Map {
-  constructor() {
-    super()
-    try {
-      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8')) ?? {})) {
-        // Re-attach the paybox token-refresh hook after deserialization.
-        if (v?.paybox?.oauth) v.paybox.onRefresh = (t) => (v.paybox.oauth = t)
-        super.set(k, v)
-      }
-    } catch {}
+import { loadScope, saveScope } from './portal-store.mjs'
+
+const sessions = new Map()
+// Hydrate from the KV tier (file locally, Supabase on Vercel). The paybox
+// onRefresh hook is a function — lost in serialization — re-attach it.
+{
+  const stored = await loadScope('sessions')
+  for (const [k, v] of Object.entries(stored)) {
+    if (v?.paybox?.oauth) v.paybox.onRefresh = (t) => (v.paybox.oauth = t)
+    sessions.set(k, v)
   }
-  persist() {
-    clearTimeout(this._t)
-    this._t = setTimeout(() => {
-      try {
-        fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-        fs.writeFileSync(SESSIONS_FILE, JSON.stringify([...this.entries()]))
-      } catch {}
-    }, 250)
+  const origSet = sessions.set.bind(sessions)
+  sessions.set = (k, v) => {
+    origSet(k, v)
+    saveScope('sessions', [...sessions.entries()])
+    return sessions
   }
-  set(k, v) { super.set(k, v); this.persist(); return this }
-  delete(k) { super.delete(k); this.persist(); return true }
 }
-const sessions = new PersistentSessions()
 
 // ---------------------------------------------------------------------------
 // Threads — persisted chat history per session. The portal previously had no
 // thread memory (New chat = reload); the nav rail surfaces real History.
 // ---------------------------------------------------------------------------
-const THREADS_FILE = new URL('./.data/threads.json', import.meta.url)
-class PersistentThreads extends Map {
-  constructor() {
-    super()
-    try {
-      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(THREADS_FILE, 'utf8')) ?? {})) {
-        super.set(k, v)
-      }
-    } catch {}
-  }
-  persist() {
-    clearTimeout(this._t)
-    this._t = setTimeout(() => {
-      try {
-        fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-        // cap persisted threads so the file can't grow unbounded
-        const entries = [...this.entries()]
-          .sort((a, b) => (b[1].updatedAt ?? 0) - (a[1].updatedAt ?? 0))
-          .slice(0, 100)
-        fs.writeFileSync(THREADS_FILE, JSON.stringify(entries))
-      } catch {}
-    }, 250)
-  }
-  set(k, v) { super.set(k, v); this.persist(); return this }
-  delete(k) { super.delete(k); this.persist(); return true }
+const threads = new Map()
+async function hydrateThreads() {
+  const stored = await loadScope('threads')
+  for (const [k, v] of Object.entries(stored)) threads.set(k, v)
 }
-const threads = new PersistentThreads()
+function persistThreads() {
+  const entries = [...threads.entries()]
+    .sort((a, b) => (b[1].updatedAt ?? 0) - (a[1].updatedAt ?? 0))
+    .slice(0, 100)
+  saveScope('threads', Object.fromEntries(entries))
+}
+await hydrateThreads()
+const _ts = threads.set.bind(threads)
+threads.set = (k, v) => { _ts(k, v); persistThreads(); return threads }
+const _td = threads.delete.bind(threads)
+threads.delete = (k) => { const d = _td(k); persistThreads(); return d }
 
 /** Create a thread for a session (or return the existing current one). */
 function threadFor(sessionId) {
@@ -516,42 +498,24 @@ function threadAppend(sessionId, role, content) {
 // Activity — append-only feed of metered/economic events (the mempool
 // promoted to a full page). Also powers the sidebar ticker.
 // ---------------------------------------------------------------------------
-const ACTIVITY_FILE = new URL('./.data/activity.json', import.meta.url)
-let activity = []
-try {
-  activity = JSON.parse(fs.readFileSync(ACTIVITY_FILE, 'utf8')) ?? []
-} catch {}
+let activity = (await loadScope('activity')).all ?? []
 function logActivity(entry) {
   activity.unshift({ at: Date.now(), ...entry })
   if (activity.length > 500) activity = activity.slice(0, 500)
   clearTimeout(logActivity._t)
-  logActivity._t = setTimeout(() => {
-    try {
-      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-      fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(activity))
-    } catch {}
-  }, 400)
+  logActivity._t = setTimeout(() => saveScope('activity', { all: activity }), 400)
 }
 
 // ---------------------------------------------------------------------------
 // Guardrails — the Jev-judged safety/quality evaluations from the gateway
 // config, surfaced as their own page when the backend is wired.
 // ---------------------------------------------------------------------------
-const GUARDRAILS_FILE = new URL('./.data/guardrails.json', import.meta.url)
-let guardrailResults = []
-try {
-  guardrailResults = JSON.parse(fs.readFileSync(GUARDRAILS_FILE, 'utf8')) ?? []
-} catch {}
+let guardrailResults = (await loadScope('guardrails')).all ?? []
 function logGuardrail(result) {
   guardrailResults.unshift({ at: Date.now(), ...result })
   if (guardrailResults.length > 300) guardrailResults = guardrailResults.slice(0, 300)
   clearTimeout(logGuardrail._t)
-  logGuardrail._t = setTimeout(() => {
-    try {
-      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-      fs.writeFileSync(GUARDRAILS_FILE, JSON.stringify(guardrailResults))
-    } catch {}
-  }, 400)
+  logGuardrail._t = setTimeout(() => saveScope('guardrails', { all: guardrailResults }), 400)
 }
 
 // Address shaped to the chosen wallet: MetaMask is EVM (0x-hex), Paybox and
@@ -638,6 +602,16 @@ function walletSnapshot(session) {
 }
 
 // ---------------------------------------------------------------------------
+// When mounted under a path prefix (app.route('/portal', …) in app.ts), the
+// portal derives it from the first incoming request. Static paths and the
+// Paybox OAuth redirect URI must account for it.
+let MOUNT_PREFIX = ''
+export function detectMount(c) {
+  const url = new URL(c.req.url)
+  const m = url.pathname.match(/^(\/[a-z-]+)\/(api|index\.html|app\.js|styles\.css|nav\.js|brands)/)
+  if (m && m[1] !== '/api') MOUNT_PREFIX = m[1]
+}
+
 const app = new Hono()
 app.use('/api/*', cors())
 
@@ -833,22 +807,13 @@ app.post('/api/paybox/signing-key', async (c) => {
 
 // ---- Insights: spend-over-time from the portal's own telemetry ----
 // Persisted (survives restarts) so the charts get richer over time.
-const INSIGHTS_FILE = new URL('./.data/insights.json', import.meta.url)
-let insightEvents = []
-try {
-  insightEvents = JSON.parse(fs.readFileSync(INSIGHTS_FILE, 'utf8'))
-  if (!Array.isArray(insightEvents)) insightEvents = []
-} catch {}
+let insightEvents = (await loadScope('insights')).all ?? []
+if (!Array.isArray(insightEvents)) insightEvents = []
 function recordInsight(e) {
   insightEvents.push({ ts: Date.now(), ...e })
   if (insightEvents.length > 5000) insightEvents = insightEvents.slice(-5000)
   clearTimeout(recordInsight._t)
-  recordInsight._t = setTimeout(() => {
-    try {
-      fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-      fs.writeFileSync(INSIGHTS_FILE, JSON.stringify(insightEvents))
-    } catch {}
-  }, 500)
+  recordInsight._t = setTimeout(() => saveScope('insights', { all: insightEvents }), 400)
 }
 
 app.get('/api/insights', (c) => {
@@ -1996,7 +1961,14 @@ const STATIC = {
 }
 
 app.get('*', async (c) => {
-  const pathname = new URL(c.req.url).pathname
+  // Mounted under a prefix (e.g. /portal on Vercel): routes are registered
+  // relative to the mount via app.route() — Hono strips the prefix — but the
+  // catch-all sees the FULL path, so strip the mount prefix here too.
+  const mount = MOUNT_PREFIX ?? ''
+  let pathname = new URL(c.req.url).pathname
+  if (mount && pathname.startsWith(mount) && !pathname.startsWith(`${mount}/api`)) {
+    pathname = pathname.slice(mount.length) || '/'
+  }
   // Brand logos: serve anything under public/brands as an SVG.
   if (pathname.startsWith('/brands/') && pathname.endsWith('.svg')) {
     const name = pathname.replace('/brands/', '')

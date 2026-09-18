@@ -69,7 +69,7 @@ requestAnimationFrame(() => glideTo(document.querySelector('.navrail-opt.active'
 async function renderHistory() {
   const body = $('history-body')
   body.innerHTML = '<div class="page-loading">Loading threads…</div>'
-  const { threads } = await fetch('/api/threads').then((r) => r.json()).catch(() => ({ threads: [] }))
+  const { threads } = await fetch('api/threads').then((r) => r.json()).catch(() => ({ threads: [] }))
   if (!threads?.length) {
     body.innerHTML = '<div class="page-empty">No threads yet — send a message in Chat.</div>'
     return
@@ -99,14 +99,14 @@ async function renderHistory() {
   for (const del of body.querySelectorAll('.thread-del')) {
     del.addEventListener('click', async (e) => {
       e.stopPropagation()
-      await fetch('/api/threads/' + encodeURIComponent(del.dataset.id), { method: 'DELETE' })
+      await fetch('api/threads/' + encodeURIComponent(del.dataset.id), { method: 'DELETE' })
       renderHistory()
     })
   }
 }
 
 async function openThread(id) {
-  const t = await fetch('/api/threads/' + encodeURIComponent(id)).then((r) => r.json()).catch(() => null)
+  const t = await fetch('api/threads/' + encodeURIComponent(id)).then((r) => r.json()).catch(() => null)
   if (!t?.messages) return
   // Rehydrate into the Chat view's state via its own event contract.
   window.dispatchEvent(new CustomEvent('portal:open-thread', { detail: t }))
@@ -119,7 +119,7 @@ async function openThread(id) {
 async function renderActivity() {
   const body = $('activity-body')
   body.innerHTML = '<div class="page-loading">Loading activity…</div>'
-  const { events } = await fetch('/api/activity?limit=150').then((r) => r.json()).catch(() => ({ events: [] }))
+  const { events } = await fetch('api/activity?limit=150').then((r) => r.json()).catch(() => ({ events: [] }))
   if (!events?.length) {
     body.innerHTML = '<div class="page-empty">No metered events yet — send a message or ask a decision.</div>'
     return
@@ -152,7 +152,7 @@ function eventDetail(e) {
 async function renderGuardrails() {
   const body = $('guardrails-body')
   body.innerHTML = '<div class="page-loading">Loading evaluations…</div>'
-  const { live, model, results } = await fetch('/api/guardrails').then((r) => r.json()).catch(() => ({}))
+  const { live, model, results } = await fetch('api/guardrails').then((r) => r.json()).catch(() => ({}))
   const banner = live
     ? `<div class="page-note">Judged live by <span class="mono">${esc(model)}</span>.</div>`
     : `<div class="page-note">Backend is the offline stub (set <span class="mono">TYPESAFE_API_KEY</span> for live Jev judging). Results below appear once the gateway's guardrails config reports evaluations.</div>`
@@ -182,7 +182,7 @@ async function renderGuardrails() {
 async function renderSettings() {
   const body = $('settings-body')
   body.innerHTML = '<div class="page-loading">Loading…</div>'
-  const s = await fetch('/api/settings').then((r) => r.json()).catch(() => null)
+  const s = await fetch('api/settings').then((r) => r.json()).catch(() => null)
   if (!s) {
     body.innerHTML = '<div class="page-empty">Could not load settings.</div>'
     return

@@ -47,23 +47,13 @@ async function registerClient(meta, clientName, redirectUri) {
 // Persist dynamic-client registrations per origin: registering a throwaway
 // client on every connect leads Paybox to revoke the account's clients
 // ("client is revoked"). One stable, reused client per origin instead.
-import fs from 'node:fs'
-const CLIENT_STORE = new URL('./.data/paybox-clients.json', import.meta.url)
-function loadClients() {
-  try { return JSON.parse(fs.readFileSync(CLIENT_STORE, 'utf8')) ?? {} } catch { return {} }
-}
-function saveClients(map) {
-  try {
-    fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-    fs.writeFileSync(CLIENT_STORE, JSON.stringify(map))
-  } catch {}
-}
-const registeredClients = loadClients()
+import { loadScope, saveScope } from './portal-store.mjs'
+const registeredClients = await loadScope('paybox-clients')
 
-export async function startConnect(origin) {
+export async function startConnect(origin, prefix = '') {
   const baseUrl = payboxApiBase()
   const meta = await metadata(baseUrl)
-  const redirectUri = `${origin}/api/paybox/connect/callback`
+  const redirectUri = `${origin}${prefix}/api/paybox/connect/callback`
   let clientId = registeredClients[origin]
   if (clientId) {
     // Validate the stored client still exists; a revoked/deleted one 404s.
@@ -75,7 +65,7 @@ export async function startConnect(origin) {
   if (!clientId) {
     clientId = await registerClient(meta, process.env.PAYBOX_CLIENT_NAME ?? 'Shipyard Chat Portal', redirectUri)
     registeredClients[origin] = clientId
-    saveClients(registeredClients)
+    saveScope('paybox-clients', registeredClients)
   }
   const { verifier, challenge } = pkce()
   const state = base64url(randomBytes(16))

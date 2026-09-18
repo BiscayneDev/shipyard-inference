@@ -58,7 +58,7 @@ async function init() {
   // x402 wallet-pay: when the portal bills per message (upto), the prepaid
   // balance widget is meaningless — payment escrows from the connected
   // wallet on each message. Default to paid mode and show that instead.
-  const UPTO = await fetch('/api/upto-config')
+  const UPTO = await fetch('api/upto-config')
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null)
   if (UPTO?.enabled) {
@@ -80,7 +80,7 @@ async function init() {
     const btn = $('signkey-save')
     btn.textContent = '…'
     try {
-      const r = await (await fetch('/api/paybox/signing-key', {
+      const r = await (await fetch('api/paybox/signing-key', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ signingKey: key }),
@@ -287,7 +287,7 @@ async function connectWallet(wallet = 'paybox') {
     return connectError('MetaMask is EVM — this rail settles USDC on Solana. Use Phantom or Paybox.')
   }
 
-  const res = await fetch('/api/wallet/connect', {
+  const res = await fetch('api/wallet/connect', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId: state.sessionId, wallet, address }),
@@ -342,15 +342,15 @@ async function topUp(amountUsd) {
     if (state.wallet === 'phantom' && state.usepodToken) {
       // Real on-chain deposit: server builds → Phantom signs in-browser → server submits.
       toggle.textContent = 'building…'
-      const built = await postJSON('/api/wallet/deposit/build', { sessionId: state.sessionId, amountUsd })
+      const built = await postJSON('api/wallet/deposit/build', { sessionId: state.sessionId, amountUsd })
       if (built.error) return fail(built.error)
       toggle.textContent = 'approve in Phantom…'
       const signedTransactionBase64 = await window.ShipyardWallet.signTransactionBase64(built.transactionBase64)
       toggle.textContent = 'submitting…'
-      r = await postJSON('/api/wallet/deposit/submit', { sessionId: state.sessionId, signedTransactionBase64 })
+      r = await postJSON('api/wallet/deposit/submit', { sessionId: state.sessionId, signedTransactionBase64 })
     } else {
       toggle.textContent = 'depositing…'
-      r = await postJSON('/api/wallet/topup', { sessionId: state.sessionId, amountUsd })
+      r = await postJSON('api/wallet/topup', { sessionId: state.sessionId, amountUsd })
     }
     if (r.wallet) applyWallet(r.wallet)
     if (r.error) return fail(r.error)
@@ -406,7 +406,7 @@ function applyWallet(w) {
   // Paybox: show the connected wallet's address + USDC balance, and surface
   // the signing-key step when in-process signing isn't enabled yet.
   if (state.wallet === 'paybox') {
-    fetch('/api/paybox/wallet')
+    fetch('api/paybox/wallet')
       .then((x) => x.json())
       .then((r) => {
         if (r.address) {
@@ -521,16 +521,16 @@ async function runTurn() {
         mode: state.inferenceMode,
       }),
     }
-    let res = await fetch('/api/chat', chatInit)
+    let res = await fetch('api/chat', chatInit)
     // x402 `upto`: a keyless 402 means this message needs a wallet. Pay it
     // in-browser — Phantom signs the channel open, key material never leaves
     // the wallet, and the retry carries the payment header.
     if (res.status === 402 && window.ShipyardUpto?.hasPhantom()) {
       try {
-        const cfg = await (await fetch('/api/upto-config')).json()
+        const cfg = await (await fetch('api/upto-config')).json()
         if (cfg?.enabled) {
           startLoader(contentEl, 'Paying via wallet…')
-          res = await window.ShipyardUpto.payAndRetry('/api/chat', chatInit, cfg.rpcUrl)
+          res = await window.ShipyardUpto.payAndRetry('api/chat', chatInit, cfg.rpcUrl)
         }
       } catch (payErr) {
         throw new Error(`wallet payment failed: ${payErr.message}`)
@@ -692,7 +692,7 @@ function renderInsights(r) {
   if (!r.messages) models.innerHTML = '<div class="muted" style="font-size:12px">no data yet</div>'
 }
 async function refreshInsights() {
-  try { renderInsights(await (await fetch('/api/insights')).json()) } catch {}
+  try { renderInsights(await (await fetch('api/insights')).json()) } catch {}
 }
 function bindInsightPager() {
   const show = (n) => {
@@ -711,7 +711,7 @@ async function settle(assistant) {
   if (!state.sessionId) return
   const t0 = performance.now()
   try {
-    const r = await (await fetch('/api/settle', {
+    const r = await (await fetch('api/settle', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: state.sessionId }),
@@ -988,7 +988,7 @@ async function recordClick() {
   const p = state.placement
   if (!p) return
   try {
-    const res = await fetch('/api/tender/click', {
+    const res = await fetch('api/tender/click', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: state.sessionId, requestId: p.requestId, placementId: p.placementId }),
@@ -1011,7 +1011,7 @@ async function cashOut() {
   const btn = $('cashout')
   btn.disabled = true
   try {
-    const res = await fetch('/api/tender/payout', {
+    const res = await fetch('api/tender/payout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: state.sessionId }),

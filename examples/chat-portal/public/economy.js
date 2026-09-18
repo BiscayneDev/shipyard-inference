@@ -172,7 +172,7 @@ async function fetchPreview(hint, draft) {
   previewAbort?.abort()
   previewAbort = new AbortController()
   try {
-    const res = await fetch('/api/route-preview', {
+    const res = await fetch('api/route-preview', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: draft }] }),

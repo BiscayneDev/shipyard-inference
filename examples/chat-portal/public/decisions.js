@@ -200,7 +200,7 @@ $('dec-ask').addEventListener('click', async () => {
   $('dec-ask').disabled = true
   $('dec-ask').textContent = 'Churning…'
   try {
-    const res = await fetch('/api/decisions', {
+    const res = await fetch('api/decisions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ state, questions: qobj, sessionId: localStorage.getItem('portal.session') }),
@@ -345,7 +345,7 @@ function answerCard(key, q, ans) {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-fetch('/api/decisions/config')
+fetch('api/decisions/config')
   .then((r) => (r.ok ? r.json() : null))
   .then((c) => {
     if (!c) return
