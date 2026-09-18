@@ -44,6 +44,7 @@ import {
   createStubDecisionProvider,
   createChainedDecisionProvider,
   MemoryDecisionFeedback,
+  SupabaseDecisionFeedback,
   type CampaignStore,
 } from './dist/index.js'
 import {
@@ -316,9 +317,16 @@ const jevDecisionProvider = typesafeKey || openRouterKey ? jevChain : undefined
 
 // Judgment loop: joins Jev tier decisions with guardrail quality outcomes per
 // request; GET /v1/decisions/feedback reports per-tier quality/confidence,
-// Jev fallbacks, cache hits, and decision cost. In-memory (per-instance on
-// serverless) — the calibration view for the current warm instance.
-const decisionFeedback = new MemoryDecisionFeedback()
+// Jev fallbacks, cache hits, and decision cost. Persisted to Supabase when
+// configured (cross-instance, survives cold starts; writes kept alive with
+// waitUntil), else in-memory per-instance.
+const decisionFeedback =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseDecisionFeedback({
+        url: process.env.SUPABASE_URL,
+        key: process.env.SUPABASE_SERVICE_KEY,
+      })
+    : new MemoryDecisionFeedback()
 
 const gateway = createGatewayApp({
   candidates,

@@ -316,11 +316,27 @@ function evaluateGuardrails(
         flagged,
         judgedBy: res.model,
       }
-      config.decisionFeedback?.recordGuardrail(result)
+      const recorded = Promise.resolve(
+        config.decisionFeedback?.recordGuardrail(result),
+      ).catch(() => {})
+      keepAlive(recorded)
       g.onResult?.(result)
     })
     .catch(() => {
       // observe-only: a down guardrail backend is silent by design
+    })
+}
+
+/**
+ * Keep a fire-and-forget promise alive across the invocation freeze on
+ * serverless (no-op locally): persisted feedback writes must outlive the
+ * response being sent. Mirrors the chat-portal's saveScope pattern.
+ */
+function keepAlive(p: Promise<unknown>): void {
+  import('@vercel/functions')
+    .then(({ waitUntil }) => waitUntil(p))
+    .catch(() => {
+      // Not on Vercel (local dev) — the event loop keeps the write alive.
     })
 }
 
@@ -362,18 +378,22 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)
       if (event.type === 'tier_decided' && ctx?.id && config.decisionFeedback) {
-        config.decisionFeedback.recordTier(ctx.id, {
-          tier: event.tier,
-          source: event.source,
-          ...(event.jevTier !== undefined ? { jevTier: event.jevTier } : {}),
-          ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
-          ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
-          ...(event.needsReasoning !== undefined ? { needsReasoning: event.needsReasoning } : {}),
-          ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
-          ...(event.decidedBy !== undefined ? { decidedBy: event.decidedBy } : {}),
-          ...(event.usage ? { usage: event.usage } : {}),
-          ...(event.cached !== undefined ? { cached: event.cached } : {}),
-        })
+        keepAlive(
+          Promise.resolve(
+            config.decisionFeedback.recordTier(ctx.id, {
+              tier: event.tier,
+              source: event.source,
+              ...(event.jevTier !== undefined ? { jevTier: event.jevTier } : {}),
+              ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
+              ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
+              ...(event.needsReasoning !== undefined ? { needsReasoning: event.needsReasoning } : {}),
+              ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
+              ...(event.decidedBy !== undefined ? { decidedBy: event.decidedBy } : {}),
+              ...(event.usage ? { usage: event.usage } : {}),
+              ...(event.cached !== undefined ? { cached: event.cached } : {}),
+            }),
+          ).catch(() => {}),
+        )
       }
       // Fire-and-forget: the reporter's bounded queue never throws or blocks.
       config.telemetry?.onEvent(event)
@@ -776,12 +796,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   // Judgment-loop calibration: per-tier quality (does economy routing actually
   // degrade answers?), Jev fallback rate/latency/cost, cache hits. Read-only
   // aggregate; enabled only when a `decisionFeedback` recorder is configured.
-  app.get('/v1/decisions/feedback', (c) => {
-    const report = config.decisionFeedback?.report?.()
-    if (!report) {
+  app.get('/v1/decisions/feedback', async (c) => {
+    if (!config.decisionFeedback?.report) {
       return errorJson(c, 404, 'Decision feedback is not enabled on this gateway', 'invalid_request_error')
     }
-    return c.json(report)
+    try {
+      const report = await config.decisionFeedback.report()
+      return c.json(report)
+    } catch {
+      return errorJson(c, 503, 'Decision feedback report failed', 'api_error')
+    }
   })
 
   app.post('/v1/decisions', async (c) => {

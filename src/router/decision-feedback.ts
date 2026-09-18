@@ -57,10 +57,11 @@ export interface DecisionFeedbackReport {
 
 /** Consumed by the gateway: receives tier decisions and guardrail outcomes keyed by request id. */
 export interface DecisionFeedbackRecorder {
-  recordTier(requestId: string, record: TierDecisionRecord): void
-  recordGuardrail(result: GuardrailResult): void
-  /** Optional aggregated report, surfaced at `GET /v1/decisions/feedback`. */
-  report?(): DecisionFeedbackReport
+  /** May be sync or async (a persisted recorder writes through; the gateway keeps the promise alive on serverless). */
+  recordTier(requestId: string, record: TierDecisionRecord): void | Promise<void>
+  recordGuardrail(result: GuardrailResult): void | Promise<void>
+  /** Aggregated report, surfaced at `GET /v1/decisions/feedback`. May be async (persisted recorders query their store). */
+  report?(): DecisionFeedbackReport | Promise<DecisionFeedbackReport>
 }
 
 /**

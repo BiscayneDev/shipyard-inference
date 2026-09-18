@@ -43,6 +43,8 @@ export type {
   TierDecisionRecord,
   TierFeedbackTotals,
 } from './decision-feedback.js'
+export { SupabaseDecisionFeedback, SUPABASE_DECISION_FEEDBACK_SCHEMA } from './supabase-decision-feedback.js'
+export type { SupabaseDecisionFeedbackOptions } from './supabase-decision-feedback.js'
 export { estimateInputTokens } from './estimate.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
 export { backoffDelayMs, retryAfterMs, nextRetryDelayMs } from './retry.js'
