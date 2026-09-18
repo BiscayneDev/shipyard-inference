@@ -27,6 +27,7 @@ import {
   Router,
   costOptimized,
   createTypeSafeProvider,
+  createOpenRouterDecisionProvider,
   createStubDecisionProvider,
   createUsePodProvider,
   createWalletInference,
@@ -276,10 +277,20 @@ const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
 // when TYPESAFE_API_KEY is set; otherwise the offline stub (same wire shape,
 // neutral answers) so the surface runs with zero keys.
 // ---------------------------------------------------------------------------
+// Decision backend chain: native TypeSafe early-access key first, then Jev
+// via OpenRouter's unified decisions API (same wire shape, same pricing, no
+// waitlist — just an OPENROUTER_API_KEY), else the offline stub.
 const decisionProvider = process.env.TYPESAFE_API_KEY
   ? createTypeSafeProvider({ apiKey: process.env.TYPESAFE_API_KEY })
-  : createStubDecisionProvider({ id: 'stub-typesafe' })
-const DECISIONS_LIVE = Boolean(process.env.TYPESAFE_API_KEY)
+  : process.env.OPENROUTER_API_KEY
+    ? createOpenRouterDecisionProvider({ apiKey: process.env.OPENROUTER_API_KEY })
+    : createStubDecisionProvider({ id: 'stub-typesafe' })
+const DECISIONS_LIVE = Boolean(process.env.TYPESAFE_API_KEY ?? process.env.OPENROUTER_API_KEY)
+const DECISIONS_BACKEND = process.env.TYPESAFE_API_KEY
+  ? 'typesafe'
+  : process.env.OPENROUTER_API_KEY
+    ? 'openrouter'
+    : 'stub'
 /** TypeSafe list pricing: $0.042/MTok input, output free — the metered basis. */
 const JEV_INPUT_PER_MTOK = 0.042
 function decisionCostUsd(usage) {
@@ -1447,6 +1458,7 @@ app.get('/api/campaigns', (c) =>
 app.get('/api/decisions/config', (c) =>
   c.json({
     live: DECISIONS_LIVE,
+    backend: DECISIONS_BACKEND,
     model: DECISIONS_LIVE ? 'jev-latest' : 'stub-latest',
     inputPerMTok: JEV_INPUT_PER_MTOK,
   }),

@@ -14,5 +14,7 @@ export type {
 } from './types.js'
 export { createTypeSafeProvider, TypeSafeError } from './typesafe.js'
 export type { TypeSafeProviderOptions } from './typesafe.js'
+export { createOpenRouterDecisionProvider, OpenRouterDecisionError } from './openrouter.js'
+export type { OpenRouterDecisionProviderOptions } from './openrouter.js'
 export { createStubDecisionProvider } from './stub.js'
 export type { StubDecisionProviderOptions } from './stub.js'
