@@ -43,6 +43,7 @@ import {
   createOpenRouterDecisionProvider,
   createStubDecisionProvider,
   createChainedDecisionProvider,
+  MemoryDecisionFeedback,
   type CampaignStore,
 } from './dist/index.js'
 import {
@@ -313,6 +314,12 @@ const jevChain = createChainedDecisionProvider({
 })
 const jevDecisionProvider = typesafeKey || openRouterKey ? jevChain : undefined
 
+// Judgment loop: joins Jev tier decisions with guardrail quality outcomes per
+// request; GET /v1/decisions/feedback reports per-tier quality/confidence,
+// Jev fallbacks, cache hits, and decision cost. In-memory (per-instance on
+// serverless) — the calibration view for the current warm instance.
+const decisionFeedback = new MemoryDecisionFeedback()
+
 const gateway = createGatewayApp({
   candidates,
   strategy: costOptimized(),
@@ -322,10 +329,20 @@ const gateway = createGatewayApp({
   // topic, complexity, reasoning depth), else the structural heuristic
   // (tools/large prompts ⇒ standard, frontier work ⇒ frontier).
   autoTier: jevDecisionProvider
-    ? createJevTierInferrer({ provider: jevDecisionProvider, combine: 'max' })
+    ? createJevTierInferrer({
+        provider: jevDecisionProvider,
+        combine: 'max',
+        // Reuse identical judgments for 5 min — no decision call, latency, or
+        // Jev input cost for repeated/continued request states.
+        cacheTtlMs: 300_000,
+      })
     : true,
   // The typed-decision product surface — live Jev through the same key.
   ...(jevDecisionProvider ? { decisions: { provider: jevDecisionProvider } } : {}),
+  // Observe-only output guardrails: quality + safety scored by the same Jev
+  // chain after every completion, fire-and-forget. Feeds the judgment loop.
+  ...(jevDecisionProvider ? { guardrails: { provider: jevChain } } : {}),
+  decisionFeedback,
   baselineModel,
   pricingOverrides,
   // Advertise the full catalog plus the `auto` alias in GET /v1/models.
