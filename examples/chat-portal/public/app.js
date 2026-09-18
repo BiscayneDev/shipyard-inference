@@ -527,7 +527,14 @@ async function runTurn() {
     // Only a keyless 402 challenge (accepts[…]) is meant for in-browser pay.
     if (res.status === 402) {
       const peek = await res.clone().json().catch(() => null)
-      if (peek?.error) throw new Error(peek.error)
+      if (peek?.error) {
+        const err = new Error(peek.error)
+        // A revoked Paybox signing key is recoverable in-place: the server
+        // dropped the dead key, so refresh the wallet sidebar to re-render
+        // the agent-key input for the new one.
+        err.revokedKey = Boolean(peek.revokedKey) || /revoked/i.test(peek.error)
+        throw err
+      }
     }
     // x402 `upto`: a keyless 402 means this message needs a wallet. Pay it
     // in-browser — Phantom signs the channel open, key material never leaves
@@ -602,6 +609,9 @@ async function runTurn() {
   } catch (err) {
     contentEl.innerHTML = renderMarkdown(acc)
     renderError(assistant, err.message, { paymentRequired: err.paymentRequired })
+    // Revoked Paybox key: the server just dropped the dead signer — pull fresh
+    // wallet state so the sidebar re-renders the agent-key input for the new one.
+    if (err.revokedKey) await refreshWallet()
   } finally {
     contentEl.querySelector('.cursor')?.remove()
     contentEl.classList.remove('streaming')

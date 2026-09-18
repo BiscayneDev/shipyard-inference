@@ -1494,7 +1494,15 @@ app.post('/api/decisions', async (c) => {
       })
     } catch (err) {
       console.error('[portal] Paybox payment failed (decisions):', err)
-      return c.json({ error: `Paybox payment failed: ${err instanceof Error ? err.message : String(err)}` }, 402)
+      const raw = err instanceof Error ? err.message : String(err)
+      // Same recovery as chat: drop a revoked signer so the key input
+      // reappears instead of failing forever with a dead key.
+      const revoked = /revoked/i.test(raw)
+      if (revoked && session?.paybox) {
+        delete session.paybox.signingKey
+        try { sessions.set(session.id, session) } catch { /* best effort */ }
+      }
+      return c.json({ error: `Paybox payment failed: ${raw}`, revokedKey: revoked }, 402)
     }
   } else if (upto) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
@@ -1679,13 +1687,20 @@ app.post('/api/chat', async (c) => {
       console.error('[portal] Paybox payment failed:', err)
       const raw = err instanceof Error ? err.message : String(err)
       // A revoked agent signer means the pbxk1 key is dead server-side —
-      // usually collateral from an OAuth-client revocation. Point the user
+      // usually collateral from an OAuth-client revocation. Drop it from the
+      // session so canSign flips false and the key input REAPPEARS (otherwise
+      // the dead key still "exists" and the user is stuck), then point them
       // at regenerating instead of a cryptic SDK error.
-      const hint = /revoked/i.test(raw)
-        ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then re-enter it here (the key input reappears when the old one fails).`
+      const revoked = /revoked/i.test(raw)
+      if (revoked && chatSession?.paybox) {
+        delete chatSession.paybox.signingKey
+        try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
+      }
+      const hint = revoked
+        ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then re-enter it in the sidebar (the key input has reappeared).`
         : raw
       return c.json(
-        { error: `Paybox payment failed: ${hint}` },
+        { error: `Paybox payment failed: ${hint}`, revokedKey: revoked },
         402,
       )
     }
