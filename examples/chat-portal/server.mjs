@@ -1796,6 +1796,7 @@ const STATIC = {
   '/beautiful.js': ['beautiful.js', 'text/javascript; charset=utf-8'],
   '/decisions.js': ['decisions.js', 'text/javascript; charset=utf-8'],
   '/economy.js': ['economy.js', 'text/javascript; charset=utf-8'],
+  '/wallet-sheet.js': ['wallet-sheet.js', 'text/javascript; charset=utf-8'],
   '/wallet-bundle.js': ['wallet-bundle.js', 'text/javascript; charset=utf-8'],
   '/upto-bundle.js': ['upto-bundle.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],

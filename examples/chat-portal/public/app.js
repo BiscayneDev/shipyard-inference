@@ -2,6 +2,7 @@
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
 import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
 import { initSpendTicker, initRoutePreview, initSavingsToast, renderWaterfall } from './economy.js'
+import { initWalletSheet } from './wallet-sheet.js'
 const $ = (id) => document.getElementById(id)
 const fmt = (n, d = 6) => '$' + (Number(n) || 0).toFixed(d)
 
@@ -30,6 +31,10 @@ async function init() {
   initSpendTicker()
   initRoutePreview()
   initSavingsToast()
+  // Wallet Sheet (wallet-sheet.js): the connect-wallet moment.
+  initWalletSheet()
+  // The sheet hands the chosen wallet back via this event.
+  document.addEventListener('portal:connect-wallet', (e) => connectWallet(e.detail))
   // The Paybox OAuth callback appends ?portalSession=<id> — adopt it into
   // localStorage so the UI picks up the connected session after the redirect.
   const fromUrl = new URLSearchParams(location.search).get('portalSession')
