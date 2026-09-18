@@ -952,6 +952,8 @@ portalMount.all('*', async (c) => {
   const url = new URL(c.req.url)
   const path = url.pathname.replace(/^\/portal/, '') || '/'
   const req = new Request(new URL(path + url.search, url.origin), c.req.raw)
+  // Tell the portal it's mounted (OAuth redirect URIs need the /portal prefix)
+  req.headers.set('x-portal-prefix', '/portal')
   const res = await portalApp.fetch(req)
   const location = res.headers.get('location')
   if (location && location.startsWith('/')) {

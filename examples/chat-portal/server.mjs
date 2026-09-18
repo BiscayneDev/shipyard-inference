@@ -617,6 +617,13 @@ function walletSnapshot(session) {
 // Paybox OAuth redirect URI must account for it.
 let MOUNT_PREFIX = ''
 export function detectMount(c) {
+  // app.ts forwards the mount prefix via header (it strips the path prefix
+  // itself); the OAuth redirect URI must include it.
+  const header = c.req.header('x-portal-prefix')
+  if (header) {
+    MOUNT_PREFIX = header
+    return
+  }
   const url = new URL(c.req.url)
   const m = url.pathname.match(/^(\/[a-z-]+)\/(api|index\.html|app\.js|styles\.css|nav\.js|brands)/)
   const m2 = !m && url.pathname.match(/^(\/[a-z-]+)\/?$/)
