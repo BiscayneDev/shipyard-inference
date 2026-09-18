@@ -518,8 +518,18 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             uptoPayment = await settleUptoSafe(config, upto, charge)
           }
           if (exposeCost && (ctx.model || ctx.costUsd !== undefined)) {
+            // Cost telemetry rides on a VALID chunk shape (empty choices — the
+            // same shape OpenAI uses for usage-only chunks). A bare
+            // {x_shipyard} frame fails strict client validation (e.g. the
+            // Vercel AI SDK's OpenAI provider logs AI_TypeValidationError per
+            // response), while extra keys on a valid chunk pass through.
             await stream.writeSSE({
               data: JSON.stringify({
+                id,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: body.model,
+                choices: [],
                 x_shipyard: {
                   model: ctx.model,
                   provider: ctx.provider,
