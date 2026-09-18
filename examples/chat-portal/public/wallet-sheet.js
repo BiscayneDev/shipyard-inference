@@ -13,7 +13,8 @@ const esc = (s) =>
 
 const PAYBOX = {
   id: 'paybox',
-  icon: '◈',
+  logo: './brands/paybox-app-icon.svg',
+  logoDark: true,
   name: 'Paybox',
   promise: 'Shipyard\'s USDC smart account',
   whisper: 'Passkey login, instant signing with an agent key, funds each request within your grant.',
@@ -23,7 +24,7 @@ const PAYBOX = {
 const OTHER_WALLETS = [
   {
     id: 'phantom',
-    icon: '◇',
+    logo: './brands/phantom-ghost.svg',
     name: 'Phantom',
     promise: 'The most popular Solana wallet',
     whisper: 'Non-custodial — you approve every channel open in the wallet extension.',
@@ -31,7 +32,7 @@ const OTHER_WALLETS = [
   },
   {
     id: 'metamask',
-    icon: '▲',
+    logo: './brands/metamask-fox.svg',
     name: 'MetaMask',
     promise: 'EVM wallet — Ethereum & friends',
     whisper: 'This rail settles USDC on Solana; MetaMask support is on the roadmap.',
@@ -39,7 +40,7 @@ const OTHER_WALLETS = [
   },
   {
     id: 'solflare',
-    icon: '✳',
+    logo: './brands/solflare.svg',
     name: 'Solflare',
     promise: 'Solana web + extension wallet',
     whisper: 'Coming soon to this portal — the Solana rail is already live.',
@@ -48,7 +49,7 @@ const OTHER_WALLETS = [
   },
   {
     id: 'backpack',
-    icon: '▣',
+    logo: './brands/backpack.svg',
     name: 'Backpack',
     promise: 'xNFT wallet by the Mad Lads crew',
     whisper: 'Coming soon to this portal — the Solana rail is already live.',
@@ -57,7 +58,7 @@ const OTHER_WALLETS = [
   },
   {
     id: 'ledger',
-    icon: '⬢',
+    logo: './brands/ledger.svg',
     name: 'Ledger',
     promise: 'Hardware wallet — cold storage',
     whisper: 'Coming soon — pair via a Solana connector.',
@@ -86,7 +87,9 @@ function walletCard(w, i, opts = {}) {
     : ''
   return `
     <button class="wsheet-wallet${w.soon ? ' soon' : ''}" data-wallet="${w.id}" style="--i:${i}">
-      <span class="wsheet-icon">${w.icon}</span>
+      <span class="wsheet-icon${w.logoDark ? ' light-tile' : ''}">
+        ${w.logo ? `<img class="wsheet-logo" src="${w.logo}" alt="${esc(w.name)} logo" draggable="false" />` : ''}
+      </span>
       <span class="wsheet-main">
         <span class="wsheet-name-row">
           <span class="wsheet-name">${esc(w.name)}</span>
@@ -127,7 +130,11 @@ function buildSheet() {
             ${walletCard(PAYBOX, 0)}
           </div>
           <button class="wsheet-other" id="wsheet-other" style="--i:1">
-            <span class="wsheet-other-icon">◇ ▲ ✳</span>
+            <span class="wsheet-other-icon">
+              <img src="./brands/phantom-ghost.svg" alt="" draggable="false" />
+              <img src="./brands/metamask-fox.svg" alt="" draggable="false" />
+              <img src="./brands/solflare.svg" alt="" draggable="false" />
+            </span>
             <span class="wsheet-main">
               <span class="wsheet-name-row"><span class="wsheet-name">Other wallets</span></span>
               <span class="wsheet-promise">Phantom, MetaMask, Solflare, Backpack, Ledger…</span>

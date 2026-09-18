@@ -1803,7 +1803,19 @@ const STATIC = {
 }
 
 app.get('*', async (c) => {
-  const entry = STATIC[new URL(c.req.url).pathname]
+  const pathname = new URL(c.req.url).pathname
+  // Brand logos: serve anything under public/brands as an SVG.
+  if (pathname.startsWith('/brands/') && pathname.endsWith('.svg')) {
+    const name = pathname.replace('/brands/', '')
+    if (!/^[\w.-]+$/.test(name)) return c.notFound() // no traversal
+    try {
+      const buf = await readFile(join(HERE, 'public', 'brands', name))
+      return c.body(buf, 200, { 'content-type': 'image/svg+xml' })
+    } catch {
+      return c.notFound()
+    }
+  }
+  const entry = STATIC[pathname]
   if (!entry) return c.notFound()
   const [file, type] = entry
   try {

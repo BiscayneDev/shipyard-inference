@@ -993,3 +993,10 @@ main.dec { display: flex; flex-direction: column; }
 .wsheet-wallet.soon { cursor: default; }
 .wsheet-wallet.soon .wsheet-icon, .wsheet-wallet.soon .wsheet-name, .wsheet-wallet.soon .wsheet-promise { opacity: .55; }
 .wsheet-wallet.soon:hover { transform: none; border-color: var(--hair); background: var(--glass); }
+
+/* ---------- wallet sheet: real brand logos ---------- */
+.wsheet-logo { width: 24px; height: 24px; display: block; object-fit: contain; }
+.wsheet-icon.light-tile { background: #f4f4f5; border-color: #e4e4e7; }
+.wsheet-other-icon { display: flex; align-items: center; gap: 2px; }
+.wsheet-other-icon img { width: 17px; height: 17px; object-fit: contain; display: block; }
+.wsheet-other-icon img + img { margin-left: -6px; } /* slight overlap like a stack */
