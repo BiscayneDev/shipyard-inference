@@ -10,6 +10,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["app.ts"],
+  "include": ["app.ts", "portal-mount.d.ts"],
   "exclude": ["node_modules", "dist"]
 }
