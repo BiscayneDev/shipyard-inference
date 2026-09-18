@@ -1999,9 +1999,21 @@ const MODE_NOTE = {
   usepod: 'wallet-funded · UsePod prepaid USDC',
   paybox: 'REAL inference · Paybox wallet pays per-request USDC over x402',
 }
-// Mountable export: app.ts does app.route('/portal', portal). Only boot the
-// standalone server when run directly (node server.mjs).
-export { app as portalApp }
+// Mountable export: a thin proxy that detects the mount prefix (e.g. /portal)
+// from the first request, strips it, and forwards to the root app. app.ts
+// calls portalApp.fetch(c.req.raw) with the FULL path — this proxy is what
+// makes both /portal/api/* (mounted) and /api/* (standalone) work.
+const portalApp = new Hono()
+portalApp.all('*', async (c) => {
+  detectMount(c)
+  const url = new URL(c.req.url)
+  if (MOUNT_PREFIX && url.pathname.startsWith(MOUNT_PREFIX)) {
+    url.pathname = url.pathname.slice(MOUNT_PREFIX.length) || '/'
+    return app.fetch(new Request(url, c.req.raw))
+  }
+  return app.fetch(c.req.raw)
+})
+export { portalApp }
 
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href
 if (isMain) {
