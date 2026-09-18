@@ -69,7 +69,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
-    "@solana/kit": "^5.5.1",
+    "@solana/kit": "^6.10.0",
+    "@solana/pay-kit": "^0.10.0",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "@x402/core": "^2.26.0",
@@ -117,6 +118,7 @@
     "typescript": "^5"
   },
   "overrides": {
-    "uuid": "8.3.2"
+    "uuid": "8.3.2",
+    "@solana/kit": "^6.10.0"
   }
 }

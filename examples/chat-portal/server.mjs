@@ -250,13 +250,23 @@ const uptoConfig = (() => {
 })()
 const upto = await (async () => {
   if (!uptoConfig) return undefined
-  const signer = await Signer.bytes(uptoConfig.secret)
-  return new X402Upto({
-    network: `solana_${uptoConfig.network}`,
-    operator: { signer, recipient: signer.pubkey },
-    rpcUrl: uptoConfig.rpcUrl,
-    stablecoins: [uptoConfig.mint],
-  })
+  // Env may ask for upto billing where the runtime lacks @solana/pay-kit
+  // (e.g. the Vercel function bundle). That must degrade to "billing off",
+  // never crash module init — an unguarded throw here 500s every /portal hit.
+  try {
+    const signer = await Signer.bytes(uptoConfig.secret)
+    return new X402Upto({
+      network: `solana_${uptoConfig.network}`,
+      operator: { signer, recipient: signer.pubkey },
+      rpcUrl: uptoConfig.rpcUrl,
+      stablecoins: [uptoConfig.mint],
+    })
+  } catch (err) {
+    console.warn(
+      `[portal] upto configured but init failed — x402 billing disabled: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return undefined
+  }
 })()
 const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
 
