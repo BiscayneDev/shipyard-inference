@@ -763,12 +763,18 @@ app.get('/api/paybox/connect/callback', async (c) => {
     if (!code) throw new Error('no authorization code in callback')
     if (state !== cookie(CONNECT_STATE_COOKIE)) throw new Error('OAuth state mismatch')
     const oauth = await completeConnect(url.origin, code, cookie(CONNECT_VERIFIER_COOKIE), cookie(CONNECT_CLIENT_COOKIE), MOUNT_PREFIX)
-    // Bind to (or create) this browser's session.
+    // Bind to (or create) this browser's session. NOTE: attach paybox BEFORE
+    // sessions.set() — the write-through snapshots the object at set() time,
+    // and a session persisted without tokens reads back as "not connected".
     const sid = cookie('portal.session')
     let session = sid ? sessions.get(sid) : undefined
+    const attach = (s) => {
+      s.paybox = { oauth, onRefresh: (t) => (s.paybox.oauth = t) }
+      return s
+    }
     if (!session) {
       const id = randomBytes(12).toString('hex')
-      session = {
+      session = attach({
         id,
         address: '',
         wallet: 'paybox',
@@ -780,10 +786,12 @@ app.get('/api/paybox/connect/callback', async (c) => {
         messages: 0,
         settlements: [],
         realInference: true,
-      }
+      })
       sessions.set(id, session)
+    } else {
+      attach(session)
+      sessions.set(session.id, session) // re-set → write-through with tokens
     }
-    session.paybox = { oauth, onRefresh: (t) => (session.paybox.oauth = t) }
     console.log(`[portal] Paybox connected: session=${session.id} expires=${oauth.expiresAt ? new Date(oauth.expiresAt).toISOString() : 'unknown'}`)
     for (const cookie of [
       `portal.session=${session.id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`,
