@@ -38,6 +38,7 @@ import {
   buildDepositIntent,
   verifyDeposit,
   createJevTierInferrer,
+  createTypeSafeProvider,
   createVercelGatewayDecisionProvider,
   createOpenRouterDecisionProvider,
   createStubDecisionProvider,
@@ -291,29 +292,26 @@ const pricingOverrides = Object.fromEntries(
   candidates.flatMap((c) => (c.models ?? []).map((m) => [m.model, m])),
 )
 
-// Jev-judged routing: with an AI Gateway key on the same Vercel account,
-// every `auto` request is content-judged by TypeSafe Jev (~$0.0001, 100-500ms)
-// to pick the cheapest model that clears its needed quality tier — falling
-// back to the structural heuristic on error/timeout/low confidence.
-// Provider CHAIN, not a single pick: the AI Gateway can be blocked by account
-// state (403 `customer_verification_required` until a card is on file), which
-// would otherwise 502 the /v1/decisions product route and silently no-op the
-// tier inferrer. The chain degrades: AI Gateway → OpenRouter → stub (neutral
-// answers, confidence 0 — the tier inferrer treats those as low-confidence
-// and falls back to the structural heuristic), and every response carries
-// `provider` saying which member answered.
+// Jev-judged routing: every `auto` request is content-judged by TypeSafe Jev
+// (~$0.0001, 100-500ms) to pick the cheapest model that clears its needed
+// quality tier — falling back to the structural heuristic on error/timeout/low
+// confidence.
+// Provider CHAIN, native TypeSafe first (the user-provided Jev API key) — the
+// Vercel AI Gateway is deliberately NOT in the chain (account-verification
+// blocks; we don't route Jev through Vercel). Degrades TypeSafe → OpenRouter
+// → stub (neutral answers, noul 0.5 — the tier inferrer treats those as
+// low-confidence and falls back to the structural heuristic), and every
+// response carries `provider` saying which member answered.
 const openRouterKey = process.env.OPENROUTER_API_KEY
+const typesafeKey = process.env.TYPESAFE_API_KEY
 const jevChain = createChainedDecisionProvider({
   providers: [
-    ...(process.env.AI_GATEWAY_API_KEY
-      ? [createVercelGatewayDecisionProvider({ apiKey: process.env.AI_GATEWAY_API_KEY })]
-      : []),
+    ...(typesafeKey ? [createTypeSafeProvider({ apiKey: typesafeKey })] : []),
     ...(openRouterKey ? [createOpenRouterDecisionProvider({ apiKey: openRouterKey })] : []),
     createStubDecisionProvider(),
   ],
 })
-const jevDecisionProvider =
-  process.env.AI_GATEWAY_API_KEY || openRouterKey ? jevChain : undefined
+const jevDecisionProvider = typesafeKey || openRouterKey ? jevChain : undefined
 
 const gateway = createGatewayApp({
   candidates,
