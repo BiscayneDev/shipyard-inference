@@ -8,6 +8,7 @@ import type { TelemetryReporter } from '../operator/reporter.js'
 import type { ApiKeyStore } from './keys.js'
 import type { X402Config } from './x402.js'
 import type { DecisionProvider } from '../decisions/types.js'
+import type { DecisionFeedbackRecorder } from '../router/decision-feedback.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -174,6 +175,13 @@ export interface GatewayConfig {
    * omitted. Never blocks or alters responses; results flow to `onResult`.
    */
   guardrails?: GuardrailsConfig
+  /**
+   * Judgment-loop recorder: joins `tier_decided` events with guardrail
+   * outcomes per request id and aggregates per-tier quality/confidence plus
+   * Jev fallback/latency/cost. Exposed at `GET /v1/decisions/feedback`.
+   * Use `MemoryDecisionFeedback` (in `shipyard-inference/router`).
+   */
+  decisionFeedback?: DecisionFeedbackRecorder
   /** Port for `startGateway`. Default 8787. */
   port?: number
 }

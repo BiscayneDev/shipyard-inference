@@ -36,6 +36,13 @@ export { inferTier } from './auto-tier.js'
 export type { AutoTierThresholds } from './auto-tier.js'
 export { createJevTierInferrer } from './jev-tier.js'
 export type { JevTierInferrerOptions, JevTierResult, TierDecision, AutoTierResult } from './jev-tier.js'
+export { MemoryDecisionFeedback } from './decision-feedback.js'
+export type {
+  DecisionFeedbackRecorder,
+  DecisionFeedbackReport,
+  TierDecisionRecord,
+  TierFeedbackTotals,
+} from './decision-feedback.js'
 export { estimateInputTokens } from './estimate.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
 export { backoffDelayMs, retryAfterMs, nextRetryDelayMs } from './retry.js'

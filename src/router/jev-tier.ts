@@ -1,4 +1,5 @@
 import type { LLMChatParams } from '../types.js'
+import { createHash } from 'node:crypto'
 import type { ModelTier } from './candidates.js'
 import { TIER_RANK } from './candidates.js'
 import { inferTier } from './auto-tier.js'
@@ -30,6 +31,15 @@ export interface JevTierInferrerOptions {
   /** Characters of request content sent as Jev state. Default 6000. */
   stateCharBudget?: number
   /**
+   * Cache decision calls keyed by the exact request state (system + messages +
+   * tool names + output budget). Repeated/continued requests with identical
+   * state reuse the previous judgment for free, with no latency or backend
+   * cost. Default 0 (off) — set e.g. 300000 (5 min) to enable.
+   */
+  cacheTtlMs?: number
+  /** Max cached decisions (LRU-ish FIFO). Default 512. */
+  cacheMaxEntries?: number
+  /**
    * Minimum choice confidence to accept the Jev tier; below it the structural
    * fallback applies (an unconfident guess shouldn't change routing). Default 0
    * (accept any well-formed answer).
@@ -60,6 +70,8 @@ export interface JevTierResult {
   decidedBy?: string
   /** Decision-call token usage, for per-request cost accounting. */
   usage?: { inputTokens: number; outputTokens: number }
+  /** True when the decision was served from the cache (no backend call). */
+  cached?: boolean
 }
 
 /**
@@ -85,6 +97,8 @@ export interface TierDecision {
   decidedBy?: string
   /** Decision-call token usage. */
   usage?: { inputTokens: number; outputTokens: number }
+  /** True when the decision was served from the cache (no backend call). */
+  cached?: boolean
 }
 
 /** What `autoTier` may return: a tier, or a tier with evidence. */
@@ -131,6 +145,9 @@ export function createJevTierInferrer(
   const timeoutMs = opts.timeoutMs ?? 2000
   const stateCharBudget = opts.stateCharBudget ?? 6000
   const minConfidence = opts.minConfidence ?? 0
+  const cacheTtlMs = opts.cacheTtlMs ?? 0
+  const cacheMaxEntries = opts.cacheMaxEntries ?? 512
+  const cache = cacheTtlMs > 0 ? new Map<string, { at: number; decision: TierDecision }>() : undefined
 
   function buildState(params: LLMChatParams): unknown {
     const toolNames = (params.tools ?? []).map((t) => t.name).filter(Boolean)
@@ -166,6 +183,29 @@ export function createJevTierInferrer(
   return async (params: LLMChatParams): Promise<AutoTierResult> => {
     const structuralTier = structural(params)
     const t0 = Date.now()
+    const state = JSON.stringify(buildState(params))
+    const cacheKey = `${opts.model ?? ''}:${createHash('sha256').update(state).digest('hex')}`
+    if (cache) {
+      const hit = cache.get(cacheKey)
+      if (hit && Date.now() - hit.at <= cacheTtlMs) {
+        const decision: TierDecision = { ...hit.decision, cached: true }
+        opts.onResult?.({
+          tier: decision.tier,
+          jevTier: decision.jevTier,
+          structuralTier,
+          fallback: false,
+          confidence: decision.confidence,
+          needsReasoning: decision.needsReasoning,
+          latencyMs: 0,
+          decidedBy: decision.decidedBy,
+          ...(decision.usage ? { usage: decision.usage } : {}),
+          cached: true,
+        })
+        return decision
+      }
+      if (hit) cache.delete(cacheKey)
+      if (cache.size >= cacheMaxEntries) cache.delete(cache.keys().next().value!)
+    }
     try {
       const res = await withTimeout(
         opts.provider.decide({
@@ -202,6 +242,7 @@ export function createJevTierInferrer(
         decidedBy: res.model,
         ...(res.usage ? { usage: res.usage } : {}),
       }
+      cache?.set(cacheKey, { at: Date.now(), decision })
       opts.onResult?.({ tier, jevTier, structuralTier, fallback: false, confidence: tierAnswer.confidence, ...(reasoningAnswer?.type === 'noul' ? { needsReasoning: reasoningAnswer.noul } : {}), latencyMs, decidedBy: res.model, ...(res.usage ? { usage: res.usage } : {}) })
       return decision
     } catch (error) {

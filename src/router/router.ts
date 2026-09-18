@@ -49,6 +49,8 @@ export type RouterEvent =
       latencyMs?: number
       decidedBy?: string
       usage?: { inputTokens: number; outputTokens: number }
+      /** True when the decision was served from the inferrer's cache. */
+      cached?: boolean
     }
   | {
       type: 'retry'
@@ -443,6 +445,7 @@ export class Router implements LLMProvider {
       ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
       ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
       ...(d.usage ? { usage: d.usage } : {}),
+      ...(d.cached !== undefined ? { cached: d.cached } : {}),
     })
     return { ...params, routingHints: { ...params.routingHints, tier: d.tier } }
   }
