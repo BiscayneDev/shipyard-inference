@@ -522,6 +522,13 @@ async function runTurn() {
       }),
     }
     let res = await fetch('api/chat', chatInit)
+    // A 402 with an {error} body means the SERVER-SIDE wallet payment
+    // (Paybox) failed — show that error; do NOT fall into the browser path.
+    // Only a keyless 402 challenge (accepts[…]) is meant for in-browser pay.
+    if (res.status === 402) {
+      const peek = await res.clone().json().catch(() => null)
+      if (peek?.error) throw new Error(peek.error)
+    }
     // x402 `upto`: a keyless 402 means this message needs a wallet. Pay it
     // in-browser — Phantom signs the channel open, key material never leaves
     // the wallet, and the retry carries the payment header.

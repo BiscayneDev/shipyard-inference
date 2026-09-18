@@ -189,6 +189,66 @@ export async function payboxSigner(
   return {
     publicKey,
     async signTransaction(tx: Uint8Array): Promise<Uint8Array> {
+      // Partial-signer envelope: [numSigs][sig slots][message]. Pay-kit's
+      // channel transactions compile to v0 (versioned) messages; the SDK's
+      // in-process 'solanaTransaction' path runs them through legacy
+      // `Transaction.from()`, which throws on versioned messages. For those,
+      // request `solanaMessage` (raw ed25519 over the message bytes — the
+      // same bytes a transaction signature commits to) and fill the payer's
+      // slot ourselves.
+      const numSigs = tx[0]
+      const messageBytes = tx.subarray(1 + 64 * numSigs)
+      const versioned = (messageBytes[0] & 0x80) !== 0
+
+      if (versioned) {
+        const response = await resolveResponse(
+          client,
+          await client.requestWalletSign({
+            credentialId: options.credentialId,
+            chain,
+            intent: {
+              op: 'solanaMessage',
+              address: publicKey,
+              // Raw byte values, NOT a string: the adapter UTF8-encodes
+              // strings, which corrupts binary messages.
+              message: Array.from(messageBytes),
+            },
+          } as Parameters<PayboxClient['requestWalletSign']>[0]),
+          options,
+        )
+        const out = response.output?.value
+        const hex =
+          typeof out === 'string'
+            ? out
+            : out &&
+                typeof out === 'object' &&
+                typeof (out as { signature?: unknown }).signature === 'string'
+              ? (out as { signature: string }).signature
+              : undefined
+        if (typeof hex !== 'string') {
+          throw new PaymentError(
+            `Paybox wallet sign ${response.request_id} returned no signature`,
+          )
+        }
+        const sig = new Uint8Array(
+          Buffer.from(hex.replace(/^0x/, ''), 'hex'),
+        )
+        const { VersionedMessage } = await import('@solana/web3.js')
+        const vm = VersionedMessage.deserialize(messageBytes)
+        const idx = vm.staticAccountKeys.findIndex(
+          (k) => k.toBase58() === publicKey,
+        )
+        if (idx === -1) {
+          throw new PaymentError('payer not among the transaction signers')
+        }
+        if (idx >= numSigs) {
+          throw new PaymentError(`payer signature slot missing (${idx}/${numSigs})`)
+        }
+        const signed = new Uint8Array(tx)
+        signed.set(sig, 1 + 64 * idx)
+        return signed
+      }
+
       const response = await resolveResponse(
         client,
         await client.requestWalletSign({
