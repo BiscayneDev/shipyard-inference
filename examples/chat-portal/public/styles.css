@@ -79,7 +79,7 @@ button { font-family: inherit; }
 
 /* wallet */
 .btn.block { width: 100%; }
-.connect { display: flex; flex-direction: column; gap: 10px; }
+.connect { display: flex; flex-direction: column; gap: 12px; }
 .wallet-choice { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .wc-icon { font-size: 15px; line-height: 1; }
 .connect-sub { font-size: 12px; line-height: 1.5; color: var(--faint); text-align: center; }
@@ -129,10 +129,10 @@ button { font-family: inherit; }
 }
 .savings-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; }
 .savings-big {
-  font-size: 30px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px;
-  margin: 6px 0 2px; color: var(--text);
+  font-size: 27px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px;
+  margin: 8px 0 6px; color: var(--text);
 }
-.savings-meta { font-size: 12px; color: var(--muted); }
+.savings-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .savings-meta #saved-pct { color: var(--accent-2); font-weight: 700; }
 .savings-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px;
@@ -147,7 +147,7 @@ button { font-family: inherit; }
 .chat { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
 .topbar {
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 26px; border-bottom: 1px solid var(--hair);
+  padding: 16px 26px; border-bottom: 1px solid var(--hair);
   backdrop-filter: blur(12px);
 }
 .topbar #new-chat { margin-left: auto; }
@@ -246,11 +246,12 @@ button { font-family: inherit; }
 .infmode-opt[disabled] { opacity: .4; cursor: not-allowed; }
 
 /* ---------- thread ---------- */
-.thread { flex: 1; overflow-y: auto; padding: 30px 0 8px; }
-.msg, .empty { max-width: 820px; margin: 0 auto; padding: 0 26px; }
+.thread { flex: 1; overflow-y: auto; padding: 30px 0 8px; display: flex; flex-direction: column; }
+.msg, .empty { width: 100%; max-width: 820px; margin: 0 auto; padding: 0 26px; }
 
-/* empty / hero */
-.empty { text-align: center; margin-top: 9vh; }
+/* empty / hero — vertically centered in the thread so whitespace splits
+   evenly above/below instead of pooling in a dead band above the composer */
+.empty { text-align: center; margin-top: auto; margin-bottom: auto; }
 .empty-mark {
   width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 18px;
   display: grid; place-items: center; font-size: 32px;
@@ -1004,7 +1005,7 @@ main.dec { display: flex; flex-direction: column; }
 /* ---------- nav rail (beautifului Sidebar Nav, full) ---------- */
 .navrail {
   position: relative; display: flex; flex-direction: column; gap: 12px;
-  margin-top: 14px; padding: 5px;
+  margin-top: 2px; padding: 5px;
   background: var(--glass); border: 1px solid var(--hair); border-radius: 12px;
 }
 .navrail .glider {
@@ -1025,11 +1026,16 @@ main.dec { display: flex; flex-direction: column; }
 .navrail-opt:hover { color: var(--text); transform: translateX(2px); }
 .navrail-opt .nav-icon { font-size: 13.5px; width: 18px; text-align: center; flex: none; }
 .navrail-opt.active { color: var(--text); }
+/* Collapse toggle lives in the label row's free right side (attached to the
+   rail's corner, not a dead row under Settings). Collapsed mode re-centers
+   it below the icon stack. */
 .navrail-toggle {
-  align-self: flex-end; margin: 0 4px 2px 0; font-size: 10px; color: var(--faint);
-  background: transparent; border: 0; cursor: pointer; padding: 4px 6px; border-radius: 6px;
+  position: absolute; top: 7px; right: 7px; z-index: 2;
+  font-size: 10px; color: var(--faint);
+  background: transparent; border: 0; cursor: pointer; padding: 3px 5px; border-radius: 6px;
 }
 .navrail-toggle:hover { color: var(--muted); background: var(--glass); }
+.navrail-collapsed .navrail-toggle { position: static; align-self: center; margin-top: 6px; }
 .navrail-collapsed .navrail-opt { justify-content: center; padding: 7.5px 0; }
 .navrail-collapsed .navrail-opt .nav-label, .navrail-collapsed .navrail-label { display: none; }
 .navrail-collapsed { width: 52px; }
