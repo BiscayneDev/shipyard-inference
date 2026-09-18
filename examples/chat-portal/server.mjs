@@ -454,7 +454,7 @@ const sessions = new Map()
   const origSet = sessions.set.bind(sessions)
   sessions.set = (k, v) => {
     origSet(k, v)
-    saveScope('sessions', [...sessions.entries()])
+    saveScope('sessions', Object.fromEntries(sessions.entries()))
     return sessions
   }
 }
