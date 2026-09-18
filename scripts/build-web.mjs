@@ -29,6 +29,34 @@ await writeFile(
 await copyFile(join(SRC, 'app.js'), join(OUT, 'app.js'))
 await copyFile(join(SRC, 'styles.css'), join(OUT, 'styles.css'))
 
+// Chat portal → the serverless function. app.ts mounts it at /portal via a
+// runtime import of examples/chat-portal/server.mjs; Vercel's esbuild leaves
+// dynamic imports as runtime resolves and does NOT trace the portal's file
+// reads (server.mjs reads public/* and .data/* relative to itself). So copy
+// the whole portal into the function bundle at build time. `includeFiles`
+// in the function's package.json isn't needed — the builder picks up files
+// present under .vercel/output/functions/index.func/ via nft traces of the
+// copied tree... simplest reliable path: place it and let the deployment's
+// file tracer see the import target on disk.
+import { cp } from 'node:fs/promises'
+const FUNC = join(ROOT, '.vercel', 'output', 'functions', 'index.func')
+try {
+  await mkdir(FUNC, { recursive: true })
+  await cp(join(ROOT, 'examples', 'chat-portal'), join(FUNC, 'examples', 'chat-portal'), {
+    recursive: true,
+    filter: (src) => {
+      const rel = src.slice(join(ROOT, 'examples', 'chat-portal').length)
+      // skip node_modules (deps resolve from the function's own), .data (ephemeral)
+      return !/\/(node_modules|\.data)(\/|$)/.test(rel)
+    },
+  })
+  console.log('build-web: copied examples/chat-portal → function bundle (mounted at /portal)')
+} catch (err) {
+  // The copy runs AFTER vercel's build assembled .vercel/output — if the
+  // directory doesn't exist yet (local plain `npm run build:web`), skip.
+  console.log(`build-web: portal copy skipped (${err.code ?? err.message})`)
+}
+
 // index.html: re-root its two asset references under /dashboard/.
 const html = await readFile(join(SRC, 'index.html'), 'utf8')
 const rerooted = html

@@ -938,7 +938,13 @@ app.route('/', operator)
 import { Hono as _Hono } from 'hono'
 const portalMount = new _Hono()
 portalMount.all('*', async (c) => {
-  const { portalApp } = await import('../examples/chat-portal/server.mjs')
+  // Plain-JS portal app outside src/ — the bundler resolves and traces this
+  // fine at build time; only bare 'tsc app.ts' (framework preset's type
+  // check, script mode without a tsconfig) cannot, hence the ignore.
+  // @ts-ignore -- runtime .mjs import, bundled by Vercel's esbuild
+  // ('./examples' resolves from the repo root locally AND from the bundled
+  // function root on Vercel, where build-web copies the portal tree.)
+  const { portalApp } = await import('./examples/chat-portal/server.mjs')
   return portalApp.fetch(c.req.raw)
 })
 app.route('/portal', portalMount)
