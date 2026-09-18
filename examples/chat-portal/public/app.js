@@ -599,9 +599,22 @@ async function runTurn() {
         window.dispatchEvent(new CustomEvent('portal:attestation', { detail: a })) // Spend ticker
       } else if (evt === 'placement_clear') {
         clearPlacement()
+      } else if (evt === 'payment') {
+        // In-stream payment status (production + connected Paybox wallet).
+        // passkey = the request is parked in the Paybox app awaiting the
+        // user's approval; instant = MPC agent key. Say so IN the bubble
+        // instead of letting a silent cursor blink.
+        const p = JSON.parse(data)
+        startLoader(contentEl, p.mode === 'passkey'
+          ? 'Waiting for your approval — check the Paybox app (passkey)…'
+          : 'Paying from your Paybox wallet…')
       } else if (evt === 'error') {
         contentEl.innerHTML = renderMarkdown(acc)
-        renderError(assistant, JSON.parse(data).message)
+        const e = JSON.parse(data)
+        renderError(assistant, e.message)
+        // Revoked Paybox key: the server dropped the dead signer — pull fresh
+        // wallet state so the sidebar re-renders the agent-key input.
+        if (e.revokedKey || /revoked/i.test(e.message || '')) await refreshWallet()
       }
     })
 

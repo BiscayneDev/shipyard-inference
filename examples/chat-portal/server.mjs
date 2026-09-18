@@ -272,6 +272,21 @@ const upto = await (async () => {
 })()
 const uptoCeiling = () => usd(String(UPTO_CEILING_USD))
 
+/** Hard deadline for the server-side Paybox payment step. MPC signing can
+ *  park for MINUTES in pending_signature when the account has no agent key
+ *  (each payment then waits for a passkey approval in the Paybox app) —
+ *  without a deadline the SSE never opens and the chat bubble blinks forever. */
+const PAYMENT_TIMEOUT_MS = Number(process.env.PORTAL_PAYMENT_TIMEOUT_MS ?? 90_000)
+function withTimeoutMs(promise, ms, label) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 // ---------------------------------------------------------------------------
 // Decisions — System One models (TypeSafe Jev). Same wallet billing as chat:
 // upto-gated per call, metered on the decision's own token usage. Live Jev
@@ -1485,13 +1500,19 @@ app.post('/api/decisions', async (c) => {
   const session = body.sessionId ? sessions.get(body.sessionId) : undefined
   if (upto && session?.paybox) {
     try {
-      uptoVerified = await payWithPaybox({
-        oauth: session.paybox.oauth,
-        signingKey: session.paybox.signingKey,
-        upto,
-        ceiling: uptoCeiling(),
-        rpcUrl: uptoConfig.rpcUrl,
-      })
+      // Same deadline as chat — a passkey-parked payment must fail with a
+      // clear error, not hang the request forever.
+      uptoVerified = await withTimeoutMs(
+        payWithPaybox({
+          oauth: session.paybox.oauth,
+          signingKey: session.paybox.signingKey,
+          upto,
+          ceiling: uptoCeiling(),
+          rpcUrl: uptoConfig.rpcUrl,
+        }),
+        PAYMENT_TIMEOUT_MS,
+        'Paybox payment',
+      )
     } catch (err) {
       console.error('[portal] Paybox payment failed (decisions):', err)
       const raw = err instanceof Error ? err.message : String(err)
@@ -1502,7 +1523,12 @@ app.post('/api/decisions', async (c) => {
         delete session.paybox.signingKey
         try { sessions.set(session.id, session) } catch { /* best effort */ }
       }
-      return c.json({ error: `Paybox payment failed: ${raw}`, revokedKey: revoked }, 402)
+      const hint = revoked
+        ? `${raw} — generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the chat sidebar.`
+        : /timed out after/i.test(raw)
+          ? `${raw} — approve the payment in your Paybox app (passkey) and try again, or add an agent key (pbxk1…) for instant signing.`
+          : raw
+      return c.json({ error: `Paybox payment failed: ${hint}`, revokedKey: revoked }, 402)
     }
   } else if (upto) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
@@ -1671,40 +1697,11 @@ app.post('/api/chat', async (c) => {
   // actual metered cost is settled + refunded after the reply streams.
   let uptoVerified
   const chatSession = body.sessionId ? sessions.get(body.sessionId) : undefined
-  if (wantProd && upto && chatSession?.paybox) {
-    // Connected Paybox wallet: pay server-side from the user's wallet (MPC
-    // signing within their grant) — no 402 round-trip to the browser.
-    try {
-      uptoVerified = await payWithPaybox({
-        oauth: chatSession.paybox.oauth,
-        signingKey: chatSession.paybox.signingKey,
-        upto,
-        ceiling: uptoCeiling(),
-        rpcUrl: uptoConfig.rpcUrl,
-      })
-      chatSession.paybox.oauth = chatSession.paybox.oauth // token rotation handled in payer
-    } catch (err) {
-      console.error('[portal] Paybox payment failed:', err)
-      const raw = err instanceof Error ? err.message : String(err)
-      // A revoked agent signer means the pbxk1 key is dead server-side —
-      // usually collateral from an OAuth-client revocation. Drop it from the
-      // session so canSign flips false and the key input REAPPEARS (otherwise
-      // the dead key still "exists" and the user is stuck), then point them
-      // at regenerating instead of a cryptic SDK error.
-      const revoked = /revoked/i.test(raw)
-      if (revoked && chatSession?.paybox) {
-        delete chatSession.paybox.signingKey
-        try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
-      }
-      const hint = revoked
-        ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then re-enter it in the sidebar (the key input has reappeared).`
-        : raw
-      return c.json(
-        { error: `Paybox payment failed: ${hint}`, revokedKey: revoked },
-        402,
-      )
-    }
-  } else if (wantProd && upto) {
+  // NOTE: a connected Paybox wallet pays INSIDE the stream (below), so the
+  // client gets live payment status (instant MPC vs. waiting for a passkey
+  // approval) instead of a silently blinking cursor while it parks.
+  // Keyless (browser-wallet) requests still get the HTTP 402 challenge here.
+  if (wantProd && upto && !chatSession?.paybox) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
     if (!paymentHeader) {
       const requirements = await upto.accepts(uptoCeiling())
@@ -1772,6 +1769,67 @@ app.post('/api/chat', async (c) => {
   return streamSSE(c, async (stream) => {
     const controller = new AbortController()
     stream.onAbort(() => controller.abort())
+
+    // Connected Paybox wallet: pay server-side from the user's wallet (MPC
+    // signing within their grant) — no 402 round-trip to the browser. Runs
+    // INSIDE the stream so the client can show payment status: instant MPC
+    // with an agent key, or "approve in the Paybox app" without one (each
+    // payment parks in pending_signature until a passkey approves it). A hard
+    // timeout bounds the wait so it can never blink forever.
+    if (wantProd && upto && chatSession?.paybox) {
+      let canSign = false
+      try {
+        const { PayboxClient } = await import('@paybox-sh/sdk')
+        canSign = Boolean(
+          new PayboxClient({
+            baseUrl: process.env.PAYBOX_BASE_URL ?? 'https://api.paybox.sh',
+            token: chatSession.paybox.oauth.accessToken,
+            ...(chatSession.paybox.signingKey ? { signingKey: chatSession.paybox.signingKey } : {}),
+          }).canSign,
+        )
+      } catch { /* status falls back to the generic paying label */ }
+      await stream.writeSSE({
+        event: 'payment',
+        data: JSON.stringify({ mode: canSign ? 'instant' : 'passkey', ceilingUsd: UPTO_CEILING_USD }),
+      })
+      try {
+        uptoVerified = await withTimeoutMs(
+          payWithPaybox({
+            oauth: chatSession.paybox.oauth,
+            signingKey: chatSession.paybox.signingKey,
+            upto,
+            ceiling: uptoCeiling(),
+            rpcUrl: uptoConfig.rpcUrl,
+          }),
+          PAYMENT_TIMEOUT_MS,
+          'Paybox payment',
+        )
+        chatSession.paybox.oauth = chatSession.paybox.oauth // token rotation handled in payer
+      } catch (err) {
+        console.error('[portal] Paybox payment failed:', err)
+        const raw = err instanceof Error ? err.message : String(err)
+        // A revoked agent signer means the pbxk1 key is dead server-side —
+        // usually collateral from an OAuth-client revocation. Drop it from the
+        // session so canSign flips false and the key input REAPPEARS, then
+        // point them at regenerating instead of a cryptic SDK error.
+        const revoked = /revoked/i.test(raw)
+        if (revoked) {
+          delete chatSession.paybox.signingKey
+          try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
+        }
+        const hint = revoked
+          ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the sidebar (the key input has reappeared).`
+          : /timed out after/i.test(raw)
+            ? `${raw} — approve the payment in your Paybox app (passkey) and send again, or paste an agent key (pbxk1…) in the sidebar for instant signing.`
+            : raw
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({ message: `Paybox payment failed: ${hint}`, revokedKey: revoked }),
+        })
+        return
+      }
+    }
+
     const ctx = {}
     let servedPlacement // the placement shown for this request, if any
     let measuredWaitMs // the real wait (ms) the placement was metered against
