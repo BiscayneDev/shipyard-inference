@@ -929,4 +929,18 @@ app.post('/api/tender/claim', async (c) => {
 
 app.route('/', operator)
 
+// ---------------------------------------------------------------------------
+// Chat portal — the Paybox-wallet chat UI, mounted at /portal. It's a plain
+// .mjs Hono app (examples/chat-portal/server.mjs); import it lazily inside a
+// sub-app so the TS bundler treats it as a runtime import, and the heavy
+// portal deps (pay-kit, @paybox-sh/sdk) only load when /portal is hit.
+// ---------------------------------------------------------------------------
+import { Hono as _Hono } from 'hono'
+const portalMount = new _Hono()
+portalMount.all('*', async (c) => {
+  const { portalApp } = await import('../examples/chat-portal/server.mjs')
+  return portalApp.fetch(c.req.raw)
+})
+app.route('/portal', portalMount)
+
 export default app

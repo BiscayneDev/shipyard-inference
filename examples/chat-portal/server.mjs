@@ -609,7 +609,9 @@ let MOUNT_PREFIX = ''
 export function detectMount(c) {
   const url = new URL(c.req.url)
   const m = url.pathname.match(/^(\/[a-z-]+)\/(api|index\.html|app\.js|styles\.css|nav\.js|brands)/)
+  const m2 = !m && url.pathname.match(/^(\/[a-z-]+)\/?$/)
   if (m && m[1] !== '/api') MOUNT_PREFIX = m[1]
+  else if (m2 && m2[1] !== '/api' && m2[1] !== '/v1') MOUNT_PREFIX = m2[1]
 }
 
 const app = new Hono()
@@ -930,7 +932,7 @@ app.post('/api/wallet/connect', async (c) => {
   // to Paybox for passkey approval and comes back through the callback.
   if (body.wallet === 'paybox') {
     const origin = new URL(c.req.url).origin
-    const start = await startConnect(origin)
+    const start = await startConnect(origin, MOUNT_PREFIX)
     // Each cookie must be its own Set-Cookie header — Hono appends when the
     // append option is set; a single newline-joined value is invalid.
     for (const [name, value] of [
@@ -1964,6 +1966,7 @@ app.get('*', async (c) => {
   // Mounted under a prefix (e.g. /portal on Vercel): routes are registered
   // relative to the mount via app.route() — Hono strips the prefix — but the
   // catch-all sees the FULL path, so strip the mount prefix here too.
+  detectMount(c)
   const mount = MOUNT_PREFIX ?? ''
   let pathname = new URL(c.req.url).pathname
   if (mount && pathname.startsWith(mount) && !pathname.startsWith(`${mount}/api`)) {
@@ -1996,7 +1999,14 @@ const MODE_NOTE = {
   usepod: 'wallet-funded · UsePod prepaid USDC',
   paybox: 'REAL inference · Paybox wallet pays per-request USDC over x402',
 }
-serve({ fetch: app.fetch, port: PORT })
+// Mountable export: app.ts does app.route('/portal', portal). Only boot the
+// standalone server when run directly (node server.mjs).
+export { app as portalApp }
+
+const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href
+if (isMain) {
+  serve({ fetch: app.fetch, port: PORT })
+}
 console.log(`shipyard chat-portal → http://localhost:${PORT}`)
 console.log(
   `  inference: demo (mock)` +
