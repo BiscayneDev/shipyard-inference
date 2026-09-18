@@ -77,9 +77,24 @@ export async function loadScope(scope) {
   }
 }
 
-/** Debounced write-through for a whole scope map. */
+/** Debounced write-through for a whole scope map. On the Supabase
+ * (serverless) tier there is NO debounce: the invocation can freeze the
+ * moment the response is sent, killing a pending timer — the OAuth callback
+ * would redirect before the session ever reached Supabase. Writes start
+ * immediately and are kept alive with @vercel/functions waitUntil. */
 const pending = {} // scope -> { map, timer }
 export function saveScope(scope, map) {
+  if (SB) {
+    const p = writeScope(scope, map).catch((e) =>
+      console.warn(`[portal-store] save ${scope} failed:`, e?.message ?? e),
+    )
+    try {
+      import('@vercel/functions')
+        .then(({ waitUntil }) => waitUntil(p))
+        .catch(() => {})
+    } catch {}
+    return
+  }
   clearTimeout(pending[scope]?.timer)
   pending[scope] = {
     map,
