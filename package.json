@@ -70,7 +70,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
     "@solana/kit": "^6.10.0",
-    "@solana/pay-kit": "^0.10.0",
+    "@solana/pay-kit": "file:vendor/pay-kit",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "@x402/core": "^2.26.0",

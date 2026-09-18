@@ -51,6 +51,14 @@ try {
     },
   })
   console.log('build-web: copied examples/chat-portal → function bundle (mounted at /portal)')
+
+  // Vendored pay-kit: `file:` deps install as SYMLINKS, which the Vercel
+  // file tracer does not follow — copy real files into the function's
+  // node_modules so the portal's '@solana/pay-kit' import resolves at runtime.
+  const pkDest = join(FUNC, 'node_modules', '@solana', 'pay-kit')
+  await mkdir(dirname(pkDest), { recursive: true })
+  await cp(join(ROOT, 'vendor', 'pay-kit'), pkDest, { recursive: true })
+  console.log('build-web: vendored @solana/pay-kit → function node_modules')
 } catch (err) {
   // The copy runs AFTER vercel's build assembled .vercel/output — if the
   // directory doesn't exist yet (local plain `npm run build:web`), skip.

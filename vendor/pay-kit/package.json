@@ -1,0 +1,33 @@
+{
+  "name": "@solana/pay-kit-vendored",
+  "version": "0.12.0",
+  "description": "Building blocks for Agentic payments (x402, MPP, AP2)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solana-foundation/pay-kit",
+    "directory": "typescript/packages/pay-kit"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./client": {
+      "types": "./client.d.ts",
+      "import": "./client.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/[!_]*"
+  ],
+  "dependencies": {
+    "@solana-program/compute-budget": "^0.15.0",
+    "@solana-program/token": "^0.13.0",
+    "@solana-program/token-2022": "^0.11.0",
+    "@solana/keychain-memory": "^1.3.0",
+    "@solana/kit": ">=6.5.0",
+    "mppx": ">=0.5.5"
+  }
+}
