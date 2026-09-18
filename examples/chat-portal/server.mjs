@@ -829,6 +829,9 @@ app.post('/api/paybox/signing-key', async (c) => {
     return c.json({ error: 'invalid signing key token' }, 400)
   }
   session.paybox.signingKey = signingKey.trim()
+  // Write-through: mutation alone never persists (the snapshot happens at
+  // set()-time) — cold-started instances would lose the key.
+  sessions.set(session.id, session)
   return c.json({ ok: true, canSign: true })
 })
 
@@ -1650,8 +1653,15 @@ app.post('/api/chat', async (c) => {
       chatSession.paybox.oauth = chatSession.paybox.oauth // token rotation handled in payer
     } catch (err) {
       console.error('[portal] Paybox payment failed:', err)
+      const raw = err instanceof Error ? err.message : String(err)
+      // A revoked agent signer means the pbxk1 key is dead server-side —
+      // usually collateral from an OAuth-client revocation. Point the user
+      // at regenerating instead of a cryptic SDK error.
+      const hint = /revoked/i.test(raw)
+        ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then re-enter it here (the key input reappears when the old one fails).`
+        : raw
       return c.json(
-        { error: `Paybox payment failed: ${err instanceof Error ? err.message : String(err)}` },
+        { error: `Paybox payment failed: ${hint}` },
         402,
       )
     }
