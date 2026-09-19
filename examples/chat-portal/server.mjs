@@ -1552,16 +1552,24 @@ app.post('/api/decisions', async (c) => {
       // was connected from a different portal origin/client — e.g. a local
       // tunnel — and agent keys are bound to the client that created them).
       const revoked = /revoked|belongs to another client/i.test(raw)
+      // A dead OAuth token (expired + dead refresh token) is a THIRD failure:
+      // clear the whole paybox binding so the sidebar shows Connect again.
+      const deadAuth = /invalid bearer token/i.test(raw)
       if (revoked && session?.paybox) {
         delete session.paybox.signingKey
+        try { sessions.set(session.id, session) } catch { /* best effort */ }
+      } else if (deadAuth && session?.paybox) {
+        delete session.paybox
         try { sessions.set(session.id, session) } catch { /* best effort */ }
       }
       const hint = revoked
         ? `${raw} — this signing key no longer works with this portal (revoked, or minted from a different portal instance). Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the chat sidebar.`
-        : /timed out after/i.test(raw)
-          ? `${raw} — approve the payment in your Paybox app (passkey) and try again, or add an agent key (pbxk1…) for instant signing.`
-          : raw
-      return c.json({ error: `Paybox payment failed: ${hint}`, revokedKey: revoked }, 402)
+        : deadAuth
+          ? `${raw} — your Paybox session expired and could not be refreshed. Click Connect Paybox in the sidebar and try again.`
+          : /timed out after/i.test(raw)
+            ? `${raw} — approve the payment in your Paybox app (passkey) and try again, or add an agent key (pbxk1…) for instant signing.`
+            : raw
+      return c.json({ error: `Paybox payment failed: ${hint}`, revokedKey: revoked || deadAuth }, 402)
     }
   } else if (upto) {
     const paymentHeader = c.req.header('x-payment') ?? c.req.header('payment-signature')
@@ -1853,14 +1861,24 @@ app.post('/api/chat', async (c) => {
           delete chatSession.paybox.signingKey
           try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
         }
+        // A dead OAuth token (expired + dead refresh token) is a third
+        // failure mode: clear the whole paybox binding so the sidebar shows
+        // Connect again instead of retrying a dead token forever.
+        const deadAuth = /invalid bearer token/i.test(raw)
+        if (deadAuth) {
+          delete chatSession.paybox
+          try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
+        }
         const hint = revoked
           ? `${raw} — this signing key no longer works with this portal (revoked, or minted from a different portal instance). Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the sidebar (the key input has reappeared).`
-          : /timed out after/i.test(raw)
-            ? `${raw} — approve the payment in your Paybox app (passkey) and send again, or paste an agent key (pbxk1…) in the sidebar for instant signing.`
-            : raw
+          : deadAuth
+            ? `${raw} — your Paybox session expired and could not be refreshed. Click Connect Paybox in the sidebar and try again.`
+            : /timed out after/i.test(raw)
+              ? `${raw} — approve the payment in your Paybox app (passkey) and send again, or paste an agent key (pbxk1…) in the sidebar for instant signing.`
+              : raw
         await stream.writeSSE({
           event: 'error',
-          data: JSON.stringify({ message: `Paybox payment failed: ${hint}`, revokedKey: revoked }),
+          data: JSON.stringify({ message: `Paybox payment failed: ${hint}`, revokedKey: revoked || deadAuth }),
         })
         return
       }

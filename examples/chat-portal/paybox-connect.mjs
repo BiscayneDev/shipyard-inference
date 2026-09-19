@@ -54,14 +54,15 @@ export async function startConnect(origin, prefix = '') {
   const baseUrl = payboxApiBase()
   const meta = await metadata(baseUrl)
   const redirectUri = `${origin}${prefix}/api/paybox/connect/callback`
+  // Reuse the stored client unconditionally. Paybox does NOT support reading
+  // back dynamic registrations (`GET /oauth/register/<id>` 404s for a client
+  // registered seconds ago), so any liveness probe "fails" — probing would
+  // re-register on EVERY connect, which is exactly the client churn Paybox
+  // revokes accounts for ("client is revoked", "agent signer belongs to
+  // another client", dead bearer tokens). Dead clients are handled lazily:
+  // completeConnect clears the stored entry on a client-revocation error, and
+  // the NEXT connect registers fresh.
   let clientId = registeredClients[origin]
-  if (clientId) {
-    // Validate the stored client still exists; a revoked/deleted one 404s.
-    try {
-      const check = await fetch(`${meta.registration_endpoint}/${clientId}`)
-      if (!check.ok) clientId = undefined
-    } catch { clientId = undefined }
-  }
   if (!clientId) {
     clientId = await registerClient(meta, process.env.PAYBOX_CLIENT_NAME ?? 'Shipyard Chat Portal', redirectUri)
     registeredClients[origin] = clientId
@@ -111,6 +112,19 @@ export async function completeConnect(origin, code, verifier, clientId, prefix =
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
+    // Lazy client invalidation: a revoked/deleted client surfaces here (401/
+    // 400 'invalid client' / 'client is revoked'). Clear the stored entry so
+    // the NEXT connect registers fresh instead of every connect re-registering
+    // (which gets the account's clients revoked). The user must connect once
+    // more — the current authorization code is bound to the dead client.
+    if (res.status === 401 || /invalid client|client is revoked|client not found/i.test(body)) {
+      delete registeredClients[origin]
+      saveScope('paybox-clients', registeredClients)
+      throw new Error(
+        `Paybox rejected this portal's client (${res.status}) — it was revoked. ` +
+          'Connect Paybox once more; a fresh client will be registered automatically.',
+      )
+    }
     throw new Error(`Paybox token exchange failed (${res.status}): ${body.slice(0, 400)}`)
   }
   const t = await res.json()
