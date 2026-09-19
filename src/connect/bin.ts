@@ -15,6 +15,7 @@ import {
   type ClaudeSettings,
 } from './install.js'
 import { runDoctor } from './doctor.js'
+import { resolveConnectTargets, keyReuseWarning } from './agent-wiring.js'
 
 const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard-inference.vercel.app'
 const STATUSLINE_CMD = 'npx -y shipyard-inference statusline'
@@ -34,14 +35,41 @@ function readSettings(path: string): ClaudeSettings {
 }
 
 async function connect(): Promise<void> {
-  const url = (arg('--url') ?? DEFAULT_URL).replace(/\/+$/, '')
+  const local = has('--local')
+  const url = local
+    ? 'http://127.0.0.1:8787'
+    : (arg('--url') ?? DEFAULT_URL).replace(/\/+$/, '')
   const wallet = arg('--wallet')
+  // Repeatable --agent <kind>: print per-agent wiring after connecting.
+  const agents = process.argv
+    .map((a, i) => (a === '--agent' ? process.argv[i + 1] : undefined))
+    .filter((a): a is 'claude' | 'openclaw' | 'env' => a === 'claude' || a === 'openclaw' || a === 'env')
   // Reuse an existing key (--key) or issue a fresh one.
   let key = arg('--key')
   if (!key) {
     process.stderr.write(`Issuing a Shipyard key from ${url}…\n`)
     const issued = await issueKey(url, { wallet })
     key = issued.key
+  }
+
+  // Appliance mode: show the hardware/Ollama advisor before wiring.
+  if (local) {
+    await runDoctor()
+  }
+
+  // Per-agent wiring output (pure print — never writes agent files).
+  if (agents.length > 0) {
+    // Canonical OpenAI URL; buildAgentWiring strips /v1 for Claude Code.
+    const targets = resolveConnectTargets({ agents, url: `${url}/v1`, key })
+    process.stdout.write('\n')
+    for (const t of targets) {
+      process.stdout.write(`⚓ Wiring ${t.kind}:\n`)
+      for (const [k, v] of Object.entries(t.wiring.env)) process.stdout.write(`  ${k}=${v}\n`)
+      process.stdout.write(`  ${t.wiring.instructions}\n\n`)
+    }
+    const warn = keyReuseWarning(agents)
+    if (warn) process.stdout.write(warn + '\n')
+    return
   }
 
   // --route is opt-in: it's the ONLY mode that points Claude Code at the gateway
