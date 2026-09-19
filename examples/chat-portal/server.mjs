@@ -520,6 +520,44 @@ const sessions = new Map()
   }
 }
 
+/**
+ * Look up a wallet session by id, tolerating cross-instance staleness. On
+ * serverless every warm instance holds its COLD-START snapshot: a session
+ * just written by ANOTHER instance (e.g. the OAuth callback) looks missing
+ * here — the ghost "connect Paybox first" right after connecting. Before
+ * concluding the session lacks a paybox binding, merge the newest entries
+ * from the store (Supabase/file) into the local map and retry.
+ */
+async function getSession(sid, { wantPaybox = false } = {}) {
+  if (!sid) return undefined
+  let s = sessions.get(sid)
+  if (wantPaybox && !s?.paybox) {
+    try {
+      const stored = await loadScope('sessions')
+      const fresh = stored[sid]
+      if (fresh?.paybox && fresh.paybox.oauth) {
+        // Merge store entries into the local map, replacing locals that lack a
+        // paybox binding the store has (per-key newest wins) so a stale
+        // instance never keeps a dead snapshot nor clobbers other instances'
+        // fresh sessions with its own write-through.
+        for (const [k, v] of Object.entries(stored)) {
+          const local = sessions.get(k)
+          const storeHasPaybox = Boolean(v?.paybox?.oauth)
+          const localHasPaybox = Boolean(local?.paybox?.oauth)
+          if (!local || (storeHasPaybox && !localHasPaybox)) {
+            if (v?.paybox?.oauth) v.paybox.onRefresh = (t) => (v.paybox.oauth = t)
+            sessions.set(k, v)
+          }
+        }
+        s = sessions.get(sid)
+      }
+    } catch {
+      // store unreachable — serve the cold-start snapshot
+    }
+  }
+  return s
+}
+
 // ---------------------------------------------------------------------------
 // Threads — persisted chat history per session. The portal previously had no
 // thread memory (New chat = reload); the nav rail surfaces real History.
@@ -873,10 +911,10 @@ app.get('/api/paybox/connect/callback', async (c) => {
 // (instant payments within grant limits). Without it, each payment parks in
 // pending_signature until approved with a passkey.
 app.post('/api/paybox/signing-key', async (c) => {
-  const session = (() => {
-    const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
-    return sid ? sessions.get(sid) : undefined
-  })()
+  const session = await getSession(
+    c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1],
+    { wantPaybox: true },
+  )
   if (!session?.paybox) return c.json({ error: 'connect Paybox first' }, 401)
   const { signingKey } = await c.req.json().catch(() => ({}))
   if (typeof signingKey !== 'string' || !signingKey.trim().startsWith('pbxk1.')) {
@@ -942,7 +980,7 @@ app.get('/api/insights', (c) => {
 
 app.get('/api/paybox/wallet', async (c) => {
   const sid = c.req.header('cookie')?.match(/portal\.session=([^;]+)/)?.[1]
-  const session = sid ? sessions.get(sid) : undefined
+  const session = await getSession(sid, { wantPaybox: true })
   if (!session?.paybox) return c.json({ connected: false }, 404)
   try {
     const { PayboxClient } = await import('@paybox-sh/sdk')
@@ -1527,7 +1565,7 @@ app.post('/api/decisions', async (c) => {
 
   // x402 `upto` gate — the same contract as chat, one metered call per ask.
   let uptoVerified
-  const session = body.sessionId ? sessions.get(body.sessionId) : undefined
+  const session = await getSession(body.sessionId, { wantPaybox: true })
   if (upto && session?.paybox) {
     try {
       // Same deadline as chat — a passkey-parked payment must fail with a
@@ -1737,7 +1775,7 @@ app.post('/api/chat', async (c) => {
   // have their channel-open verified + escrowed BEFORE inference runs, and the
   // actual metered cost is settled + refunded after the reply streams.
   let uptoVerified
-  const chatSession = body.sessionId ? sessions.get(body.sessionId) : undefined
+  const chatSession = await getSession(body.sessionId, { wantPaybox: true })
   // NOTE: a connected Paybox wallet pays INSIDE the stream (below), so the
   // client gets live payment status (instant MPC vs. waiting for a passkey
   // approval) instead of a silently blinking cursor while it parks.
