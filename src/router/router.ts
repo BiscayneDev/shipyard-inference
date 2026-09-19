@@ -14,6 +14,7 @@ import { cacheKey } from './cache.js'
 import { responseToStream } from '../stream.js'
 import type { CompressionTransform } from './compress.js'
 import { NoCapableModelError, isRetryable } from './errors.js'
+import { ProviderHealthTracker } from './health.js'
 import { computeActualCostUsd, computeBaselineCostUsd, resolveModelMetadata } from './pricing.js'
 import type { UsageRecorder } from './usage.js'
 import { type RetryPolicy, nextRetryDelayMs, sleep } from './retry.js'
@@ -117,6 +118,12 @@ export interface RouterOptions {
   /** Max number of candidates to try. Defaults to "try them all". */
   maxRetries?: number
   /**
+   * Per-candidate circuit breaker. Candidates whose circuit is open are
+   * skipped during selection (no wasted request); attempt outcomes feed
+   * `recordSuccess`/`recordFailure` automatically. Off when omitted.
+   */
+  health?: ProviderHealthTracker
+  /**
    * Per-request quality floor. When `true`, the router infers a tier from each
    * request (prompt size, tools, output budget — see `inferTier`) and applies it
    * as `routingHints.tier`, so selection picks the cheapest model that's *good
@@ -212,6 +219,7 @@ export class Router implements LLMProvider {
             model: decision.model ?? compressed.model,
           })
           if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
+          this.opts.health?.recordSuccess(decision.candidate.id)
           this.emit({
             type: 'route_success',
             candidateId: decision.candidate.id,
@@ -230,6 +238,7 @@ export class Router implements LLMProvider {
           return res
         } catch (error) {
           lastError = error
+          this.opts.health?.recordFailure(decision.candidate.id)
           if (this.shouldRetry(retryAttempt, error)) {
             await this.delayRetry(decision, attempt, retryAttempt, error)
             retryAttempt++
@@ -314,6 +323,7 @@ export class Router implements LLMProvider {
           for await (const event of this.streamFromDecision(decision, compressed, opts)) {
             if (event.type === 'done') {
               if (this.opts.cache && key) await this.opts.cache.set(compressed, event.response)
+              this.opts.health?.recordSuccess(decision.candidate.id)
               this.emit({
                 type: 'route_success',
                 candidateId: decision.candidate.id,
@@ -337,6 +347,7 @@ export class Router implements LLMProvider {
           return
         } catch (error) {
           lastError = error
+          this.opts.health?.recordFailure(decision.candidate.id)
           // Retry the same candidate only before any token is emitted.
           if (!committed && this.shouldRetry(retryAttempt, error)) {
             await this.delayRetry(decision, attempt, retryAttempt, error)
@@ -413,7 +424,9 @@ export class Router implements LLMProvider {
 
     return this.strategy.select({
       params: await this.applyAutoTier(params),
-      candidates: this.opts.candidates,
+      candidates: this.opts.health
+        ? this.opts.candidates.filter((c) => this.opts.health!.isAvailable(c.id))
+        : this.opts.candidates,
       attempt: 0,
       previousErrors: [],
       pricingOverrides: this.opts.pricingOverrides,

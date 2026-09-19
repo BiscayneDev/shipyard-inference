@@ -47,6 +47,8 @@ export { SupabaseDecisionFeedback, SUPABASE_DECISION_FEEDBACK_SCHEMA } from './s
 export type { SupabaseDecisionFeedbackOptions } from './supabase-decision-feedback.js'
 export { estimateInputTokens } from './estimate.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
+export { ProviderHealthTracker } from './health.js'
+export type { ProviderHealthOptions } from './health.js'
 export { backoffDelayMs, retryAfterMs, nextRetryDelayMs } from './retry.js'
 export type { RetryPolicy } from './retry.js'
 export { MemoryCacheStore, cacheKey, canonicalRequestText } from './cache.js'
