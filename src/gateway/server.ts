@@ -23,7 +23,7 @@ import {
 import type { AnthropicChatRequest } from '../anthropic-compat/index.js'
 import { TENDER_DEFAULTS } from '../tender/types.js'
 import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrieveParams, VideoCompleteParams, VideoGenerateParams } from '../types.js'
-import { resolveAuth } from './auth.js'
+import { resolveAuth, bearerToken } from './auth.js'
 import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
@@ -527,6 +527,38 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     const upto = auth.upto
 
+    // Spend circuit breaker (keyed requests only): block before serving with a
+    // recoverable 402 — never a dead session. Keyless x402 requests skip this;
+    // their wallet balance is their own limit.
+    const spendKey = auth.account?.userId ?? bearerToken(c.req.header('authorization'))
+    if (config.spend && spendKey) {
+      // Estimate from the requested model's declared pricing when available;
+      // an unknown/unpriced request is checked at zero cost (free traffic
+      // always passes — the breaker guards paid bursts).
+      const estimate = 0
+      if (config.spend.tracker.check(spendKey, estimate) === 'block') {
+        return c.json(
+          {
+            error: {
+              message: 'Spend ceiling exceeded for this key. Reset the breaker or top up to continue.',
+              type: 'spend_ceiling_exceeded',
+              code: null,
+              param: null,
+              spentUsd: config.spend.tracker.spent(spendKey),
+              ...(config.spend.topUpUrl ? { topUpUrl: config.spend.topUpUrl } : {}),
+            },
+          },
+          402,
+        )
+      }
+    }
+    /** Record actual spend after the request completes (never blocks). */
+    const recordSpend = (costUsd: number | undefined): void => {
+      if (config.spend && spendKey && costUsd && costUsd > 0) {
+        config.spend.tracker.record(spendKey, costUsd)
+      }
+    }
+
     let body: OpenAIChatRequest
     try {
       body = (await c.req.json()) as OpenAIChatRequest
@@ -648,6 +680,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             })
           }
           await stream.writeSSE({ data: '[DONE]' })
+          recordSpend(ctx.costUsd)
         } catch (err) {
           await stream.writeSSE({ data: JSON.stringify(toOpenAIError(err).body) })
           await stream.writeSSE({ data: '[DONE]' })
@@ -680,6 +713,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
+      recordSpend(ctx.costUsd)
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toOpenAIError(err)

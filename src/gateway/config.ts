@@ -9,6 +9,7 @@ import type { ApiKeyStore } from './keys.js'
 import type { X402Config } from './x402.js'
 import type { DecisionProvider } from '../decisions/types.js'
 import type { DecisionFeedbackRecorder } from '../router/decision-feedback.js'
+import type { SpendTracker } from './spend.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -184,6 +185,23 @@ export interface GatewayConfig {
   decisionFeedback?: DecisionFeedbackRecorder
   /** Port for `startGateway`. Default 8787. */
   port?: number
+  /**
+   * Per-key spend circuit breaker. When set, keyed requests are checked
+   * against a cumulative USD ceiling *before* serving (blocked requests get
+   * a 402 with a top-up link — recoverable, never a dead session) and actual
+   * cost is recorded after completion. Off when omitted.
+   */
+  spend?: SpendConfig
+}
+
+export interface SpendConfig {
+  /** The `SpendTracker` itself (e.g. `new MemorySpendTracker({...})`). */
+  tracker: SpendTracker
+  /**
+   * Top-up URL included in the 402 body so a drained agent can self-serve.
+   * e.g. a MoonPay buy link (optionally with the wallet address pre-filled).
+   */
+  topUpUrl?: string
 }
 
 /**

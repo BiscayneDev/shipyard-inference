@@ -9,7 +9,8 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb)
 }
 
-function bearerToken(authHeader: string | undefined): string {
+/** Extract the raw bearer token from an Authorization header (for keying). */
+export function bearerToken(authHeader: string | undefined): string {
   return (authHeader ?? '').replace(/^Bearer\s+/i, '')
 }
 
