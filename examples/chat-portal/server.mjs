@@ -1546,15 +1546,18 @@ app.post('/api/decisions', async (c) => {
     } catch (err) {
       console.error('[portal] Paybox payment failed (decisions):', err)
       const raw = err instanceof Error ? err.message : String(err)
-      // Same recovery as chat: drop a revoked signer so the key input
-      // reappears instead of failing forever with a dead key.
-      const revoked = /revoked/i.test(raw)
+      // Same recovery as chat: drop a dead signer so the key input reappears
+      // instead of failing forever. Two ways a stored pbxk1 key goes dead:
+      // revoked by Paybox, or minted under ANOTHER OAuth client (the session
+      // was connected from a different portal origin/client — e.g. a local
+      // tunnel — and agent keys are bound to the client that created them).
+      const revoked = /revoked|belongs to another client/i.test(raw)
       if (revoked && session?.paybox) {
         delete session.paybox.signingKey
         try { sessions.set(session.id, session) } catch { /* best effort */ }
       }
       const hint = revoked
-        ? `${raw} — generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the chat sidebar.`
+        ? `${raw} — this signing key no longer works with this portal (revoked, or minted from a different portal instance). Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the chat sidebar.`
         : /timed out after/i.test(raw)
           ? `${raw} — approve the payment in your Paybox app (passkey) and try again, or add an agent key (pbxk1…) for instant signing.`
           : raw
@@ -1838,17 +1841,20 @@ app.post('/api/chat', async (c) => {
       } catch (err) {
         console.error('[portal] Paybox payment failed:', err)
         const raw = err instanceof Error ? err.message : String(err)
-        // A revoked agent signer means the pbxk1 key is dead server-side —
-        // usually collateral from an OAuth-client revocation. Drop it from the
+        // A dead agent signer means the pbxk1 key is unusable server-side —
+        // either revoked, or bound to ANOTHER OAuth client (the session was
+        // connected from a different portal origin — e.g. a local tunnel,
+        // whose trycloudflare origin changes each restart — and Paybox binds
+        // agent keys to the client that minted them). Drop it from the
         // session so canSign flips false and the key input REAPPEARS, then
-        // point them at regenerating instead of a cryptic SDK error.
-        const revoked = /revoked/i.test(raw)
+        // point them at generating a fresh key for THIS portal.
+        const revoked = /revoked|belongs to another client/i.test(raw)
         if (revoked) {
           delete chatSession.paybox.signingKey
           try { sessions.set(chatSession.id, chatSession) } catch { /* best effort */ }
         }
         const hint = revoked
-          ? `${raw} — this signing key has been revoked by Paybox. Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the sidebar (the key input has reappeared).`
+          ? `${raw} — this signing key no longer works with this portal (revoked, or minted from a different portal instance). Generate a NEW agent key in the Paybox app (Agent Keys / Developer settings), then paste it into the sidebar (the key input has reappeared).`
           : /timed out after/i.test(raw)
             ? `${raw} — approve the payment in your Paybox app (passkey) and send again, or paste an agent key (pbxk1…) in the sidebar for instant signing.`
             : raw

@@ -532,7 +532,7 @@ async function runTurn() {
         // A revoked Paybox signing key is recoverable in-place: the server
         // dropped the dead key, so refresh the wallet sidebar to re-render
         // the agent-key input for the new one.
-        err.revokedKey = Boolean(peek.revokedKey) || /revoked/i.test(peek.error)
+        err.revokedKey = Boolean(peek.revokedKey) || /revoked|belongs to another client/i.test(peek.error)
         throw err
       }
     }
@@ -612,9 +612,10 @@ async function runTurn() {
         contentEl.innerHTML = renderMarkdown(acc)
         const e = JSON.parse(data)
         renderError(assistant, e.message)
-        // Revoked Paybox key: the server dropped the dead signer — pull fresh
-        // wallet state so the sidebar re-renders the agent-key input.
-        if (e.revokedKey || /revoked/i.test(e.message || '')) await refreshWallet()
+        // Dead Paybox key (revoked or bound to another portal client): the
+        // server dropped the dead signer — pull fresh wallet state so the
+        // sidebar re-renders the agent-key input.
+        if (e.revokedKey || /revoked|belongs to another client/i.test(e.message || '')) await refreshWallet()
       }
     })
 
