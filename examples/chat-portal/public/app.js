@@ -788,7 +788,7 @@ function renderMessage(role, text) {
   el.innerHTML = `
     <div class="avatar">${role === 'user' ? '🧑' : '⚓'}</div>
     <div class="body">
-      <div class="role">${role === 'user' ? 'You' : 'Shipyard'}</div>
+      <div class="role">${role === 'user' ? 'You' : 'Shipyard Inference'}</div>
       <div class="content"></div>
     </div>`
   el.querySelector('.content').textContent = text
