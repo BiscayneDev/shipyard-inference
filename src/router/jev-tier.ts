@@ -20,6 +20,12 @@ export interface JevTierInferrerOptions {
    *  - `'jev'`: trust Jev entirely (heuristic still used on fallback).
    */
   combine?: 'max' | 'jev'
+  /**
+   * Cap on the effective tier, applied after combining. An appliance whose
+   * catalog has no frontier model sets `'standard'` so a frontier judgment
+   * can't starve the request of every capable candidate. Default: no cap.
+   */
+  maxTier?: ModelTier
   /** Structural fallback when Jev errors, times out, or answers weakly. Default `inferTier`. */
   fallback?: (params: LLMChatParams) => ModelTier
   /**
@@ -230,7 +236,10 @@ export function createJevTierInferrer(
       if (jevTier === 'economy' && reasoningAnswer?.type === 'noul' && reasoningAnswer.noul > 0.75) {
         jevTier = 'standard'
       }
-      const tier = combine === 'max' && TIER_RANK[structuralTier] > TIER_RANK[jevTier] ? structuralTier : jevTier
+      const tier0 = combine === 'max' && TIER_RANK[structuralTier] > TIER_RANK[jevTier] ? structuralTier : jevTier
+      // Cap the effective tier (appliance with no frontier rung); the raw
+      // judgment is preserved on the decision for telemetry.
+      const tier = opts.maxTier && TIER_RANK[tier0] > TIER_RANK[opts.maxTier] ? opts.maxTier : tier0
       const decision: TierDecision = {
         tier,
         source: 'jev',

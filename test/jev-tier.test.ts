@@ -169,3 +169,13 @@ test('rich decision evidence flows through the Router as a tier_decided event', 
   assert.equal(ev['structuralTier'], 'economy')
   assert.equal(typeof ev['latencyMs'], 'number')
 })
+
+test('maxTier caps the effective tier (appliance with no frontier rung)', async () => {
+  const inferrer = createJevTierInferrer({
+    provider: answering('frontier'),
+    maxTier: 'standard',
+  })
+  const d = (await inferrer(simple)) as TierDecision
+  assert.equal(d.tier, 'standard')
+  assert.equal(d.jevTier, 'frontier') // the raw judgment is preserved for telemetry
+})
