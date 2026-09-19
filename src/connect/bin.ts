@@ -14,6 +14,7 @@ import {
   formatStatusLine,
   type ClaudeSettings,
 } from './install.js'
+import { runDoctor } from './doctor.js'
 
 const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard-inference.vercel.app'
 const STATUSLINE_CMD = 'npx -y shipyard-inference statusline'
@@ -174,6 +175,10 @@ async function statusline(): Promise<void> {
 async function main(): Promise<void> {
   const cmd = process.argv[2]
   if (cmd === 'connect') return connect()
+  if (cmd === 'doctor') {
+    await runDoctor()
+    return
+  }
   if (cmd === 'statusline') return statusline()
   process.stderr.write(
     'Shipyard Inference — earn on your agent idle-time; optionally route for cheaper inference.\n\n' +
@@ -182,6 +187,8 @@ async function main(): Promise<void> {
       '      Connect Claude Code to Shipyard. By default this adds a live-earnings\n' +
       '      status line and does NOT change your model. Pass --route to also route\n' +
       '      inference through Shipyard for cost savings (sets ANTHROPIC_BASE_URL).\n' +
+      '  npx shipyard-inference doctor\n' +
+      '      Probe hardware + Ollama and print your local model ladder and agent env.\n' +
       '  npx shipyard-inference statusline\n' +
       '      Print the live-earnings status line (used by Claude Code).\n',
   )
