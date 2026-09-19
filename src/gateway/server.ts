@@ -210,6 +210,8 @@ interface RequestContext {
   model?: string
   provider?: string
   costUsd?: number
+  /** Failover receipt for this request, set when a provider failed over. */
+  failover?: { from: string; to?: string; reason: string }
   routing?: {
     tier: string
     source: 'jev' | 'structural'
@@ -229,10 +231,18 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
   if (event.type === 'route_selected') {
     ctx.provider = event.candidateId
     if (event.model) ctx.model = event.model
+    // A route_selected after a failover event is the rung we landed on.
+    if (ctx.failover && !ctx.failover.to) ctx.failover.to = event.candidateId
   } else if (event.type === 'request_completed') {
     ctx.provider = event.candidateId
     if (event.model) ctx.model = event.model
     ctx.costUsd = event.actualCostUsd
+  } else if (event.type === 'failover') {
+    // Record the receipt; the `to` rung is filled in by the next
+    // route_selected (the candidate the failover loop lands on).
+    if (!ctx.failover) {
+      ctx.failover = { from: event.candidateId, reason: classifyFailoverReason(event.error) }
+    }
   } else if (event.type === 'tier_decided') {
     ctx.routing = {
       tier: event.tier,
@@ -246,6 +256,22 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
       ...(event.usage ? { usage: event.usage } : {}),
     }
   }
+}
+
+/**
+ * Human-stable reason code for a failover receipt: rate_limited (429/429-like),
+ * provider_error (5xx / unknown retryable), context_overflow (window fit).
+ */
+function classifyFailoverReason(error: unknown): string {
+  const e = error as { status?: number; message?: string } | null
+  if (e && typeof e === 'object') {
+    if (e.status === 429 || /rate.?limit|429/i.test(e.message ?? '')) return 'rate_limited'
+    if (e.status === 400 && /context|token limit|too long/i.test(e.message ?? '')) {
+      return 'context_overflow'
+    }
+    if (e.status !== undefined && e.status >= 500) return 'provider_error'
+  }
+  return 'provider_error'
 }
 
 function requestId(): string {
@@ -595,6 +621,15 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                   model: ctx.model,
                   provider: ctx.provider,
                   costUsd: ctx.costUsd,
+                  ...(ctx.failover
+                    ? {
+                        failover: {
+                          from: ctx.failover.from,
+                          ...(ctx.failover.to ? { to: ctx.failover.to } : {}),
+                          reason: ctx.failover.reason,
+                        },
+                      }
+                    : {}),
                   ...(ctx.routing
                     ? {
                         routing: ctx.routing,
