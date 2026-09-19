@@ -831,6 +831,7 @@ app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 // hub.boot middleware so issuing a key doesn't replay telemetry.
 app.get('/connect', (c) => c.html(CONNECT_HTML))
 app.get('/pricing', (c) => c.html(PRICING_HTML))
+app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.post('/api/keys', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { wallet?: unknown; label?: unknown }

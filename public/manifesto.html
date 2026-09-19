@@ -118,6 +118,10 @@
   .foot-row, .foot-row a { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); }
   .foot-row a:hover { color: #fff; }
   .foot-note { font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--mist); margin-top: 26px; }
+  .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--blue); font-weight: 400; }
+  .cite { font-family: var(--mono); font-size: 9px; color: var(--fade); vertical-align: super; }
+  .footnotes { margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(143,163,189,0.14); }
+  .footnotes p { font-family: var(--mono); font-size: 11px; line-height: 1.8; color: var(--fade); }
 </style>
 </head>
 <body>
@@ -138,6 +142,9 @@
     <p class="hero-sub">
       The wallet and the context window are the same asset class. One principal,
       many agents, one balance. This is the case for the harbor that keeps it.
+    </p>
+    <p class="hero-sub">
+      The router already runs: one endpoint, per-call settlement in USDC, typically 70% under baseline. What follows is the argument for the rest of the ship.
     </p>
   </div>
   <div class="scroll-cue">↓</div>
@@ -177,27 +184,28 @@
     <div class="secno">IV · The Thesis</div>
     <h2>Harbor your capital where your fleet is <em>provisioned.</em></h2>
     <p>Not ideology — the oldest rational behavior in commerce. Merchants banked where their cargo traded because capital and commerce must be co-located for the voyage to compound. The <i>commenda</i> of the medieval Mediterranean — capital advanced by one party, navigation and labor by another, returns split by contract — financed the age of sail precisely because it let holders of capital participate in voyages they could not personally conduct. The staking treasury is the same instrument for compute: capital in, routed consumption out, yield from the trade.</p>
-    <p>Three decks, one ship:</p>
+    <p>Three decks, one ship — two already take water:</p>
     <div class="deck">
-      <h3><span>01</span>The Ledger — see everything</h3>
+      <h3><span>01</span>The Ledger — see everything · <span class="tag">first form live</span></h3>
       <p>Every account, every credit and its expiry, every agent's rate of consumption, every unit of the treasury and what it earns — one manifest, in real time. Not a spectator instrument: built atop the Navigator, it reads and it <b>acts</b>.</p>
     </div>
     <div class="deck">
-      <h3><span>02</span>The Navigator — spend optimally</h3>
+      <h3><span>02</span>The Navigator — spend optimally · <span class="tag">live</span></h3>
       <p>A routing layer across every inventory the principal owns and everything the agents buy: their accounts (BYOK — orchestrated on the principal's behalf, never pooled, never resold), their hardware, their treasury, and the long tail of paid tool and data APIs. Every call is a procurement decision: perishable credit drawn before expiry, private hardware before paid routes, frontier capacity when the work justifies it — always quality-adjusted. A policy engine scores every route on quality, latency, price, and privacy, compiling the live quality-versus-price curves that neither a static marketplace nor a prepaid catalog can produce.</p>
     </div>
     <div class="deck">
-      <h3><span>03</span>The Treasury — fund it productively</h3>
-      <p>Staked capital works while the fleet sleeps: yield carried by established, regulated venues — we route to vaults and never issue yield ourselves; wholesale pre-commitments earning the merchant's spread; every agent's budget drawn from the same balance. One balance, three roles: savings, fuel, and a share of the trade. The house's own fee debits from the treasury — <b>the ledger pays itself from its own yield</b>.</p>
+      <h3><span>03</span>The Treasury — fund it productively · <span class="tag">the voyage, sequenced in X</span></h3>
+      <p>The Treasury, as designed: staked capital works while the fleet sleeps — yield carried by established, regulated venues (we route to vaults and never issue yield ourselves), wholesale pre-commitments earning the merchant's spread, every agent's budget drawn from the same balance.</p>
     </div>
-    <p>Note the direction of the asymmetry. The price of intelligence deflates roughly tenfold per year per unit of capability. A treasury long stablecoin and short capacity is therefore on the right side of the trade: wholesale contracts reprice downward on renewal, and the spread widens with time. Deflation, which punishes the builders of supply, works for the holders of the balance.</p>
+    <p>Note the direction of the asymmetry. The price of intelligence has deflated roughly an order of magnitude per year per unit of capability.<sup class="cite">[1]</sup> A treasury long stablecoin and short capacity is therefore on the right side of the trade: wholesale contracts reprice downward on renewal, and the spread widens with time. Deflation, which punishes the builders of supply, works for the holders of the balance.</p>
+    <p>The same deflation disciplines the house. Pre-committed capacity is a wasting asset in a falling market, so the treasury commits short and reprices on renewal rather than holding inventory. And a fee taken on spend deflates with the unit — so the house's take is a share of measured savings against the incumbent baseline, a spread that stays wide precisely because the baseline reprices slower than the open water.</p>
   </div>
 
   <div class="sec">
     <div class="secno">V · The Existence Proof</div>
     <h2>The mechanic already trades. Both proof and <em>warning.</em></h2>
     <p>Venice (VVV) — stake and infer — appreciated roughly tenfold in ten months; DIEM tokenized a dollar-a-day of perpetual inference access. The behavior is proven at consumer scale. But both wrapped the entitlement in a protocol coin, and the entitlement decoupled from the underlying trade: as the coin appreciated tenfold, the holder's effective price of compute rose with it — even as the true cost of intelligence fell tenfold a year.</p>
-    <p>This is the South Sea error: an instrument appreciated as speculation, severed from the cash flows of the venture it represents. We decline to mint it. Capital in stablecoin, entitlement denominated in pegged units, yield through existing regulated venues. <b>Our unit is pegged — purchasing power rides the deflation of compute, not the sentiment of a chart.</b> They are long their own token; we are short the price of intelligence. No protocol coin, no emissions, no speculative toll between the principal and the cargo.</p>
+    <p>This is the South Sea error: an instrument appreciated as speculation, severed from the cash flows of the venture it represents. We decline to mint it. To be honest about what is declined: the coin was also their cold-start engine — supply, demand, and the guarantee in one instrument. We bootstrap the slow way instead — a live router, a free local tier, and a promotional check at the door (X). Capital in stablecoin, entitlement denominated in pegged units, yield through existing regulated venues. <b>Our unit is pegged — purchasing power rides the deflation of compute, not the sentiment of a chart.</b> They are long their own token; we are short the price of intelligence. No protocol coin, no emissions, no speculative toll between the principal and the cargo.</p>
   </div>
 
   <div class="sec">
@@ -209,7 +217,7 @@
       <tr><td>Capital</td><td>Pooled</td><td>Staked stablecoin — the treasury and the demand guarantee</td></tr>
       <tr><td>External credits</td><td>Orchestrated, never custodied</td><td>The principal's own accounts, consumed in their interest, never resold</td></tr>
     </table>
-    <p>Settlement follows the oldest rule of honest ports: payment on delivery, not before. Providers are paid per successful call — escrow enforced by protocol, quality gates enforced economically rather than reputationally. And as the bill of exchange let medieval merchants transact across hostile borders without moving specie, the machine-payment protocol lets agents settle across provider boundaries without custody risk — a fourteenth-century instrument finding its successor at machine scale.</p>
+    <p>Settlement will follow the oldest rule of honest ports: payment on delivery, not before. Providers are paid per successful call — escrow enforced by protocol, quality gates enforced economically rather than reputationally. And as the bill of exchange let medieval merchants transact across hostile borders without moving specie, the machine-payment protocol lets agents settle across provider boundaries without custody risk — a fourteenth-century instrument finding its successor at machine scale.</p>
     <p>Demand is heterogeneous, so pricing is tiered: each class of supply carries its own dynamic fee curve, rising with congestion, accruing to holders of the treasury, floored by quality. Capital without hardware gains exposure to the compute trade; hardware without demand gains guaranteed volume. The clearing house is where has-compute meets has-capital — and most of our principals are, in time, both.</p>
   </div>
 
@@ -217,9 +225,9 @@
     <div class="secno">VII · The Market</div>
     <h2>Shipyards, tollhouses, and <em>entrepôts.</em></h2>
     <ul>
-      <li>The <b>idle-device networks</b> (Darkbloom-class) are our shipyards, not rivals: we are their demand engine, and then their port of entry.</li>
-      <li>The <b>per-call marketplaces</b> (UsePod-class) are one route on the chart, nothing more. A payment wall over an API is a weekend's work — the least defensible position on the coast.</li>
-      <li>The <b>open tool catalogs</b> (Locus-class) are provisioning partners: breadth for our treasury; intelligence, settlement, and yield remain ours.</li>
+      <li>The <b>idle-device networks</b> (Darkbloom-class<sup class="cite">[2]</sup>) are our shipyards, not rivals: we are their demand engine, and then their port of entry.</li>
+      <li>The <b>per-call marketplaces</b> (UsePod-class<sup class="cite">[3]</sup>) are one route on the chart, nothing more. A payment wall over an API is a weekend's work — the least defensible position on the coast.</li>
+      <li>The <b>open tool catalogs</b> (Locus-class<sup class="cite">[4]</sup>) are provisioning partners: breadth for our treasury; intelligence, settlement, and yield remain ours.</li>
       <li>Whoever holds the balance holds the relationship.</li>
     </ul>
     <p>The monopolies will respond as monopolies have since the seventeenth century: bundling, preferential docks, the occasional Act of Parliament. We answer as the entrepôts always have — open ledgers, better rates, and no flag but the principal's.</p>
@@ -262,6 +270,13 @@
   </div>
 
 </article>
+
+<div class="wrap footnotes">
+  <p>[1] Inference-cost deflation trajectory per Stanford AI Index / Epoch AI estimates. The house earns a share of the savings it finds, never a markup on the route.</p>
+  <p>[2] Darkbloom-class: consumer-GPU and idle-device networks that pool private silicon for paid inference.</p>
+  <p>[3] UsePod-class: per-call inference marketplaces — a payment wall over provider APIs.</p>
+  <p>[4] Locus-class: open catalogs of paid tool and data APIs for agents.</p>
+</div>
 
 <footer class="wrap">
   <div class="foot-row">
