@@ -99,18 +99,13 @@
   .lede { font-family: var(--serif); font-size: 21px; line-height: 1.6; color: #e8eef6; }
   .pull { font-family: var(--serif); font-style: italic; font-size: clamp(22px, 3vw, 30px); line-height: 1.4;
     color: #e8eef6; border-left: 2px solid var(--blue); padding: 6px 0 6px 26px; margin: 34px 0; }
-  .deck { margin: 26px 0; }
-  .deck h3 { font-family: var(--serif); font-size: 21px; font-weight: 600; margin-bottom: 8px; }
-  .deck h3 span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--blue); margin-right: 10px; }
-  table { width: 100%; border-collapse: collapse; margin: 26px 0; font-size: 14.5px; }
-  th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fade);
-    text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(143,163,189,0.3); }
-  td { padding: 12px; border-bottom: 1px solid rgba(143,163,189,0.12); color: #cdd9e8; vertical-align: top; }
-  td:first-child { color: #e8eef6; font-weight: 500; white-space: nowrap; }
-  ol, ul { padding-left: 22px; margin-bottom: 18px; }
-  li { color: #cdd9e8; margin-bottom: 10px; }
   .rally { text-align: center; font-family: var(--serif); font-style: italic;
     font-size: clamp(24px, 3.4vw, 34px); color: #e8eef6; padding: 44px 0 8px; }
+  .cta-link { display: inline-block; margin-top: 28px; font-family: var(--mono); font-size: 13px;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--blue);
+    border: 1px solid rgba(107,156,224,0.3); padding: 14px 28px; border-radius: 8px;
+    transition: all .25s ease; }
+  .cta-link:hover { border-color: var(--blue); color: #e8eef6; background: rgba(107,156,224,0.06); }
 
   /* ============ FOOTER ============ */
   footer { border-top: 1px solid rgba(143,163,189,0.14); padding: 34px 0 60px; }
@@ -118,10 +113,6 @@
   .foot-row, .foot-row a { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); }
   .foot-row a:hover { color: #fff; }
   .foot-note { font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--mist); margin-top: 26px; }
-  .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--blue); font-weight: 400; }
-  .cite { font-family: var(--mono); font-size: 9px; color: var(--fade); vertical-align: super; }
-  .footnotes { margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(143,163,189,0.14); }
-  .footnotes p { font-family: var(--mono); font-size: 11px; line-height: 1.8; color: var(--fade); }
 </style>
 </head>
 <body>
@@ -140,11 +131,8 @@
     <div class="kicker">a shipyard manifesto · a clearing house for the agent economy</div>
     <h1>Death to <em>Tokenmaxxing.</em></h1>
     <p class="hero-sub">
-      The wallet and the context window are the same asset class. One principal,
-      many agents, one balance. This is the case for the harbor that keeps it.
-    </p>
-    <p class="hero-sub">
-      The router already runs: one endpoint, per-call settlement in USDC, typically 70% under baseline. What follows is the argument for the rest of the ship.
+      The wallet and the context window are the same asset class. One balance,
+      one router, per-call settlement. This is the case for the harbor that keeps it.
     </p>
   </div>
   <div class="scroll-cue">↓</div>
@@ -154,129 +142,39 @@
 
   <div class="sec">
     <div class="secno">I · The Premise</div>
-    <h2>Both AI and crypto are <em>token management.</em></h2>
-    <p class="lede">Tokens in, tokens out. The wallet and the context window are the same asset class — one converts capital into intelligence, the other converts intelligence back into capital. Every product in both industries is, beneath the branding, an exchange rate between the two.</p>
-    <p>What no one has built is the layer that manages that exchange rate deliberately. This is that layer.</p>
-    <p>The economic unit is shifting. Where the firm of the twentieth century organized people, the firm now emerging organizes agents: one principal, many autonomous agents, with compute standing in for headcount. The solopreneur operating such a fleet is not a hobbyist archetype but the early instance of a general pattern — and the pattern arrives with a balance sheet no accounting category describes. Tokens are the cost of goods sold; the credits that fund them expire like perishable inventory; and the capital that could finance the whole operation sits idle in wallets earning nothing.</p>
-    <p>Three observations follow. First, the incumbent AI houses behave not as technology firms but as the chartered monopolies of the seventeenth century — the East India Companies: exclusive routes, tolls set at pleasure, and the prerogative of declaring what cargo may be carried at all. Second, users have been conscripted into financial labor — reconciling a dozen gated accounts, metering their own consumption, watching perishable credits expire unspent — work that is tedious, unaudited, and uneconomical. Third, the instruments to correct this now exist: machine-speed stablecoin settlement (x402), yield-bearing custody of idle balances, and open-weight models performant enough on consumer silicon to constitute real supply.</p>
-    <p>We call the quantity that matters <b>compute net worth</b> — capital, credits, and consumption, accounted as one. This manifesto describes the house that keeps it.</p>
+    <h2>This started from my own <em>pain.</em></h2>
+    <p class="lede">This started from my own pain as a founder trying to figure out the AI and crypto tooling space. There are so many tools and subscriptions to try. And I can never use my current subscription and context where I want to. So I end up having to cobble things together.</p>
+    <p>That is making being a hobbyist expensive. I know there is a better way.</p>
+    <p>Because here is what gets me: it's incredible that I can just make things. It's incredible that x402 lets me access software and APIs without an enterprise contract. No sales call. No procurement. No annual commit. I could just make it work.</p>
+    <p>My AI and software don't let me do the same.</p>
   </div>
 
   <div class="sec">
-    <div class="secno">II · The Invisible Labor</div>
-    <h2>Death to <em>Tokenmaxxing.</em></h2>
-    <p>Consider what the power user of 2026 actually does. They maintain a dozen provider accounts, each with its own meter, rate limits, trial credits, and terms that change without notice. They ration their own consumption, choosing which key to draw down against which task, like a quartermaster apportioning water. They perform — unpaid, and often at midnight — the full function of a chief financial officer: reconciliation, budgeting, procurement, expiry management, for a trading venture they did not notice they were running.</p>
-    <p>This is tokenmaxxing, and it deserves a precise name precisely because it is invisible labor. The remedy it demands is not a meter that never runs — measurement is the honest price of intelligence — but the abolition of the <b>human labor</b> of management. Reconciliation, expiry, route selection, budget enforcement: these are mechanical tasks. They belong to a machine, operating on the principal's behalf, in the principal's interest, answerable to the principal's ledger.</p>
-    <p>The economic principle buried here is old. When coins of unequal quality circulate together, Gresham's law holds that bad money drives out good — the debased coin is spent first, the sound coin hoarded. An expiring trial credit held against a paid dollar balance is exactly this condition, and every rational user already knows what to do about it. What they lack is not the knowledge but the mechanism. The expiry-aware scheduler is Gresham's law operationalized — applied to the inventory of intelligence, automatically, per request.</p>
-    <div class="pull">Death to tokenmaxxing. Long live the ledger.</div>
+    <div class="secno">II · The Problem</div>
+    <h2>Your software can <em>strand you.</em></h2>
+    <p>I'm trying a new model and I immediately run out of my subscription credits. My context lives in one app, my credits in another, my wallet somewhere else, and none of them talk to each other. Your agent or your business can shut down over the weekend because you lose access to a fable model. Think about that. The software you pay for is allowed to strand the thing you built with it.</p>
+    <p>I like open models and things like Venice. The direction is right. But access is still gated by whoever issued the credits, the credits still expire, and the meter still sits on the wrong side of the product.</p>
   </div>
 
   <div class="sec">
-    <div class="secno">III · Sovereignty</div>
-    <h2>Chart your <em>own course.</em></h2>
-    <p>The monopolies of intelligence are not merely expensive; they are discretionary. They decide what your agents may say, what they may read, and what they may build — and they revise these determinations unilaterally, mid-voyage. A business whose cost of goods is tokens, routed exclusively through such harbors, trades under a flag it does not control.</p>
-    <p>History is unambiguous about what follows. When the Navigation Acts made lawful trade more expensive than enforcement, smuggling emerged not as deviance but as arbitrage — the market's systematic answer to tolls set above transaction costs. When the chartered companies restricted what could be carried, free ports and entrepôts arose at the margins — the Hansa's kontors, Hamburg, later Singapore — and captured the trade the monopolies priced away.</p>
-    <p>The same open water now exists in intelligence. Open-weight models have closed most of the performance gap for honest workloads; run on one's own silicon, they constitute private supply — uncensored, unlogged, and owned outright. Venice.ai demonstrated the demand empirically: private, permissionless inference is a mainstream preference, not a fringe one. The correct architecture is not a rejection of frontier capability but <b>chart-agnosticism</b>: frontier capacity when the work justifies it, private capacity when the principal wants no flag overhead — quality-adjusted, price-aware, chosen per request by the principal's own policy rather than the provider's.</p>
-    <div class="pull">The age of chartered intelligence is ending. Chart your own course.</div>
+    <div class="secno">III · The Answer</div>
+    <h2>So I made <em>Open Shipyard.</em></h2>
+    <p>Shipyard is an inference router. You hold one balance in USDC. Every call settles per call, at the model's actual price, across providers. No expiring credits. No subscription that dies at the end of the month whether you used it or not. No coin, no token — your balance is dollars, because a compute budget is not an investment thesis.</p>
+    <div class="pull">The claim underneath is simple: your wallet and your context window are the same asset class. The money you spend on inference and the access it buys should move together, with you, to whatever model or tool you want to try next. Today they live in silos and each silo charges rent. The router is the wedge that breaks that.</div>
   </div>
 
   <div class="sec">
-    <div class="secno">IV · The Thesis</div>
-    <h2>Harbor your capital where your fleet is <em>provisioned.</em></h2>
-    <p>Not ideology — the oldest rational behavior in commerce. Merchants banked where their cargo traded because capital and commerce must be co-located for the voyage to compound. The <i>commenda</i> of the medieval Mediterranean — capital advanced by one party, navigation and labor by another, returns split by contract — financed the age of sail precisely because it let holders of capital participate in voyages they could not personally conduct. The staking treasury is the same instrument for compute: capital in, routed consumption out, yield from the trade.</p>
-    <p>Three decks, one ship — two already take water:</p>
-    <div class="deck">
-      <h3><span>01</span>The Ledger — see everything · <span class="tag">first form live</span></h3>
-      <p>Every account, every credit and its expiry, every agent's rate of consumption, every unit of the treasury and what it earns — one manifest, in real time. Not a spectator instrument: built atop the Navigator, it reads and it <b>acts</b>.</p>
+    <div class="secno">IV · The State</div>
+    <h2>The router is <em>live.</em></h2>
+    <p>Per-call USDC settlement is live. The rest — a real ledger, portable context, a balance that never expires because it was never a coupon — is a design we are proving piece by piece, in the open.</p>
+    <p>I made Open Shipyard because I wanted to build something, and I wanted to build tools that get used by other developers and solo founders. People like me, who just want to make things without asking a subscription for permission.</p>
+    <div class="rally">If that's you, come build.</div>
+    <div style="text-align:center;">
+      <a class="cta-link" href="/connect">Connect Shipyard Inference →</a>
     </div>
-    <div class="deck">
-      <h3><span>02</span>The Navigator — spend optimally · <span class="tag">live</span></h3>
-      <p>A routing layer across every inventory the principal owns and everything the agents buy: their accounts (BYOK — orchestrated on the principal's behalf, never pooled, never resold), their hardware, their treasury, and the long tail of paid tool and data APIs. Every call is a procurement decision: perishable credit drawn before expiry, private hardware before paid routes, frontier capacity when the work justifies it — always quality-adjusted. A policy engine scores every route on quality, latency, price, and privacy, compiling the live quality-versus-price curves that neither a static marketplace nor a prepaid catalog can produce.</p>
-    </div>
-    <div class="deck">
-      <h3><span>03</span>The Treasury — fund it productively · <span class="tag">the voyage, sequenced in X</span></h3>
-      <p>The Treasury, as designed: staked capital works while the fleet sleeps — yield carried by established, regulated venues (we route to vaults and never issue yield ourselves), wholesale pre-commitments earning the merchant's spread, every agent's budget drawn from the same balance.</p>
-    </div>
-    <p>Note the direction of the asymmetry. The price of intelligence has deflated roughly an order of magnitude per year per unit of capability.<sup class="cite">[1]</sup> A treasury long stablecoin and short capacity is therefore on the right side of the trade: wholesale contracts reprice downward on renewal, and the spread widens with time. Deflation, which punishes the builders of supply, works for the holders of the balance.</p>
-    <p>The same deflation disciplines the house. Pre-committed capacity is a wasting asset in a falling market, so the treasury commits short and reprices on renewal rather than holding inventory. And a fee taken on spend deflates with the unit — so the house's take is a share of measured savings against the incumbent baseline, a spread that stays wide precisely because the baseline reprices slower than the open water.</p>
-  </div>
-
-  <div class="sec">
-    <div class="secno">V · The Existence Proof</div>
-    <h2>The mechanic already trades. Both proof and <em>warning.</em></h2>
-    <p>Venice (VVV) — stake and infer — appreciated roughly tenfold in ten months; DIEM tokenized a dollar-a-day of perpetual inference access. The behavior is proven at consumer scale. But both wrapped the entitlement in a protocol coin, and the entitlement decoupled from the underlying trade: as the coin appreciated tenfold, the holder's effective price of compute rose with it — even as the true cost of intelligence fell tenfold a year.</p>
-    <p>This is the South Sea error: an instrument appreciated as speculation, severed from the cash flows of the venture it represents. We decline to mint it. To be honest about what is declined: the coin was also their cold-start engine — supply, demand, and the guarantee in one instrument. We bootstrap the slow way instead — a live router, a free local tier, and a promotional check at the door (X). Capital in stablecoin, entitlement denominated in pegged units, yield through existing regulated venues. <b>Our unit is pegged — purchasing power rides the deflation of compute, not the sentiment of a chart.</b> They are long their own token; we are short the price of intelligence. No protocol coin, no emissions, no speculative toll between the principal and the cargo.</p>
-  </div>
-
-  <div class="sec">
-    <div class="secno">VI · The Mechanism</div>
-    <h2>Three classes of <em>inventory.</em></h2>
-    <table>
-      <tr><th>Inventory</th><th>Custody</th><th>Source</th></tr>
-      <tr><td>Hardware</td><td>Pooled</td><td>Consumer silicon — private fleets and idle-device networks</td></tr>
-      <tr><td>Capital</td><td>Pooled</td><td>Staked stablecoin — the treasury and the demand guarantee</td></tr>
-      <tr><td>External credits</td><td>Orchestrated, never custodied</td><td>The principal's own accounts, consumed in their interest, never resold</td></tr>
-    </table>
-    <p>Settlement will follow the oldest rule of honest ports: payment on delivery, not before. Providers are paid per successful call — escrow enforced by protocol, quality gates enforced economically rather than reputationally. And as the bill of exchange let medieval merchants transact across hostile borders without moving specie, the machine-payment protocol lets agents settle across provider boundaries without custody risk — a fourteenth-century instrument finding its successor at machine scale.</p>
-    <p>Demand is heterogeneous, so pricing is tiered: each class of supply carries its own dynamic fee curve, rising with congestion, accruing to holders of the treasury, floored by quality. Capital without hardware gains exposure to the compute trade; hardware without demand gains guaranteed volume. The clearing house is where has-compute meets has-capital — and most of our principals are, in time, both.</p>
-  </div>
-
-  <div class="sec">
-    <div class="secno">VII · The Market</div>
-    <h2>Shipyards, tollhouses, and <em>entrepôts.</em></h2>
-    <ul>
-      <li>The <b>idle-device networks</b> (Darkbloom-class<sup class="cite">[2]</sup>) are our shipyards, not rivals: we are their demand engine, and then their port of entry.</li>
-      <li>The <b>per-call marketplaces</b> (UsePod-class<sup class="cite">[3]</sup>) are one route on the chart, nothing more. A payment wall over an API is a weekend's work — the least defensible position on the coast.</li>
-      <li>The <b>open tool catalogs</b> (Locus-class<sup class="cite">[4]</sup>) are provisioning partners: breadth for our treasury; intelligence, settlement, and yield remain ours.</li>
-      <li>Whoever holds the balance holds the relationship.</li>
-    </ul>
-    <p>The monopolies will respond as monopolies have since the seventeenth century: bundling, preferential docks, the occasional Act of Parliament. We answer as the entrepôts always have — open ledgers, better rates, and no flag but the principal's.</p>
-    <p><b>Why now:</b> agents became economic actors with machine-settled payment; consumer silicon became a viable inference tier; stablecoin yield normalized — each within the last eighteen months. The winds converged.</p>
-  </div>
-
-  <div class="sec">
-    <div class="secno">VIII · The Moat</div>
-    <h2>Marketplaces have no memory. We are the <em>position.</em></h2>
-    <ol>
-      <li><b>Routed flow.</b> A vault can be forked; a live fleet's routing data cannot. Every request improves the charts.</li>
-      <li><b>The port network.</b> Wholesale contracts and volume guarantees compound.</li>
-      <li><b>The balance.</b> Once treasury, routes, and agent budgets sit in one harbor, departure means a new voyage with an empty hold — in every direction.</li>
-    </ol>
-  </div>
-
-  <div class="sec">
-    <div class="secno">IX · The Regulatory Posture</div>
-    <h2>Designed in, not <em>retrofitted.</em></h2>
-    <p>Yield is carried by existing regulated venues — we route to vaults, we never issue yield. The BYOK layer holds zero custody — we orchestrate the principal's own assets on the principal's behalf: a sophisticated client, not a marketplace. Staking opens by invitation among known parties, on counsel's architecture. The credit is a balance, not a token. Third-party capacity is never resold.</p>
-  </div>
-
-  <div class="sec">
-    <div class="secno">X · The Voyage</div>
-    <h2>From a fleet of one to the open <em>coast.</em></h2>
-    <ol>
-      <li><b>Our own fleet.</b> Our hardware, our agents, our orphaned credits: a company of one proving the loop before another principal boards.</li>
-      <li><b>By invitation.</b> Known parties, known counterparties — small enough to remain, in every dimension that matters, friends testing a system.</li>
-      <li><b>The open wedge.</b> The Navigator and the Ledger open to any trader with keys to connect: zero-risk, zero-capital first contact — the account opened with a promotional check.</li>
-      <li><b>The full harbor.</b> Staking opens; capital-consciousness closes the loop.</li>
-    </ol>
-  </div>
-
-  <div class="sec">
-    <div class="secno">XI · The Pitch</div>
-    <h2>One principal. Many agents. One <em>harbor.</em></h2>
-    <p>Solopreneurs run businesses whose cost of goods is tokens, managed as if it were 2023 — a dozen gated ports, expiring credits, idle capital, and no manifest. We are the financial house that sees all of it, routes across it at the best price, and turns idle capital into fuel.</p>
-    <p><b>Both AI and crypto are token management — and someone was always going to build the exchange for both. We are building the harbor.</b></p>
-    <div class="rally">Death to tokenmaxxing.</div>
   </div>
 
 </article>
-
-<div class="wrap footnotes">
-  <p>[1] Inference-cost deflation trajectory per Stanford AI Index / Epoch AI estimates. The house earns a share of the savings it finds, never a markup on the route.</p>
-  <p>[2] Darkbloom-class: consumer-GPU and idle-device networks that pool private silicon for paid inference.</p>
-  <p>[3] UsePod-class: per-call inference marketplaces — a payment wall over provider APIs.</p>
-  <p>[4] Locus-class: open catalogs of paid tool and data APIs for agents.</p>
-</div>
 
 <footer class="wrap">
   <div class="foot-row">
