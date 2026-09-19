@@ -1,237 +1,249 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shipyard Inference — the inference layer your agents pay for themselves</title>
-    <meta
-      name="description"
-      content="One endpoint in front of every model. Routes each call to the cheapest capable model, fails over automatically, settles per request in USDC over x402 — and pays your agent to think. Keep your model; routing is optional."
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <style>
-      :root {
-        --bg: #06080c; --bg2: #0a0e15; --panel: #0c1117; --panel2: #10161f;
-        --line: #1a232f; --line2: #283544;
-        --fg: #e9eef5; --muted: #8a97a8; --dim: #586676;
-        --term: #4fe3c1; --term2: #7c9cff; --amber: #f0a868; --green: #5fe0ac;
-        --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-        --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
-      }
-      * { box-sizing: border-box; }
-      html { scroll-behavior: smooth; }
-      body {
-        margin: 0; background: var(--bg); color: var(--fg);
-        font: 16px/1.65 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden;
-      }
-      body::before {
-        content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-        background:
-          radial-gradient(900px 520px at 78% -8%, rgba(79,227,193,0.10), transparent 60%),
-          radial-gradient(700px 480px at 8% 4%, rgba(124,156,255,0.08), transparent 55%),
-          linear-gradient(transparent 0 2px, rgba(255,255,255,0.012) 2px 3px);
-        background-size: auto, auto, 100% 3px;
-      }
-      .wrap { max-width: 1000px; margin: 0 auto; padding: 0 26px; position: relative; z-index: 1; }
-      a { color: var(--term); text-decoration: none; }
-      a:hover { color: var(--fg); }
-      .mono { font-family: var(--mono); }
-      .kicker {
-        font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.18em;
-        text-transform: uppercase; color: var(--dim);
-      }
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Shipyard Inference — the inference layer your agents pay for themselves</title>
+<meta name="description" content="One endpoint in front of every model. Routed to the cheapest capable model, failed over automatically, settled per request in USDC over x402 — and pays your agent to think."/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"/>
+<style>
+  /* ============================================================
+     "THE CROSSING" — cinematic hero: the grainy duotone ship huge
+     and atmospheric in the dark, big Playfair serif, slow parallax
+     drift, quiet mono details. Sexy = scale + mood + restraint.
+     ============================================================ */
+  :root {
+    --night: #050a18;
+    --deep: #0a1226;
+    --mist: #b9c9de;
+    --fade: #8fa3bd;
+    --blue: #6b9ce0;
+    --serif: "Playfair Display", Georgia, serif;
+    --sans: "Inter", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--night); color: #e8eef6; font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
 
-      header {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 22px 0; border-bottom: 1px solid var(--line);
-      }
-      .brand { font-family: var(--mono); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; color: var(--fg); }
-      .brand .sig { color: var(--term); }
-      .brand .dim { color: var(--dim); }
-      nav { display: flex; gap: 22px; align-items: center; }
-      nav a { font-family: var(--mono); font-size: 13px; color: var(--muted); }
-      nav a:hover { color: var(--term); }
-      nav .ghost { border: 1px solid var(--line2); border-radius: 8px; padding: 7px 13px; color: var(--fg); }
-      nav .ghost:hover { border-color: var(--term); color: var(--term); }
-      @media (max-width: 720px) { nav .hideable { display: none; } }
+  /* ---- the film grain over everything (subtle, static) ---- */
+  body::after {
+    content: ""; position: fixed; inset: -50%; z-index: 40; pointer-events: none; opacity: .22;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+  }
 
-      .hero { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 40px; align-items: center; padding: 64px 0 38px; }
-      @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 30px; padding: 44px 0 28px; } }
-      .pill {
-        display: inline-flex; align-items: center; gap: 9px; font-family: var(--mono);
-        font-size: 11.5px; letter-spacing: 0.04em; color: var(--term);
-        border: 1px solid #1f3a36; background: #0b1714; border-radius: 999px; padding: 5px 13px; margin-bottom: 24px;
-      }
-      .pill .blip { width: 7px; height: 7px; border-radius: 50%; background: var(--term); box-shadow: 0 0 9px var(--term); animation: pulse 2.4s infinite; }
-      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-      h1 { font-size: clamp(33px, 5.2vw, 52px); line-height: 1.05; margin: 0 0 20px; letter-spacing: -0.03em; font-weight: 700; }
-      h1 .grad { color: var(--term); }
-      .sub { font-size: 17.5px; color: var(--muted); max-width: 540px; margin: 0 0 30px; line-height: 1.6; }
-      .sub em { color: var(--fg); font-style: normal; }
-      .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-      .btn {
-        display: inline-flex; align-items: center; gap: 8px; padding: 12px 19px; border-radius: 10px;
-        font-family: var(--mono); font-weight: 500; font-size: 13.5px; border: 1px solid transparent; cursor: pointer; transition: transform .12s ease, border-color .12s ease;
-      }
-      .btn:hover { transform: translateY(-1px); }
-      .btn.primary { background: var(--term); color: #032019; box-shadow: 0 0 0 1px rgba(79,227,193,0.35), 0 8px 30px -10px rgba(79,227,193,0.5); }
-      .btn.primary:hover { color: #032019; }
-      .btn.ghost { border-color: var(--line2); color: var(--fg); background: rgba(255,255,255,0.02); }
-      .btn.ghost:hover { border-color: var(--term); color: var(--term); }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 30px; position: relative; z-index: 5; }
+  a { color: inherit; text-decoration: none; }
 
-      .term { background: var(--panel); border: 1px solid var(--line2); border-radius: 13px; overflow: hidden; box-shadow: 0 30px 80px -40px rgba(0,0,0,0.9); }
-      .term-bar { display: flex; align-items: center; gap: 7px; padding: 11px 15px; background: var(--panel2); border-bottom: 1px solid var(--line); }
-      .term-bar .d { width: 11px; height: 11px; border-radius: 50%; }
-      .d.r { background: #ff5f57; } .d.y { background: #febc2e; } .d.g { background: #28c840; }
-      .term-bar .ttl { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--dim); }
-      .term-body { padding: 17px 17px 19px; font-family: var(--mono); font-size: 13px; line-height: 1.75; }
-      .term-body .ln { white-space: pre-wrap; }
-      .pr { color: var(--term2); } .ok { color: var(--term); } .am { color: var(--amber); } .mut { color: var(--dim); } .wh { color: var(--fg); }
-      .cur { display: inline-block; width: 8px; height: 15px; background: var(--term); vertical-align: -2px; margin-left: 2px; animation: blink 1.1s steps(1) infinite; }
-      @keyframes blink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+  nav { position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 22px 34px; mix-blend-mode: screen; }
+  .brand { font-family: var(--mono); font-size: 12px; letter-spacing: 0.24em; text-transform: uppercase; color: #cdd9e8; }
+  nav .links { display: flex; gap: 26px; }
+  nav .links a { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); transition: color .25s ease; }
+  nav .links a:hover { color: #fff; }
+  @media (max-width: 720px) { nav .links { display: none; } }
 
-      .statusline {
-        margin: 6px 0 8px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-        font-family: var(--mono); font-size: 12.5px; color: var(--muted);
-        border: 1px dashed var(--line2); border-radius: 9px; padding: 9px 14px; background: rgba(255,255,255,0.015);
-      }
-      .statusline .anchor { color: var(--term); } .statusline .spon { color: var(--fg); } .statusline .sep { color: var(--dim); }
+  /* ============ HERO: ship fills the screen ============ */
+  .hero { position: relative; height: 100vh; min-height: 640px; overflow: hidden;
+    display: flex; align-items: flex-end; }
+  .ship {
+    position: absolute; inset: -6%;
+    background: url("ship.png") 62% 42% / min(60vw, 900px) auto no-repeat,
+                radial-gradient(1200px 700px at 72% 30%, rgba(61,111,181,0.22), transparent 65%),
+                linear-gradient(180deg, #050a18 0%, #0a1226 60%, #050a18 100%);
+    image-rendering: pixelated;
+    opacity: 0.9;
+    animation: drift 60s ease-in-out infinite alternate;
+  }
+  @keyframes drift {
+    from { transform: scale(1) translate(0, 0); }
+    to   { transform: scale(1.06) translate(1.5%, -1%); }
+  }
+  @media (prefers-reduced-motion: reduce) { .ship { animation: none; } }
+  @media (max-width: 720px) {
+    .ship { background-position: 38% 46%; }
+  }
+  /* scrim behind hero text so type always sits on darkness */
+  .hero::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background: linear-gradient(90deg, rgba(5,10,24,0.88) 0%, rgba(5,10,24,0.66) 34%, rgba(5,10,24,0.18) 58%, transparent 75%);
+  }
+  @media (max-width: 720px) {
+    .hero::before { background: linear-gradient(180deg, rgba(5,10,24,0.55) 0%, rgba(5,10,24,0.3) 34%, rgba(5,10,24,0.85) 72%, var(--night) 100%); }
+  }
+  /* vignette + bottom fade so type sits on it */
+  .hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      linear-gradient(180deg, rgba(5,10,24,0.35) 0%, transparent 30%, transparent 55%, rgba(5,10,24,0.92) 92%, var(--night) 100%),
+      radial-gradient(140% 100% at 50% 0%, transparent 60%, rgba(5,10,24,0.5) 100%);
+  }
+  .hero-copy { position: relative; z-index: 2; padding: 0 0 11vh; max-width: 700px; }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
+    color: #d5e2f0; opacity: 1; margin-bottom: 26px;
+    display: flex; align-items: center; gap: 12px;
+    text-shadow: 0 1px 3px rgba(5,10,24,0.9), 0 0 16px rgba(5,10,24,0.95);
+  }
+  .kicker::before { content: ""; width: 34px; height: 1px; background: var(--fade); }
+  h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: clamp(46px, 7.2vw, 88px); line-height: 1.02; letter-spacing: -0.015em;
+    margin-bottom: 28px; text-wrap: balance;
+  }
+  h1 em { font-style: italic; font-weight: 400; color: var(--blue); }
+  .hero-sub { font-size: 17px; color: #d3dfec; max-width: 520px; margin-bottom: 40px; font-weight: 400;
+    text-shadow: 0 1px 3px rgba(5,10,24,0.85), 0 0 22px rgba(5,10,24,0.95); }
+  .hero-sub b { color: #fff; font-weight: 500; }
+  .cta { display: flex; gap: 30px; align-items: baseline; flex-wrap: wrap; }
+  .cta .primary {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #071222; background: #cfe0f2; padding: 16px 30px; border-radius: 999px;
+    transition: background .3s ease, transform .3s ease;
+  }
+  .cta .primary:hover { background: #fff; transform: translateY(-2px); }
+  .cta .quiet { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); border-bottom: 1px solid rgba(110,130,156,0.4); padding-bottom: 4px; transition: color .25s ease, border-color .25s ease; }
+  .cta .quiet:hover { color: #fff; border-color: #fff; }
 
-      section { padding: 30px 0; }
-      .seclabel { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-      .seclabel::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-      h2 { font-size: clamp(22px, 3vw, 27px); letter-spacing: -0.02em; margin: 0; font-weight: 600; }
-      .lede { color: var(--muted); margin: 6px 0 0; max-width: 640px; }
+  /* scroll cue */
+  .scroll-cue { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 3;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.4em; color: var(--fade); text-transform: uppercase; opacity: .7; }
 
-      .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 8px; }
-      @media (max-width: 760px) { .grid3 { grid-template-columns: 1fr; } }
-      .panel {
-        background: var(--panel); border: 1px solid var(--line); border-radius: 13px; padding: 20px 19px; position: relative;
-        transition: border-color .15s ease, transform .15s ease;
-      }
-      .panel:hover { border-color: var(--line2); transform: translateY(-2px); }
-      .panel .num { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; color: var(--term); margin-bottom: 12px; }
-      .panel h3 { margin: 0 0 7px; font-size: 16.5px; font-weight: 600; letter-spacing: -0.01em; }
-      .panel p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
-      .panel p strong { color: var(--fg); font-weight: 600; }
+  /* ============ BELOW THE FOLD: quiet dark editorial ============ */
+  .below { background: linear-gradient(180deg, var(--night), #040814 60%, var(--night)); }
+  section { padding: 90px 0; border-top: 1px solid rgba(110,130,156,0.14); }
+  section:first-child { border-top: 0; }
+  .sec-k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--blue); margin-bottom: 18px; }
+  h2 { font-family: var(--serif); font-weight: 600; font-size: clamp(30px, 4vw, 42px); line-height: 1.1; letter-spacing: -0.01em; margin-bottom: 20px; max-width: 640px; }
+  h2 em { font-style: italic; font-weight: 400; color: var(--blue); }
+  section p { color: var(--mist); max-width: 60ch; font-size: 15.5px; margin-bottom: 18px; }
+  section p b { color: #fff; font-weight: 500; }
 
-      .market { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line2); border-radius: 15px; padding: 26px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
-      .market h3 { margin: 0 0 6px; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
-      .market p { margin: 0; color: var(--muted); max-width: 560px; font-size: 14.5px; }
+  .split { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 60px; align-items: center; }
+  @media (max-width: 860px) { .split { grid-template-columns: 1fr; gap: 30px; } }
 
-      .codewrap { position: relative; margin-top: 14px; }
-      pre {
-        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 17px 16px;
-        overflow-x: auto; font-size: 13px; line-height: 1.7; font-family: var(--mono); margin: 0; color: var(--fg);
-      }
-      pre .c { color: var(--dim); } pre .k { color: var(--term2); } pre .s { color: var(--green); } pre .fn { color: var(--amber); }
-      .copy {
-        position: absolute; top: 10px; right: 10px; font-family: var(--mono); font-size: 11px; color: var(--muted);
-        background: var(--panel2); border: 1px solid var(--line2); border-radius: 7px; padding: 4px 10px; cursor: pointer;
-      }
-      .copy:hover { color: var(--term); border-color: var(--term); }
-      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-      .tab { font-family: var(--mono); font-size: 12.5px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
-      .tab.on { color: var(--term); border-color: var(--term); background: #0b1714; }
-      .hide { display: none; }
+  .ledger { border: 1px solid rgba(110,130,156,0.2); border-radius: 14px; overflow: hidden; background: rgba(10,18,38,0.5); backdrop-filter: blur(8px); }
+  .ledger-head { display: flex; justify-content: space-between; padding: 14px 20px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fade); border-bottom: 1px solid rgba(110,130,156,0.14); }
+  .ledger-row { display: grid; grid-template-columns: 1.6fr 1fr 1fr auto; gap: 14px; padding: 15px 20px; font-family: var(--mono); font-size: 12.5px; color: var(--mist); border-bottom: 1px solid rgba(110,130,156,0.09); align-items: center; }
+  .ledger-row:last-child { border-bottom: 0; }
+  .ledger-row .who b { color: #e8eef6; font-weight: 500; }
+  .ledger-row .num { font-family: var(--serif); font-size: 18px; color: #fff; text-align: right; font-variant-numeric: tabular-nums; }
+  .ledger-row .num.blue { color: var(--blue); }
+  .tag { font-size: 10px; letter-spacing: 0.1em; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(61,111,181,0.4); color: #9db8dd; justify-self: end; }
 
-      footer { color: var(--muted); font-size: 13.5px; padding: 38px 0 64px; border-top: 1px solid var(--line); margin-top: 26px; line-height: 1.7; }
-      footer .mono { color: var(--dim); }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <header>
-        <div class="brand"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</div>
-        <nav>
-          <a class="hideable" href="/connect">connect</a>
-          <a class="hideable" href="/advertise">advertise</a>
-          <a class="hideable" href="/me">earnings</a>
-          <a class="hideable" href="/dashboard/">dashboard</a>
-          <a class="ghost" href="/portal/">portal</a>
-          <a class="ghost" href="https://github.com/BiscayneDev/shipyard-inference" target="_blank" rel="noopener">github ↗</a>
-        </nav>
-      </header>
+  .code { background: rgba(10,18,38,0.65); border: 1px solid rgba(110,130,156,0.18); border-radius: 12px; padding: 20px 22px; font-family: var(--mono); font-size: 13px; line-height: 1.9; color: #d7e2f0; overflow-x: auto; white-space: pre; max-width: 640px; }
+  .code .c { color: #5e7391; } .code .k { color: #8fb3e0; } .code .s { color: #b9d4f0; }
 
-      <div class="hero">
+  footer { padding: 44px 0 70px; border-top: 1px solid rgba(110,130,156,0.14); color: var(--fade); font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; }
+  footer .cols { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  footer a { color: var(--mist); border-bottom: 1px solid rgba(110,130,156,0.3); }
+  footer a:hover { color: #fff; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">shipyard · inference</div>
+  <div class="links">
+    <a href="#route">route</a><a href="#reliability">reliability</a><a href="#models">models</a><a href="#settle">pricing</a><a href="#try">connect</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <div class="ship" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="hero-copy">
+      <div class="kicker">openai-compatible · one endpoint · x402 settlement</div>
+      <h1>The inference layer that <em>pays for itself.</em></h1>
+      <p class="hero-sub">
+        One endpoint in front of every model — routed to the cheapest capable
+        provider, failed over when one blinks, billed per call in <b>USDC</b>.
+        No subscription, no markup — just <b>cheaper, more reliable inference</b>.
+      </p>
+      <div class="cta">
+        <a class="primary" href="/connect">connect your ide</a>
+        <a class="quiet" href="/portal/">try the chat portal →</a>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-cue">↓</div>
+</div>
+
+<!-- ============ BELOW ============ -->
+<div class="below">
+  <div class="wrap">
+
+    <section id="route">
+      <div class="split">
         <div>
-          <span class="pill"><span class="blip"></span> openai-compatible · x402-native · agent-ready</span>
-          <h1>The inference layer your agents <span class="grad">pay for themselves.</span></h1>
-          <p class="sub">
-            One endpoint in front of every model. Shipyard routes each call to the cheapest
-            capable model, fails over when a provider blinks, and settles per request in USDC
-            over x402 — so your agent <em>buys its own compute</em> and <em>earns while it thinks</em>.
-            Keep your own model; routing is optional. One command to connect.
+          <div class="sec-k">01 — route</div>
+          <h2>The cheapest capable model. <em>Every call.</em></h2>
+          <p>
+            Auto-tiering per request, circuit breakers per provider, a failover
+            receipt on every response. Typically <b>70%+ under baseline</b> —
+            and your own model stays yours; routing is opt-in.
           </p>
-          <div class="cta">
-            <a class="btn primary" href="/connect">$ connect your IDE →</a>
-            <a class="btn ghost" href="/portal/">try the chat portal</a>
-            <a class="btn ghost" href="/dashboard/">watch live traffic</a>
-          </div>
         </div>
-        <div class="term" aria-hidden="true">
-          <div class="term-bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="ttl">~/agent — shipyard</span></div>
-          <div class="term-body" id="boot"></div>
+        <div class="ledger">
+          <div class="ledger-head"><span>live</span><span>settled on solana</span></div>
+          <div class="ledger-row"><span class="who"><b>claude-code</b> / a91f</span><span>gpt-5-nano ← failover</span><span class="num blue">−71%</span><span class="tag">saved</span></div>
+          <div class="ledger-row"><span class="who"><b>hermes</b> / 4d20</span><span>claude-haiku-4.5</span><span class="num blue">−58%</span><span class="tag">saved</span></div>
+          <div class="ledger-row"><span class="who"><b>dock-mate</b> / 77c3</span><span>auto → llama-4-scout</span><span class="num blue">−84%</span><span class="tag">saved</span></div>
         </div>
       </div>
+    </section>
 
-      <div class="statusline" aria-label="Example Claude Code status line">
-        <span class="anchor">⚓ shipyard</span><span class="sep">·</span>
-        <span>saved <span class="wh">$0.0142</span> (71%)</span><span class="sep">·</span>
-        <span class="spon">🤖 Paybox — give your agent a wallet</span><span class="sep">·</span>
-        <span>+<span class="wh">$0.0025</span> earned</span>
+    <section id="reliability">
+      <div class="split">
+        <div>
+          <div class="sec-k">02 — reliability</div>
+          <h2>When a provider blinks, <em>you don't.</em></h2>
+          <p>
+            Circuit breakers per provider, health tracking, and automatic
+            failover to the next rung — with the full receipt on every
+            response. Your agent never sees a provider outage; it just sees
+            an answer.
+          </p>
+          <p>
+            <b>Request <code>model: auto</code></b> and the gateway tiers,
+            costs, and fails over for you — pinned models stay pinned, and
+            local Ollama traffic always runs free.
+          </p>
+        </div>
+        <div class="ledger">
+          <div class="ledger-head"><span>failover receipts</span><span>x_shipyard</span></div>
+          <div class="ledger-row"><span class="who"><b>openai</b> → <b>nous</b></span><span>circuit open</span><span class="num">312<small style="font-size:11px">ms</small></span><span class="tag">ok</span></div>
+          <div class="ledger-row"><span class="who"><b>gpt-5-mini</b> → <b>nano</b></span><span>tier: refactor</span><span class="num">−71%</span><span class="tag">ok</span></div>
+          <div class="ledger-row"><span class="who"><b>local</b> / ollama</span><span>free tier</span><span class="num">$0.00</span><span class="tag">free</span></div>
+        </div>
       </div>
+    </section>
 
-      <section>
-        <div class="seclabel"><span class="kicker">// what you get</span></div>
-        <div class="grid3">
-          <div class="panel">
-            <div class="num">01 / ROUTE</div>
-            <h3>Cheapest capable model, every call</h3>
-            <p>Each request lands on the lowest-cost model that can actually handle it — typically <strong>70%+</strong> under baseline — with automatic failover when a provider blinks.</p>
-          </div>
-          <div class="panel">
-            <div class="num">02 / EARN</div>
-            <h3>Get paid for the wait</h3>
-            <p>The idle moment while your agent thinks is auctioned as one sponsored line — in the <strong>spinner</strong>, never your prompt, never your context. You keep <strong>50%</strong>.</p>
-          </div>
-          <div class="panel">
-            <div class="num">03 / SETTLE</div>
-            <h3>USDC on Solana, today</h3>
-            <p>Real per-request settlement over x402 — not "Stripe, coming soon." Money lands in <strong>your</strong> wallet, and your model stays yours unless you opt into routing.</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <div class="market">
-          <div>
-            <h3>A market on the world's most-watched idle moment</h3>
-            <p>Developers earn on the wait. Advertisers bid for that attention in a first-price auction, settled in USDC. A "click" is an agent actually calling an x402 endpoint — the ad and the transaction are the same call.</p>
-          </div>
-          <a class="btn ghost" href="/advertise" style="white-space:nowrap">advertise on the wait →</a>
-        </div>
-      </section>
-
-      <section id="try">
-        <div class="seclabel"><span class="kicker">// connect in one command</span></div>
-        <h2>Change one URL. Keep your model.</h2>
-        <p class="lede">Issue a key and add a live-earnings status line — your model and inference stay untouched. Add <code class="mono">--route</code> to also route through Shipyard for the savings.</p>
-        <div class="tabs">
-          <button class="tab on" data-tab="cli">cli</button>
-          <button class="tab" data-tab="sdk">python sdk</button>
-          <button class="tab" data-tab="curl">curl</button>
-        </div>
-        <div class="codewrap" data-pane="cli">
-          <button class="copy" data-target="cli">copy</button>
-          <pre id="cli"><span class="c"># issues an sk-shipyard key + a status line — model untouched</span>
-npx shipyard-inference <span class="k">connect</span> --url <span class="s" id="b0">https://shipyard-inference.vercel.app</span></pre>
-        </div>
-        <div class="codewrap hide" data-pane="sdk">
-          <button class="copy" data-target="sdk">copy</button>
-          <pre id="sdk"><span class="k">from</span> openai <span class="k">import</span> OpenAI
+    <section id="models">
+      <div class="sec-k">03 — models</div>
+      <h2>One endpoint. <em>Every model.</em></h2>
+      <p>
+        Drop-in for anything that speaks OpenAI — Claude Code, your own
+        agents, plain curl. Anthropic, OpenAI, OpenRouter, UsePod, and
+        Nous/Hermes behind one interface, plus your local models for free.
+        Keep your own model and API keys; routing is strictly opt-in.
+      </p>
+      <div class="tabs">
+        <button class="tab on" data-tab="cli">cli</button>
+        <button class="tab" data-tab="sdk">python sdk</button>
+        <button class="tab" data-tab="curl">curl</button>
+      </div>
+      <div class="codewrap" data-pane="cli">
+        <div class="code" id="cli"><button class="copy" data-target="cli">copy</button><span class="c"># issues an sk-shipyard key + a status line — model untouched</span>
+npx shipyard-inference <span class="k">connect</span> --url <span class="s" id="b0">https://shipyard-inference.vercel.app</span></div>
+      </div>
+      <div class="codewrap hide" data-pane="sdk">
+        <div class="code" id="sdk"><button class="copy" data-target="sdk">copy</button><span class="k">from</span> openai <span class="k">import</span> OpenAI
 
 client = OpenAI(
     base_url=<span class="s" id="b1">"https://shipyard-inference.vercel.app/v1"</span>,
@@ -241,86 +253,86 @@ resp = client.chat.completions.<span class="fn">create</span>(
     model=<span class="s">"auto"</span>,  <span class="c"># cheapest capable model, chosen per call</span>
     messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"hello from my agent"</span>}],
 )
-<span class="fn">print</span>(resp.choices[0].message.content)</pre>
-        </div>
-        <div class="codewrap hide" data-pane="curl">
-          <button class="copy" data-target="curl">copy</button>
-          <pre id="curl"><span class="c"># or curl it directly</span>
+<span class="fn">print</span>(resp.choices[0].message.content)</div>
+      </div>
+      <div class="codewrap hide" data-pane="curl">
+        <div class="code" id="curl"><button class="copy" data-target="curl">copy</button><span class="c"># or curl it directly</span>
 curl <span class="s" id="b2">https://shipyard-inference.vercel.app/v1/chat/completions</span> \
-  -H <span class="s">"authorization: Bearer sk-shipyard-…"</span> \
+  -H <span class="s">"authorization: Bearer ***"</span> \
   -H <span class="s">"content-type: application/json"</span> \
-  -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></pre>
+  -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></div>
+      </div>
+    </section>
+
+    <section id="settle">
+      <div class="split">
+        <div>
+          <div class="sec-k">04 — pricing</div>
+          <h2>Pay per call. <em>Nothing else.</em></h2>
+          <p>
+            No subscription, no seat fees, no markup. Every call settles in
+            USDC over x402 at the provider's own rate, with spend ceilings
+            per key so a runaway agent can't drain you. What you see in the
+            ledger is what you paid.
+          </p>
         </div>
-        <p class="lede" style="margin-top:16px"><a href="/connect">get a key in the browser →</a> &nbsp;·&nbsp; <a href="/me">track your earnings →</a></p>
-      </section>
+        <div class="ledger">
+          <div class="ledger-head"><span>your ledger</span><span>settled on solana</span></div>
+          <div class="ledger-row"><span class="who"><b>cost</b> this week</span><span></span><span class="num">$0.412</span><span class="tag">paid</span></div>
+          <div class="ledger-row"><span class="who"><b>saved</b> vs baseline</span><span></span><span class="num">$9.86</span><span class="tag">−71%</span></div>
+          <div class="ledger-row"><span class="who"><b>subscription</b> fee</span><span></span><span class="num">$0.00</span><span class="tag">never</span></div>
+        </div>
+      </div>
+    </section>
 
-      <section>
-        <div class="seclabel"><span class="kicker">// see it land</span></div>
-        <h2>Every request, streaming live</h2>
-        <p class="lede">Model chosen, tokens, cost, savings, settlement — all of it streams to the <a href="/dashboard/">operator command center</a> in real time. The same console we run in production.</p>
-      </section>
+    <section id="try">
+      <div class="sec-k">05 — connect</div>
+      <h2>Change one URL. <em>Keep your model.</em></h2>
+      <div class="code"><span class="c"># issues an sk-shipyard key + a status line — model untouched</span>
+npx shipyard-inference <span class="k">connect</span> --url <span class="s" id="b3">https://shipyard-inference.vercel.app</span></div>
+    </section>
 
-      <footer>
-        <div class="mono">shipyard@inference:~$ <span style="color:var(--term)">whoami</span></div>
-        Built for the <a href="https://openshipyard.xyz" target="_blank" rel="noopener">Shipyard</a> agent stack — framework- and language-agnostic by design.
-        Wraps Anthropic, OpenAI, OpenRouter, UsePod, and Nous/Hermes behind one interface.
-      </footer>
-    </div>
+    <footer>
+      <div class="cols">
+        <div>shipyard · inference — built for the agent stack. framework-agnostic by design.
+          <div style="margin-top:10px;opacity:.7">coming later: earn on the wait — sponsored placements on agent idle time.</div>
+        </div>
+        <div>
+          <a href="https://github.com/BiscayneDev/shipyard-inference" target="_blank" rel="noopener">github</a> &nbsp; <a href="/portal/">portal</a> &nbsp; <a href="/dashboard/">dashboard</a> &nbsp; <a href="/advertise">advertise</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+</div>
 
-    <script>
-      // Boot sequence in the hero terminal — types out, ends on a blinking cursor.
-      const lines = [
-        { html: '<span class="pr">~/agent</span> <span class="mut">%</span> npx shipyard-inference <span class="ok">connect</span>' },
-        { html: '<span class="ok">✓</span> key issued · <span class="mut">sk-shipyard-••••••</span>' },
-        { html: '<span class="ok">✓</span> status line installed' },
-        { html: '<span class="ok">✓</span> model untouched <span class="mut">— routing optional (--route)</span>' },
-        { html: '<span class="am">▸</span> <span class="wh">your agent now earns while it thinks</span>' },
-      ];
-      const boot = document.getElementById('boot');
-      let i = 0;
-      function step() {
-        if (i >= lines.length) {
-          const cur = document.createElement('span');
-          cur.className = 'cur';
-          boot.appendChild(cur);
-          return;
-        }
-        const div = document.createElement('div');
-        div.className = 'ln';
-        div.innerHTML = lines[i].html;
-        div.style.opacity = '0';
-        boot.appendChild(div);
-        requestAnimationFrame(() => { div.style.transition = 'opacity .25s ease'; div.style.opacity = '1'; });
-        i++;
-        setTimeout(step, i === 1 ? 520 : 360);
-      }
-      setTimeout(step, 250);
 
-      // Fill snippets with the live origin so copy-paste is correct on any deploy.
-      const origin = window.location.origin;
-      const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-      set('b0', origin);
-      set('b1', '"' + origin + '/v1"');
-      set('b2', origin + '/v1/chat/completions');
+<script>
+  // Fill snippets with the live origin so copy-paste is correct on any deploy.
+  const origin = window.location.origin;
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('b0', origin);
+  set('b1', '"' + origin + '/v1"');
+  set('b2', origin + '/v1/chat/completions');
+  set('b3', origin);
 
-      // Tabbed code panes.
-      document.querySelectorAll('.tab').forEach((tab) => {
-        tab.addEventListener('click', () => {
-          document.querySelectorAll('.tab').forEach((t) => t.classList.remove('on'));
-          tab.classList.add('on');
-          document.querySelectorAll('[data-pane]').forEach((p) => p.classList.toggle('hide', p.dataset.pane !== tab.dataset.tab));
-        });
+  // Tabbed code panes.
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('on'));
+      tab.classList.add('on');
+      document.querySelectorAll('[data-pane]').forEach((p) => p.classList.toggle('hide', p.dataset.pane !== tab.dataset.tab));
+    });
+  });
+
+  // Copy buttons.
+  document.querySelectorAll('.copy').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const el = document.getElementById(btn.dataset.target);
+      navigator.clipboard.writeText(el.innerText).then(() => {
+        const t = btn.textContent; btn.textContent = 'copied'; setTimeout(() => (btn.textContent = t), 1200);
       });
-
-      // Copy buttons.
-      document.querySelectorAll('.copy').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const el = document.getElementById(btn.dataset.target);
-          navigator.clipboard.writeText(el.innerText).then(() => {
-            const t = btn.textContent; btn.textContent = 'copied'; setTimeout(() => (btn.textContent = t), 1200);
-          });
-        });
-      });
-    </script>
-  </body>
+    });
+  });
+</script>
+</body>
 </html>
