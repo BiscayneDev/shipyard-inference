@@ -7,6 +7,7 @@ export interface DoctorOptions {
   baseUrl?: string
   fetchImpl?: typeof fetch
   execSync?: (cmd: string) => string
+  platform?: NodeJS.Platform
 }
 
 /**
@@ -15,7 +16,7 @@ export interface DoctorOptions {
  */
 export async function runDoctor(opts: DoctorOptions = {}): Promise<string> {
   const write = opts.write ?? ((s: string) => process.stdout.write(s))
-  const hardware = probeHardware(opts.execSync ? { execSync: opts.execSync } : undefined)
+  const hardware = probeHardware(opts.execSync ? { execSync: opts.execSync, platform: opts.platform } : undefined)
   const ladder = ladderForHardware(hardware)
   const runtime = await matchLocalModels({
     baseUrl:

@@ -14,6 +14,7 @@ test('runDoctor composes probes and prints the report', async () => {
       throw new Error('unexpected ' + url)
     }) as unknown as typeof fetch,
     execSync: (cmd: string) => (cmd.includes('hw.memsize') ? '8589934592' : 'Apple M2'),
+    platform: 'darwin',
   })
   assert.ok(out.includes('Apple M2'))
   const text = printed.join('')
