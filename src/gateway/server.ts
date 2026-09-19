@@ -400,6 +400,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     autoTier: config.autoTier,
     cache: config.cache,
     usageRecorder: config.usageRecorder,
+    health: config.health,
     onEvent: (event) => {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)

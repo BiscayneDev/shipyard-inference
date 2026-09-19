@@ -9,8 +9,11 @@ export type {
   DecisionsConfig,
   GuardrailsConfig,
   GuardrailResult,
+  SpendConfig,
 } from './config.js'
 export { checkBearer, resolveAuth } from './auth.js'
+export { MemorySpendTracker } from './spend.js'
+export type { SpendTracker, SpendTrackerOptions } from './spend.js'
 export type { AuthResult } from './auth.js'
 export { x402Config, buildChallenge, verifyX402Payment } from './x402.js'
 export type { X402Config, X402Challenge, X402VerifyResult } from './x402.js'

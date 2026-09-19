@@ -10,6 +10,7 @@ import type { X402Config } from './x402.js'
 import type { DecisionProvider } from '../decisions/types.js'
 import type { DecisionFeedbackRecorder } from '../router/decision-feedback.js'
 import type { SpendTracker } from './spend.js'
+import type { ProviderHealthTracker } from '../router/health.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -185,6 +186,11 @@ export interface GatewayConfig {
   decisionFeedback?: DecisionFeedbackRecorder
   /** Port for `startGateway`. Default 8787. */
   port?: number
+  /**
+   * Provider circuit breaker forwarded to the Router: candidates whose
+   * circuit is open are skipped during selection. Off when omitted.
+   */
+  health?: ProviderHealthTracker
   /**
    * Per-key spend circuit breaker. When set, keyed requests are checked
    * against a cumulative USD ceiling *before* serving (blocked requests get
