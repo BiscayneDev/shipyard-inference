@@ -1,138 +1,90 @@
 # Shipyard Inference: The Model Layer for Agents ("Lighthouse")
 
-**Date:** 2026-09-18
-**Status:** Approved design, pending implementation plan
+**Date:** 2026-09-18 (v2, supersedes v1)
+**Status:** Phase 1 implemented; Phase 2 scoped
 **Repo:** `~/projects/shipyard-inference`
 
 ## Problem
 
-Agent users today are trapped between two bad options: a Claude subscription with hard usage limits, or self-managed local/cloud models that break silently and are painful to revive. The canonical failure: a user hits a provider limit mid-session in Hermes (Telegram or terminal), the session dies, and recovery requires manual archaeology — figure out which limit, switch providers, restart, rebuild context.
+Agent users are trapped between a Claude subscription with hard usage limits and self-managed models that break silently. Canonical failure (user's own): a Hermes session in Telegram/terminal hits a provider limit mid-task, the session dies, and recovery means manual archaeology.
 
 ## Thesis
 
-**Shipyard Inference is the model layer for agents.** Any agent — Claude Code, Hermes/OpenClaw, custom SDK apps — points at one endpoint. The gateway:
+**Shipyard Inference is the model layer for agents.** One endpoint; the gateway handles *which model* (Jev task-tier × hardware ladder), *payment* (x402 from the user's wallet — PayBox OAuth, MoonPay on-ramp; no subscription), and *staying alive* (limits are the gateway's problem: transparent failover, receipts, recoverable 402s). Customer zero is the maintainer himself (Hermes terminal + Telegram daily driver); the product also serves strangers.
 
-1. **Connect** — one command, any agent (`shipyard connect`)
-2. **Select** — hardware-aware local ladder + Jev content-aware tier routing
-3. **Pay** — x402 per-call from the user's wallet (PayBox OAuth; MoonPay on-ramp), no subscription
-4. **Survive** — limits, outages, and crashes become the gateway's problem: transparent failover with a post-hoc receipt; sessions never die
-
-Target users (all, via the same gateway): Claude Code users replacing a subscription, Hermes/OpenClaw power users, developers building custom agents, and ourselves (user zero).
+Four pillars: **Connect** (one command, any agent) · **Select** (hardware + task aware) · **Pay** (wallet, no subscription) · **Survive** (limits become the gateway's problem). Survive is the wedge, Pay is the moat.
 
 Audience is crypto-native: they already hold wallets. New friction is only getting them to try PayBox; MoonPay covers the no-crypto edge case.
 
-## Architecture
+## Dual-mode topology (v2's structural fix)
 
-```
-Agent (Claude Code / Hermes / OpenClaw / SDK)
-        │  same endpoint, same wire protocol as today
-        ▼
-┌─ Shipyard Inference Gateway ─────────────────────────┐
-│  Auth (PayBox wallet ── or ── API key)               │
-│         │                                            │
-│  Router: Jev content-aware tier + hardware ladder    │
-│         │                                            │
-│  Failover Engine ──► Provider Health Tracker         │
-│         │               (429s, 5xx, latency, uptime) │
-│         ▼                                            │
-│  Providers: local Ollama ── Venice (x402) ── cloud   │
-│         │                                            │
-│  Conversation Anchor (state store)  ──► Receipts     │
-└──────────────────────────────────────────────────────┘
-```
+- **Appliance mode** — gateway runs on the user's machine (reference: MacBook Air M2/8GB), colocated with Ollama. Full ladder: local (free) → Venice/cloud burst (x402). SQLite/in-memory state is fine. **This is the default and the dogfood deployment.**
+- **Hosted mode** — `shipyard-inference.vercel.app`. Ladder starts at Venice. Request-scoped features only (failover + receipts — serverless-safe); conversation anchor deferred.
+- Same code, same wire protocols, same `connect` flow. The v1 spec conflated these and broke on "Vercel can't reach localhost Ollama."
 
-All pillar logic lives in the gateway (one implementation serves all four on-ramps). Two thin client-side pieces: the `shipyard connect` CLI flow and the receipt surface.
-
-Wire-protocol compatibility is a hard constraint:
+Wire-protocol compatibility remains a hard constraint:
 - `/v1/messages` accepting BOTH `Authorization: Bearer` and `x-api-key` (Claude Code route mode)
 - OpenAI-compatible `/v1/chat/completions` for SDKs and agent runtimes
-- All custom SSE telemetry MUST ride a valid OpenAI chunk shape (`{id, object: 'chat.completion.chunk', created, model, choices: [], x_shipyard: …}`) — a bare telemetry frame fails strict client validation (AI SDK `AI_TypeValidationError`)
+- All custom SSE telemetry MUST ride a valid OpenAI chunk shape — a bare telemetry frame fails strict client validation (AI SDK `AI_TypeValidationError`)
 
-## Components
+## Routing: Jev × hardware × policy
 
-### a) `shipyard connect` v2 — the front door
+Jev judges task tier per request (structural inference as the free fast path, Jev on low confidence, `combine: 'max'`, 5-min judgment cache). The probed hardware ladder decides whether local can serve that tier; if not, burst to Venice/cloud from the wallet. Failover (429/5xx/context-overflow) tries the next rung transparently.
 
-One command, one flow:
+**Pinning caveat (discovered in Phase 1):** explicitly-requested models are PINNED by `explicitModelHints()` and never fail over across candidates — agents must request `auto` to get full Survive behavior. `connect` v2 must configure agents accordingly.
 
-1. **Hardware detection** (chip, RAM/VRAM) → build the local model ladder. Example on an 8GB M2: `llama3.2:3b` (economy), `qwen2.5:3b-instruct` (alternate); burst to cloud for frontier-tier work.
-2. Offer `ollama pull` for anything missing.
-3. Auth choice: **connect wallet (PayBox OAuth, default hero path)** or instant API key (testing / enterprise).
-4. Write the agent config:
-   - Claude Code: route mode (backs up and rewrites `~/.claude/settings.json` env — backup mandatory, existing behavior)
-   - Hermes/OpenClaw: env vars (`SHIPYARD_INFERENCE_URL`, `SHIPYARD_INFERENCE_API_KEY`, `AGENT_MODEL_VIC`)
-   - Custom agents: plain OpenAI-compatible env vars
-5. Print a "you're live" verification with one test call (and for route mode, remind to restore settings after testing).
+Venice remains the mid-tier x402 rung (not frontier quality; its failover value is when local hardware is too weak, busy, or offline, before jumping to frontier-priced cloud).
 
-The Hermes-style "best local model for your hardware" advisor is step 1 of connect — not a separate feature.
+## Phase 1 — implemented (2026-09-18, all TDD, suite 319/319 vs baseline 300)
 
-### b) Failover engine + provider health tracker
+| Feature | Files | Commit |
+|---|---|---|
+| Hardware probe + local ladder (8GB→3B class: usable VRAM = min(70% RAM, RAM−6GB)) | `src/connect/hardware.ts` | `ad80e00` |
+| Ollama runtime probe (pulled vs missing models) | `src/connect/ollama-probe.ts` | `75be62d` |
+| Provider health tracker (circuit breaker: N consecutive failures → open 30s → half-open probe; open circuits skipped at selection) | `src/router/health.ts`, wired into `Router.plan()` + both attempt loops, forwarded via `GatewayConfig.health` | `126cfa0`, `2411cb5` |
+| Failover receipts on stream telemetry (`x_shipyard.failover = {from, to, reason}` on a valid OpenAI chunk; reasons: `rate_limited` / `provider_error` / `context_overflow`) | `src/gateway/server.ts` (`capture()`, `classifyFailoverReason()`) | `3117d58` |
+| Per-key spend circuit breaker + recoverable 402 with MoonPay top-up link | `src/gateway/spend.ts`, wired in chat route; `GatewayConfig.spend` | `a2129eb` |
+| Appliance config wired (health 3/30s, spend $5/key, MoonPay link) | `local.gateway.config.mjs` (gitignored, local) | — |
 
-Per-tier failover chains:
+Spend-breaker semantics: a key with recorded spend ≥ ceiling is blocked (402, `spend_ceiling_exceeded`, `topUpUrl`) until `reset()`; zero-cost (local/Ollama) traffic never blocks. Cost records post-completion from actual usage — providers that don't report usage record $0 (acceptable: free/unpriced).
 
-- **economy:** ollama-primary → ollama-alternate → Venice (x402) → cheap cloud
-- **frontier:** Anthropic → OpenRouter fallback
+Receipt surfaces owned by Shipyard: statusline, portal, connect output. Telegram summaries are a cross-project dependency (Hermes/OpenClaw would need to surface `x_shipyard`), not a spec feature.
 
-The health tracker keeps rolling stats per provider (429 rate, 5xx rate, latency). A 429/5xx **mid-request** triggers a transparent retry on the next provider in the chain, same request. Context overflow on a small local model triggers an automatic tier bump + retry.
+## Phase 2 (deferred, in build order)
 
-**Venice as a provider:** open-weights hosted inference, x402-native (no API key). Two billing modes:
-1. **Gateway-pays-and-rebills (build first):** the gateway's wallet pays Venice via x402; the user is re-billed through existing `upto` metering. Preserves receipts, rate limiting, and conversation anchor.
-2. **Passthrough x402 (later):** user's wallet pays Venice directly. Cheaper story, loses gateway-side metering.
+1. **`connect` v2 interactive flow:** hardware probe → ladder → offer `ollama pull` → PayBox-wallet-or-key → write agent env. Each agent gets its own key = its own spend ceiling (anchor/breaker identity is the API key — Hermes and Claude Code can't send custom headers).
+2. **Conversation anchor** (model continuity keyed on API key; SQLite, TTL 24h). Honest scope: model continuity + top-up resume only — it does not resurrect crashed agents (they resend their own history).
+3. **Appliance ops:** launchd plists for gateway + Ollama auto-restart (Survive applied to the box itself).
+4. **Venice x402 burst-billing** in appliance mode (user wallet pays Venice directly — no gateway float, no treasury monitoring).
+5. **Hosted-mode rollout** (Vercel): request-scoped only.
 
-Venice is the mid-tier rung — it is NOT frontier quality. Jev content-aware routing rarely sends frontier-tier work there. Its failover value: when local hardware is too weak, busy, or offline, before jumping to frontier-priced cloud.
+## Error-handling matrix (v2, honest)
 
-### c) Conversation anchor
+| Failure | Behavior | Status |
+|---|---|---|
+| Provider 429/5xx at request start | Transparent failover to next rung + receipt | ✅ shipped |
+| Provider dead repeatedly | Circuit opens (default 30s); selection skips it; failover routes around meanwhile | ✅ shipped |
+| Context overflow | `isCapable()` rejects small-window models → next rung (pre-existing) + receipt | ✅ |
+| Mid-stream cutoff | Committed stream: error propagates (no fake transparency; emitted tokens can't be unsent; SSE resumption out of scope) | documented |
+| Key spend ≥ ceiling | 402 + top-up link; resume after reset/top-up | ✅ shipped |
+| Wallet empty (x402 keyless) | 402 challenge (pre-existing); MoonPay deep-link with wallet prefill TBD | partial |
+| Client crash/restart | Client resends history; anchor (Phase 2) preserves model continuity | Phase 2 |
+| Gateway box reboot | launchd auto-restart | Phase 2 |
 
-The gateway keys lightweight conversation state on a conversation ID:
-- Client passes `x-shipyard-conversation-id` header; falls back to API key / wallet identity
-- State: model used, provider, tier, token count, recent context digest, failover history
-- Purpose: if the client drops mid-stream or restarts, the next request resumes at the same ladder position instead of cold-starting into a broken state — kills the "hard to get going again" half of the pain
-- Storage: SQLite locally, durable store in prod; TTL-evicted after 24h
-
-### d) Receipts (Survive-pillar UX: transparent but noticed)
-
-Default behavior is transparent failover; the user is informed after the fact, never blocked. Extend the `x_shipyard` telemetry chunk (riding the valid OpenAI chunk shape) with failover events:
-
-```json
-{ "model": "…", "provider": "…", "costUsd": 0.04,
-  "failover": { "from": "ollama/llama3.2:3b", "to": "venice/llama-3.3-70b", "reason": "context_overflow" } }
-```
-
-Surfaces: statusline (existing `/api/me` budget-aware fetch), Telegram-facing summary. Silence when nothing went wrong.
-
-### e) Wallet-empty as a recoverable event
-
-Insufficient balance returns a 402 with a MoonPay top-up link — never a dead session. The conversation anchor preserves state, so after top-up the next request just works.
-
-## Error handling matrix
-
-| Failure | Behavior |
-|---|---|
-| Provider 429/5xx | Transparent failover to next in chain + receipt |
-| Local model down | Health tracker detects; route to Venice/cloud or auto-restart Ollama + receipt |
-| Context overflow | Auto tier-bump + retry + receipt |
-| Wallet empty | 402 + MoonPay top-up link; anchor preserves state for seamless resume |
-| Client crash/restart | Anchor resumes session; no archaeology |
-
-Out of scope (explicitly): fixing agent-side breakage (e.g., Hermes' own session state corruption). The gateway keeps the model layer alive; it cannot resurrect the agent process.
+Out of scope (explicitly): agent-side breakage (e.g., Hermes' own session state). The gateway keeps the model layer alive; it cannot resurrect the agent process.
 
 ## Testing
 
-- **Contract tests** for all three wire shapes (Claude Code Bearer auth, AI SDK strict chunk validation — guarded by the telemetry-chunk shape rule)
-- **Chaos tests:** kill Ollama mid-stream; force 429s via mock provider; drain a test wallet — assert session survives and receipt fires
-- **E2E:** existing browser-payer script + `stack-health` preflight, extended with a failover scenario
-- **Advisor matrix:** hardware profiles → expected local ladder
-
-## Build order
-
-1. **Failover engine + health tracker** (kills the primary personal pain fastest)
-2. **Receipts** (telemetry chunk extension + surfaces)
-3. **`connect` v2** with hardware advisor folded in
-4. **Conversation anchor** (state store + resume)
-5. **Venice provider** (gateway-pays-and-rebills mode)
+- Contract tests for both wire shapes; chaos tests for failover/receipt/spend in the suite (`test/router.health.test.ts`, `test/gateway.failover-receipt.test.ts`, `test/gateway.spend.test.ts`).
+- Full suite: **319 pass / 0 fail** (baseline 300 — +19 new tests, 0 regressions).
+- Live smoke on the local gateway 2026-09-18: boots with health+spend enabled, `model: "auto"` routes to Ollama, 200.
 
 ## Decisions log
 
-- **2026-09-18:** Approach 3 (gateway-first Lighthouse) over agent-side companion. Survive is the wedge, Pay is the moat.
-- **2026-09-18:** Failover UX = B (transparent but noticed), with interactive prompts reserved for expensive tier jumps (later).
+- **2026-09-18:** Approach 3 (gateway-first Lighthouse). Survive is the wedge, Pay is the moat.
+- **2026-09-18:** Failover UX = B (transparent but noticed); interactive prompts reserved for expensive tier jumps (later).
 - **2026-09-18:** Wallet-first onboarding; PayBox default, API key secondary; MoonPay for the no-crypto edge.
-- **2026-09-18:** Venice added as mid-tier x402 provider, not an Ollama replacement. Ollama remains the local tier.
+- **2026-09-18:** Venice as mid-tier x402 provider, not an Ollama replacement. Ollama remains the local tier.
+- **2026-09-18:** v1 holistic review → v2: dual-mode topology (fixes Vercel-vs-localhost conflict), honest anchor scope, split request-start vs mid-stream failover semantics, added spend guardrail.
+- **2026-09-18:** You-are-customer-zero: appliance mode is the default deployment; hosted is optional.
+- **2026-09-18:** Phase 1 shipped. `model: "auto"` required for cross-candidate failover (pinning discovery).
