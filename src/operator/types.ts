@@ -241,6 +241,8 @@ export interface FeedRow {
   requestClass?: string
   latencyMs: number
   pinned?: boolean
+  /** Failover receipt when this request was rescued off a failing rung. */
+  failover?: { from: string; error?: string }
 }
 
 /** Billing rollup + recent settlements. */

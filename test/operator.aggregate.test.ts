@@ -99,3 +99,26 @@ test('computeSettlements sums settled + counts stuck', () => {
   assert.equal(stuck, 2)
   assert.equal(rows[0].at, T + 2) // newest first
 })
+
+// --- failover receipts in the feed ---
+
+test('computeFeed joins failover receipts onto their requests', async () => {
+  const { computeFeed } = await import('../src/operator/aggregate.js')
+  const events: StoredEvent[] = [
+    // Request 1: clean, served by p1.
+    { kind: 'request', at: T, source: 's1', provider: 'p1', model: 'A', inputTokens: 10, outputTokens: 5, latencyMs: 100 },
+    // Request 2: failed over from p1 (429) then served by p2.
+    { kind: 'failover', at: T + 10, source: 's1', provider: 'p1', model: 'A', error: 'HTTP 429' },
+    { kind: 'request', at: T + 11, source: 's1', provider: 'p2', model: 'B', inputTokens: 10, outputTokens: 5, latencyMs: 150 },
+  ]
+  const rows = computeFeed(events, 10)
+  const receipt = rows.find((r) => r.failover)
+  assert.ok(receipt, 'expected a feed row with a failover receipt')
+  assert.equal(receipt.provider, 'p2')      // the rung that served it
+  assert.equal(receipt.failover!.from, 'p1') // the rung that failed
+  assert.equal(receipt.failover!.error, 'HTTP 429')
+  // The clean request has no receipt.
+  const clean = rows.find((r) => !r.failover)
+  assert.ok(clean)
+  assert.equal(clean.provider, 'p1')
+})

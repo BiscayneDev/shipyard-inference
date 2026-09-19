@@ -276,9 +276,16 @@ export function computeErrors(events: StoredEvent[]): ErrorRow[] {
 /** Most-recent requests, newest first, capped at `limit`. */
 export function computeFeed(events: StoredEvent[], limit: number): FeedRow[] {
   const out: FeedRow[] = []
+  // Newest-first walk: a failover event immediately before a request (same
+  // source) is that request's receipt — the rung it was rescued from.
   for (let i = events.length - 1; i >= 0 && out.length < limit; i--) {
     const e = events[i]
     if (!isRequest(e)) continue
+    const prev = events[i - 1]
+    const receipt =
+      prev && prev.kind === 'failover' && prev.source === e.source && prev.provider
+        ? { from: prev.provider, ...(prev.error ? { error: prev.error } : {}) }
+        : undefined
     out.push({
       at: e.at,
       source: e.source,
@@ -291,6 +298,7 @@ export function computeFeed(events: StoredEvent[], limit: number): FeedRow[] {
       savedUsd: e.savedUsd,
       latencyMs: e.latencyMs,
       pinned: e.pinned,
+      ...(receipt ? { failover: receipt } : {}),
     })
   }
   return out

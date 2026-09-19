@@ -6,6 +6,8 @@ import type { Context } from 'hono'
 import { cors } from 'hono/cors'
 import { checkBearer } from '../gateway/auth.js'
 import { MemoryApiKeyStore, type ApiKeyIssueInput, type ApiKeyStore } from '../gateway/keys.js'
+import { probeHardware, ladderForHardware } from '../connect/hardware.js'
+import { matchLocalModels } from '../connect/ollama-probe.js'
 import type { TelemetryHub } from './hub.js'
 import type { IngestPayload } from './types.js'
 
@@ -132,6 +134,33 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
     return c.json(hub.feed(limit, source(c)))
   })
   api.get('/routing', (c) => c.json(hub.routingHealth(window(c), source(c))))
+
+  // --- appliance advisor (Lighthouse): live hardware/Ollama probes -------
+  // Runs where the operator console runs (the appliance). Cached briefly so
+  // the 5s refresh loop doesn't hit sysctl/Ollama every poll.
+  let applianceCache: { at: number; body: unknown } | null = null
+  api.get('/appliance', async (c) => {
+    if (applianceCache && Date.now() - applianceCache.at < 30_000) {
+      return c.json(applianceCache.body)
+    }
+    const hardware = probeHardware()
+    const ladder = ladderForHardware(hardware)
+    const runtime = await matchLocalModels({
+      baseUrl: process.env.OLLAMA_BASE_URL?.replace(/\/v1$/, '') ?? 'http://127.0.0.1:11434',
+      ladder,
+    })
+    const body = {
+      at: Date.now(),
+      hardware,
+      maxParametersB: ladder.maxParametersB,
+      ladderSource: ladder.source,
+      ollamaUp: runtime.ollamaUp,
+      available: runtime.available.map((m) => ({ model: m.model, tier: m.tier, contextWindow: m.contextWindow })),
+      missing: runtime.missing.map((m) => m.model),
+    }
+    applianceCache = { at: Date.now(), body }
+    return c.json(body)
+  })
   api.get('/billing', (c) => c.json(hub.billing(window(c), source(c))))
   api.get('/reports/savings', (c) =>
     c.json(

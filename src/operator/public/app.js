@@ -248,7 +248,7 @@ function renderFeed(rows) {
   const body = rows.map((r) => `<tr>
     <td>${ago(r.at)}</td>
     <td>${esc(r.source)}</td>
-    <td>${esc(r.model || '—')} ${r.pinned ? '<span class="tag pin">pin</span>' : ''}</td>
+    <td>${esc(r.model || '—')} ${r.pinned ? '<span class="tag pin">pin</span>' : ''}${r.failover ? `<span class="tag" title="${esc('failed over from ' + r.failover.from + (r.failover.error ? ' — ' + r.failover.error : ''))}">↪ ${esc(r.failover.from)}</span>` : ''}</td>
     <td>${esc(r.userId || '—')}</td>
     <td>${fmtInt(r.inputTokens)}/${fmtInt(r.outputTokens)}</td>
     <td>${fmtUsd(r.actualCostUsd)}</td>
@@ -268,8 +268,35 @@ function renderErrors(rows) {
   $('errors').innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`
 }
 
+// ---------- appliance advisor (Lighthouse) ----------
+function renderAppliance(a) {
+  const sub = $('appliance-sub')
+  if (a.hardware) {
+    sub.textContent = `${a.hardware.chip} · ${a.hardware.totalRamGb} GB`
+  } else {
+    sub.textContent = 'hardware unknown — fallback ladder'
+  }
+  const statline = `<div class="statline">
+    <div><b>${a.maxParametersB}B</b><span class="muted">ladder max (${a.ladderSource})</span></div>
+    <div><b class="${a.ollamaUp ? 'pos' : 'neg'}">${a.ollamaUp ? 'up' : 'down'}</b><span class="muted">ollama</span></div>
+    <div><b>${fmtInt(a.available.length)}</b><span class="muted">local models ready</span></div>
+  </div>`
+  const models = a.available.length
+    ? a.available.map((m) => `<tr><td class="mono">${esc(m.model)}</td><td>${esc(m.tier)}</td><td>${fmtInt(m.contextWindow)} ctx</td><td class="pos">free</td></tr>`).join('')
+    : '<tr><td colspan="4" class="empty">No local models pulled.</td></tr>'
+  const pulls = a.missing && a.missing.length
+    ? `<div class="card-sub" style="margin-top:12px">Pull to unlock: ${a.missing.map((m) => `<span class="mono" style="margin-right:10px">ollama pull ${esc(m)}</span>`).join('')}</div>`
+    : ''
+  const env = `<div class="card-sub" style="margin-top:12px">Agent env</div>
+    <div class="mono" style="font-size:12px;line-height:1.7">SHIPYARD_INFERENCE_URL=http://127.0.0.1:8787/v1<br>SHIPYARD_INFERENCE_API_KEY=&lt;your key&gt;<br>model: auto</div>`
+  $('appliance').innerHTML = statline +
+    `<table><thead><tr><th>Model</th><th>Tier</th><th>Context</th><th>Cost</th></tr></thead><tbody>${models}</tbody></table>` +
+    pulls + env
+}
+
 // ---------- refresh loop ----------
 let refreshing = false
+let applianceAt = 0
 async function refresh() {
   if (!state.token || refreshing) return
   refreshing = true
@@ -284,6 +311,11 @@ async function refresh() {
       api('/errors?' + q),
       api('/meta'),
     ])
+    // Appliance advisor: cheap (server caches 30s) but doesn't need 5s polls.
+    if (Date.now() - applianceAt > 25_000) {
+      applianceAt = Date.now()
+      api('/appliance').then(renderAppliance).catch(() => {})
+    }
     state.meta = meta
     if ((meta.sources || []).join() !== ($('source').dataset.known || '')) {
       $('source').dataset.known = (meta.sources || []).join()
