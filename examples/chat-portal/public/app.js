@@ -801,7 +801,9 @@ function renderChips(assistant, meta) {
   const body = assistant.querySelector('.body')
   let chips = body.querySelector('.chips')
   if (!chips) { chips = document.createElement('div'); chips.className = 'chips'; body.appendChild(chips) }
-  const add = (cls, html) => { const c = document.createElement('span'); c.className = `chip ${cls}`; c.innerHTML = html; chips.appendChild(c) }
+  // Return the chip element — callers attach hover titles to it (a missing
+  // return made `chip.title = …` throw "Cannot set properties of undefined").
+  const add = (cls, html) => { const c = document.createElement('span'); c.className = `chip ${cls}`; c.innerHTML = html; chips.appendChild(c); return c }
 
   if (meta.model) add('', `<b>${escapeHtml(meta.model)}</b>${meta.provider ? ' · ' + escapeHtml(meta.provider) : ''}`)
   const r = meta.routing
