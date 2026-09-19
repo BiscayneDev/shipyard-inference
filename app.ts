@@ -468,7 +468,7 @@ footer{color:var(--muted);font-size:13px;padding:34px 0 0;border-top:1px solid v
 const navHtml = (active: string): string => {
   const link = (href: string, id: string, label: string): string =>
     `<a href="${href}"${id === active ? ' class="active"' : ''}>${label}</a>`
-  return `<header class="tnav"><a class="brand" href="/"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</a><div class="lnk">${link('/connect', 'connect', 'connect')}${link('/advertise', 'advertise', 'advertise')}${link('/me', 'me', 'earnings')}${link('/dashboard/', 'dashboard', 'dashboard')}</div></header>`
+  return `<header class="tnav"><a class="brand" href="/"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</a><div class="lnk">${link('/connect', 'connect', 'connect')}${link('/pricing', 'pricing', 'pricing')}${link('/me', 'me', 'usage')}${link('/dashboard/', 'dashboard', 'dashboard')}</div></header>`
 }
 
 // ---------------------------------------------------------------------------
@@ -553,7 +553,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)re
 // idle-attention kickbacks, styled like the operator console. Key-authed.
 const ME_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Your earnings · Shipyard Inference</title>
+<title>Usage &amp; ledger · Shipyard Inference</title>
 ${TERMINAL_FONTS}
 <style>${TERMINAL_CSS}
 .k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
@@ -566,8 +566,8 @@ ${TERMINAL_FONTS}
 </style></head><body><div class="wrap">
 ${navHtml('me')}
 <span class="pill"><span class="blip"></span> live · per-key</span>
-<h1>Your earnings</h1>
-<p class="sub">Routing savings on every call, plus idle-attention kickbacks — credited to your wallet.</p>
+<h1>Usage <em class="grad">&amp; ledger.</em></h1>
+<p class="sub">Every request through your key — what it cost, what it saved vs baseline, and where it settled. Pay per call in USDC; no subscription anywhere in the loop.</p>
 <div class="loadrow">
   <input id="key" placeholder="sk-shipyard-… (your API key)"/>
   <button id="load">Load</button>
@@ -576,8 +576,8 @@ ${navHtml('me')}
   <section class="kpis">
     <div class="card"><div class="k">Routing saved</div><div class="v good" id="saved">$0</div><div class="sub2"><span id="savedpct">0</span>% vs baseline</div></div>
     <div class="card"><div class="k">Spent</div><div class="v" id="spent">$0</div><div class="sub2">actual routed cost</div></div>
-    <div class="card"><div class="k">Idle-attention kickbacks</div><div class="v accent" id="kick">$0</div><div class="sub2" id="kicknote">accrues as you work</div></div>
     <div class="card"><div class="k">Requests</div><div class="v" id="reqs">0</div><div class="sub2" id="win">last 24h</div></div>
+    <div class="card"><div class="k">Kickbacks <span class="muted">· beta</span></div><div class="v accent" id="kick">$0</div><div class="sub2" id="kicknote">idle-time sponsored placements</div></div>
   </section>
   <div class="panel">
     <div class="k">Account</div>
@@ -758,6 +758,60 @@ refresh();
 </script></div></body></html>`
 
 // ---------------------------------------------------------------------------
+// "Pricing" — pay per call, nothing else. Real rates straight from the
+// gateway's candidate configs (they ARE the source of truth for routing).
+// ---------------------------------------------------------------------------
+const PRICING_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Pricing · Shipyard Inference</title>
+${TERMINAL_FONTS}
+<style>${TERMINAL_CSS}
+.wrap{max-width:840px}
+.big{font:600 clamp(30px,4.4vw,42px)/1.1 var(--serif);letter-spacing:-.015em;margin:0 0 8px}
+.big em{font-style:italic;font-weight:400;color:var(--term)}
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:24px 0}
+@media(max-width:680px){.feat{grid-template-columns:1fr}}
+.feat .card{margin:0;text-align:left}
+.feat .fv{font:600 22px/1 var(--serif);color:var(--term);margin-bottom:6px}
+.feat .fk{font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.tier{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line2);border-radius:999px;padding:2px 9px;color:var(--term2)}
+</style></head><body><div class="wrap">
+${navHtml('pricing')}
+<span class="pill"><span class="blip"></span> pay per call · usdc on solana · no subscription</span>
+<h1 class="big">Pay per call. <em>Nothing else.</em></h1>
+<p class="sub">No seats, no tiers, no markup. Every request settles in USDC over x402 at the provider's own rate — and routing picks the cheapest capable model, so the price you see is the price after the savings.</p>
+<div class="feat">
+  <div class="card"><div class="fv">$0.00</div><div class="fk">subscription fee</div></div>
+  <div class="card"><div class="fv">−71%</div><div class="fk">typical vs baseline</div></div>
+  <div class="card"><div class="fv">0%</div><div class="fk">gateway markup</div></div>
+</div>
+<div class="card">
+  <strong>Routed model rates</strong> <span class="muted">— per 1M tokens, live from the gateway's candidate configs. These are the exact numbers routing decisions are made on.</span>
+  <table>
+    <thead><tr><th>Model</th><th>Tier</th><th>Input /1M</th><th>Output /1M</th><th>Context</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">gpt-4.1-nano</td><td><span class="tier">economy</span></td><td class="mono">$0.10</td><td class="mono">$0.40</td><td class="mono muted">1M</td></tr>
+      <tr><td class="mono">claude-haiku-4-5</td><td><span class="tier">economy</span></td><td class="mono">$0.80</td><td class="mono">$4.00</td><td class="mono muted">200k</td></tr>
+      <tr><td class="mono">gpt-4.1-mini</td><td><span class="tier">standard</span></td><td class="mono">$0.40</td><td class="mono">$1.60</td><td class="mono muted">1M</td></tr>
+      <tr><td class="mono">gpt-4.1</td><td><span class="tier">frontier</span></td><td class="mono">$2.00</td><td class="mono">$8.00</td><td class="mono muted">1M</td></tr>
+      <tr><td class="mono">claude-sonnet-4-5</td><td><span class="tier">standard</span></td><td class="mono">$3.00</td><td class="mono">$15.00</td><td class="mono muted">200k</td></tr>
+      <tr><td class="mono">local / ollama</td><td><span class="tier">free</span></td><td class="mono">$0.00</td><td class="mono">$0.00</td><td class="mono muted">your hardware</td></tr>
+    </tbody>
+  </table>
+  <p class="note">The <strong>baseline</strong> for savings is a direct call to <code>claude-sonnet-4-5</code> — what the same request would cost at provider list price, called direct. Request <code>model: auto</code> and the gateway tiers down when a cheaper model can handle the work; pin a model and it stays pinned.</p>
+</div>
+<div class="card">
+  <strong>Spend ceilings, per key</strong> <span class="muted">— a runaway agent can't drain you</span>
+  <p class="note">Every API key carries its own spend breaker. When a key's recorded spend crosses its ceiling, it returns <code>402</code> with a top-up URL instead of quietly burning budget — and zero-cost local traffic never touches the breaker at all. Give each agent its own key so one drained session can't starve the others.</p>
+</div>
+<div class="card">
+  <strong>Settlement</strong> <span class="muted">— USDC on Solana, over x402</span>
+  <p class="note">Each request settles independently — no float, no invoice, no "Stripe, coming soon." Watch every cent land in real time on the <a href="/dashboard/">operator command center</a>, or track your own key on the <a href="/me">usage &amp; ledger</a> page.</p>
+</div>
+<p class="note" style="opacity:.75">Coming later: earn on the wait — sponsored placements on agent idle time. <a href="/advertise">Advertiser? Get in early →</a></p>
+</div></body></html>`
+
+// ---------------------------------------------------------------------------
 const app = new Hono()
 app.use('*', cors({ origin: '*' }))
 const x402Cfg = x402Config(process.env)
@@ -772,6 +826,7 @@ app.get('/', (c) => c.html(LANDING_HTML))
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
 app.get('/connect', (c) => c.html(CONNECT_HTML))
+app.get('/pricing', (c) => c.html(PRICING_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.post('/api/keys', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { wallet?: unknown; label?: unknown }
