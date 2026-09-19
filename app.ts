@@ -64,6 +64,8 @@ import {
 } from './dist/operator/index.js'
 // Landing page HTML, generated from public/index.html by scripts/build-web.mjs.
 import { LANDING_HTML } from './landing.generated.js'
+// Manifesto page HTML, generated from public/manifesto.html by scripts/build-web.mjs.
+import { MANIFESTO_HTML } from './manifesto.generated.js'
 
 // ---------------------------------------------------------------------------
 // Config from the environment (set in the Vercel project).
@@ -821,6 +823,8 @@ app.get('/healthz', (c) => c.json({ status: 'ok', source: SOURCE, candidates: ca
 // operator's static catch-all (which otherwise serves the dashboard SPA here).
 // The dashboard SPA itself is served from /dashboard/ as static CDN assets.
 app.get('/', (c) => c.html(LANDING_HTML))
+// Manifesto page at `/manifesto` — the Death to Tokenmaxxing thesis post.
+app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 
 // Consumer surface — the "connect your IDE" page + self-serve key issuance.
 // Registered before the operator's /api/* mount so it wins, and before the

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Death to Tokenmaxxing — the Shipyard manifesto</title>
+<meta name="description" content="A clearing house for the agent economy: one principal, many agents, one balance. The Shipyard manifesto on agent spend, open models, and compute net worth."/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"/>
+<style>
+  /* ============================================================
+     "THE MANIFESTO" — same cinematic language as the landing:
+     the grainy duotone ship at full strength in the dark, Playfair
+     display serif, quiet mono details, a long-read editorial below.
+     ============================================================ */
+  :root {
+    --night: #050a18;
+    --deep: #0a1226;
+    --mist: #b9c9de;
+    --fade: #8fa3bd;
+    --blue: #6b9ce0;
+    --serif: "Playfair Display", Georgia, serif;
+    --sans: "Inter", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--night); color: #e8eef6; font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+  body::after {
+    content: ""; position: fixed; inset: -50%; z-index: 40; pointer-events: none; opacity: .22;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 30px; position: relative; z-index: 5; }
+  a { color: inherit; text-decoration: none; }
+
+  nav { position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 22px 34px; mix-blend-mode: screen; }
+  .brand { font-family: var(--mono); font-size: 12px; letter-spacing: 0.24em; text-transform: uppercase; color: #cdd9e8; }
+  nav .links { display: flex; gap: 26px; }
+  nav .links a { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); transition: color .25s ease; }
+  nav .links a:hover { color: #fff; }
+  nav .links a.here { color: var(--blue); }
+  @media (max-width: 720px) { nav .links { display: none; } }
+
+  /* ============ HERO: the ship again, manifesto title ============ */
+  .hero { position: relative; height: 88vh; min-height: 560px; overflow: hidden;
+    display: flex; align-items: flex-end; }
+  .ship {
+    position: absolute; inset: -6%;
+    background: url("ship.png") 62% 42% / min(60vw, 900px) auto no-repeat,
+                radial-gradient(1200px 700px at 72% 30%, rgba(61,111,181,0.22), transparent 65%),
+                linear-gradient(180deg, #050a18 0%, #0a1226 60%, #050a18 100%);
+    image-rendering: pixelated;
+    opacity: 0.9;
+    animation: drift 60s ease-in-out infinite alternate;
+  }
+  @keyframes drift {
+    from { transform: scale(1) translate(0, 0); }
+    to   { transform: scale(1.06) translate(1.5%, -1%); }
+  }
+  @media (prefers-reduced-motion: reduce) { .ship { animation: none; } }
+  @media (max-width: 720px) {
+    .ship { background-position: 38% 46%; }
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background: linear-gradient(90deg, rgba(5,10,24,0.88) 0%, rgba(5,10,24,0.66) 34%, rgba(5,10,24,0.18) 58%, transparent 75%);
+  }
+  @media (max-width: 720px) {
+    .hero::before { background: linear-gradient(180deg, rgba(5,10,24,0.55) 0%, rgba(5,10,24,0.3) 34%, rgba(5,10,24,0.85) 72%, var(--night) 100%); }
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+    background: linear-gradient(180deg, transparent 55%, rgba(5,10,24,0.55) 78%, var(--night) 100%);
+  }
+  .hero .wrap { width: 100%; max-width: 1060px; padding-bottom: 96px; }
+  .kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--blue); margin-bottom: 18px; }
+  .hero h1 { font-family: var(--serif); font-weight: 600; font-size: clamp(44px, 6.6vw, 76px); line-height: 1.04; letter-spacing: -0.015em; max-width: 12ch; }
+  .hero h1 em { font-style: italic; color: var(--blue); }
+  .hero-sub { color: var(--mist); font-size: 17px; max-width: 52ch; margin-top: 22px; }
+  .scroll-cue { position: absolute; bottom: 34px; right: 40px; z-index: 3; color: var(--fade);
+    font-family: var(--mono); font-size: 13px; animation: bob 3.4s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(7px); } }
+
+  /* ============ THE LONG READ ============ */
+  article { padding: 30px 0 90px; }
+  .sec { padding: 54px 0 6px; }
+  .sec + .sec { border-top: 1px solid rgba(143,163,189,0.14); }
+  .secno { font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--blue); margin-bottom: 16px; }
+  h2 { font-family: var(--serif); font-weight: 600; font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; letter-spacing: -0.01em; margin-bottom: 20px; }
+  h2 em { font-style: italic; color: var(--blue); }
+  p { color: #cdd9e8; margin-bottom: 18px; }
+  p b, li b { color: #e8eef6; font-weight: 500; }
+  .lede { font-family: var(--serif); font-size: 21px; line-height: 1.6; color: #e8eef6; }
+  .pull { font-family: var(--serif); font-style: italic; font-size: clamp(22px, 3vw, 30px); line-height: 1.4;
+    color: #e8eef6; border-left: 2px solid var(--blue); padding: 6px 0 6px 26px; margin: 34px 0; }
+  .deck { margin: 26px 0; }
+  .deck h3 { font-family: var(--serif); font-size: 21px; font-weight: 600; margin-bottom: 8px; }
+  .deck h3 span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--blue); margin-right: 10px; }
+  table { width: 100%; border-collapse: collapse; margin: 26px 0; font-size: 14.5px; }
+  th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fade);
+    text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(143,163,189,0.3); }
+  td { padding: 12px; border-bottom: 1px solid rgba(143,163,189,0.12); color: #cdd9e8; vertical-align: top; }
+  td:first-child { color: #e8eef6; font-weight: 500; white-space: nowrap; }
+  ol, ul { padding-left: 22px; margin-bottom: 18px; }
+  li { color: #cdd9e8; margin-bottom: 10px; }
+  .rally { text-align: center; font-family: var(--serif); font-style: italic;
+    font-size: clamp(24px, 3.4vw, 34px); color: #e8eef6; padding: 44px 0 8px; }
+
+  /* ============ FOOTER ============ */
+  footer { border-top: 1px solid rgba(143,163,189,0.14); padding: 34px 0 60px; }
+  .foot-row { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .foot-row, .foot-row a { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fade); }
+  .foot-row a:hover { color: #fff; }
+  .foot-note { font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--mist); margin-top: 26px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">shipyard · inference</div>
+  <div class="links">
+    <a href="/">inference</a><a href="/pricing">pricing</a><a href="/me">usage</a><a href="/connect">connect</a><a class="here" href="/manifesto">manifesto</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <div class="ship" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="kicker">a shipyard manifesto · a clearing house for the agent economy</div>
+    <h1>Death to <em>Tokenmaxxing.</em></h1>
+    <p class="hero-sub">
+      The wallet and the context window are the same asset class. One principal,
+      many agents, one balance. This is the case for the harbor that keeps it.
+    </p>
+  </div>
+  <div class="scroll-cue">↓</div>
+</div>
+
+<article class="wrap">
+
+  <div class="sec">
+    <div class="secno">I · The Premise</div>
+    <h2>Both AI and crypto are <em>token management.</em></h2>
+    <p class="lede">Tokens in, tokens out. The wallet and the context window are the same asset class — one converts capital into intelligence, the other converts intelligence back into capital. Every product in both industries is, beneath the branding, an exchange rate between the two.</p>
+    <p>What no one has built is the layer that manages that exchange rate deliberately. This is that layer.</p>
+    <p>The economic unit is shifting. Where the firm of the twentieth century organized people, the firm now emerging organizes agents: one principal, many autonomous agents, with compute standing in for headcount. The solopreneur operating such a fleet is not a hobbyist archetype but the early instance of a general pattern — and the pattern arrives with a balance sheet no accounting category describes. Tokens are the cost of goods sold; the credits that fund them expire like perishable inventory; and the capital that could finance the whole operation sits idle in wallets earning nothing.</p>
+    <p>Three observations follow. First, the incumbent AI houses behave not as technology firms but as the chartered monopolies of the seventeenth century — the East India Companies: exclusive routes, tolls set at pleasure, and the prerogative of declaring what cargo may be carried at all. Second, users have been conscripted into financial labor — reconciling a dozen gated accounts, metering their own consumption, watching perishable credits expire unspent — work that is tedious, unaudited, and uneconomical. Third, the instruments to correct this now exist: machine-speed stablecoin settlement (x402), yield-bearing custody of idle balances, and open-weight models performant enough on consumer silicon to constitute real supply.</p>
+    <p>We call the quantity that matters <b>compute net worth</b> — capital, credits, and consumption, accounted as one. This manifesto describes the house that keeps it.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">II · The Invisible Labor</div>
+    <h2>Death to <em>Tokenmaxxing.</em></h2>
+    <p>Consider what the power user of 2026 actually does. They maintain a dozen provider accounts, each with its own meter, rate limits, trial credits, and terms that change without notice. They ration their own consumption, choosing which key to draw down against which task, like a quartermaster apportioning water. They perform — unpaid, and often at midnight — the full function of a chief financial officer: reconciliation, budgeting, procurement, expiry management, for a trading venture they did not notice they were running.</p>
+    <p>This is tokenmaxxing, and it deserves a precise name precisely because it is invisible labor. The remedy it demands is not a meter that never runs — measurement is the honest price of intelligence — but the abolition of the <b>human labor</b> of management. Reconciliation, expiry, route selection, budget enforcement: these are mechanical tasks. They belong to a machine, operating on the principal's behalf, in the principal's interest, answerable to the principal's ledger.</p>
+    <p>The economic principle buried here is old. When coins of unequal quality circulate together, Gresham's law holds that bad money drives out good — the debased coin is spent first, the sound coin hoarded. An expiring trial credit held against a paid dollar balance is exactly this condition, and every rational user already knows what to do about it. What they lack is not the knowledge but the mechanism. The expiry-aware scheduler is Gresham's law operationalized — applied to the inventory of intelligence, automatically, per request.</p>
+    <div class="pull">Death to tokenmaxxing. Long live the ledger.</div>
+  </div>
+
+  <div class="sec">
+    <div class="secno">III · Sovereignty</div>
+    <h2>Chart your <em>own course.</em></h2>
+    <p>The monopolies of intelligence are not merely expensive; they are discretionary. They decide what your agents may say, what they may read, and what they may build — and they revise these determinations unilaterally, mid-voyage. A business whose cost of goods is tokens, routed exclusively through such harbors, trades under a flag it does not control.</p>
+    <p>History is unambiguous about what follows. When the Navigation Acts made lawful trade more expensive than enforcement, smuggling emerged not as deviance but as arbitrage — the market's systematic answer to tolls set above transaction costs. When the chartered companies restricted what could be carried, free ports and entrepôts arose at the margins — the Hansa's kontors, Hamburg, later Singapore — and captured the trade the monopolies priced away.</p>
+    <p>The same open water now exists in intelligence. Open-weight models have closed most of the performance gap for honest workloads; run on one's own silicon, they constitute private supply — uncensored, unlogged, and owned outright. Venice.ai demonstrated the demand empirically: private, permissionless inference is a mainstream preference, not a fringe one. The correct architecture is not a rejection of frontier capability but <b>chart-agnosticism</b>: frontier capacity when the work justifies it, private capacity when the principal wants no flag overhead — quality-adjusted, price-aware, chosen per request by the principal's own policy rather than the provider's.</p>
+    <div class="pull">The age of chartered intelligence is ending. Chart your own course.</div>
+  </div>
+
+  <div class="sec">
+    <div class="secno">IV · The Thesis</div>
+    <h2>Harbor your capital where your fleet is <em>provisioned.</em></h2>
+    <p>Not ideology — the oldest rational behavior in commerce. Merchants banked where their cargo traded because capital and commerce must be co-located for the voyage to compound. The <i>commenda</i> of the medieval Mediterranean — capital advanced by one party, navigation and labor by another, returns split by contract — financed the age of sail precisely because it let holders of capital participate in voyages they could not personally conduct. The staking treasury is the same instrument for compute: capital in, routed consumption out, yield from the trade.</p>
+    <p>Three decks, one ship:</p>
+    <div class="deck">
+      <h3><span>01</span>The Ledger — see everything</h3>
+      <p>Every account, every credit and its expiry, every agent's rate of consumption, every unit of the treasury and what it earns — one manifest, in real time. Not a spectator instrument: built atop the Navigator, it reads and it <b>acts</b>.</p>
+    </div>
+    <div class="deck">
+      <h3><span>02</span>The Navigator — spend optimally</h3>
+      <p>A routing layer across every inventory the principal owns and everything the agents buy: their accounts (BYOK — orchestrated on the principal's behalf, never pooled, never resold), their hardware, their treasury, and the long tail of paid tool and data APIs. Every call is a procurement decision: perishable credit drawn before expiry, private hardware before paid routes, frontier capacity when the work justifies it — always quality-adjusted. A policy engine scores every route on quality, latency, price, and privacy, compiling the live quality-versus-price curves that neither a static marketplace nor a prepaid catalog can produce.</p>
+    </div>
+    <div class="deck">
+      <h3><span>03</span>The Treasury — fund it productively</h3>
+      <p>Staked capital works while the fleet sleeps: yield carried by established, regulated venues — we route to vaults and never issue yield ourselves; wholesale pre-commitments earning the merchant's spread; every agent's budget drawn from the same balance. One balance, three roles: savings, fuel, and a share of the trade. The house's own fee debits from the treasury — <b>the ledger pays itself from its own yield</b>.</p>
+    </div>
+    <p>Note the direction of the asymmetry. The price of intelligence deflates roughly tenfold per year per unit of capability. A treasury long stablecoin and short capacity is therefore on the right side of the trade: wholesale contracts reprice downward on renewal, and the spread widens with time. Deflation, which punishes the builders of supply, works for the holders of the balance.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">V · The Existence Proof</div>
+    <h2>The mechanic already trades. Both proof and <em>warning.</em></h2>
+    <p>Venice (VVV) — stake and infer — appreciated roughly tenfold in ten months; DIEM tokenized a dollar-a-day of perpetual inference access. The behavior is proven at consumer scale. But both wrapped the entitlement in a protocol coin, and the entitlement decoupled from the underlying trade: as the coin appreciated tenfold, the holder's effective price of compute rose with it — even as the true cost of intelligence fell tenfold a year.</p>
+    <p>This is the South Sea error: an instrument appreciated as speculation, severed from the cash flows of the venture it represents. We decline to mint it. Capital in stablecoin, entitlement denominated in pegged units, yield through existing regulated venues. <b>Our unit is pegged — purchasing power rides the deflation of compute, not the sentiment of a chart.</b> They are long their own token; we are short the price of intelligence. No protocol coin, no emissions, no speculative toll between the principal and the cargo.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">VI · The Mechanism</div>
+    <h2>Three classes of <em>inventory.</em></h2>
+    <table>
+      <tr><th>Inventory</th><th>Custody</th><th>Source</th></tr>
+      <tr><td>Hardware</td><td>Pooled</td><td>Consumer silicon — private fleets and idle-device networks</td></tr>
+      <tr><td>Capital</td><td>Pooled</td><td>Staked stablecoin — the treasury and the demand guarantee</td></tr>
+      <tr><td>External credits</td><td>Orchestrated, never custodied</td><td>The principal's own accounts, consumed in their interest, never resold</td></tr>
+    </table>
+    <p>Settlement follows the oldest rule of honest ports: payment on delivery, not before. Providers are paid per successful call — escrow enforced by protocol, quality gates enforced economically rather than reputationally. And as the bill of exchange let medieval merchants transact across hostile borders without moving specie, the machine-payment protocol lets agents settle across provider boundaries without custody risk — a fourteenth-century instrument finding its successor at machine scale.</p>
+    <p>Demand is heterogeneous, so pricing is tiered: each class of supply carries its own dynamic fee curve, rising with congestion, accruing to holders of the treasury, floored by quality. Capital without hardware gains exposure to the compute trade; hardware without demand gains guaranteed volume. The clearing house is where has-compute meets has-capital — and most of our principals are, in time, both.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">VII · The Market</div>
+    <h2>Shipyards, tollhouses, and <em>entrepôts.</em></h2>
+    <ul>
+      <li>The <b>idle-device networks</b> (Darkbloom-class) are our shipyards, not rivals: we are their demand engine, and then their port of entry.</li>
+      <li>The <b>per-call marketplaces</b> (UsePod-class) are one route on the chart, nothing more. A payment wall over an API is a weekend's work — the least defensible position on the coast.</li>
+      <li>The <b>open tool catalogs</b> (Locus-class) are provisioning partners: breadth for our treasury; intelligence, settlement, and yield remain ours.</li>
+      <li>Whoever holds the balance holds the relationship.</li>
+    </ul>
+    <p>The monopolies will respond as monopolies have since the seventeenth century: bundling, preferential docks, the occasional Act of Parliament. We answer as the entrepôts always have — open ledgers, better rates, and no flag but the principal's.</p>
+    <p><b>Why now:</b> agents became economic actors with machine-settled payment; consumer silicon became a viable inference tier; stablecoin yield normalized — each within the last eighteen months. The winds converged.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">VIII · The Moat</div>
+    <h2>Marketplaces have no memory. We are the <em>position.</em></h2>
+    <ol>
+      <li><b>Routed flow.</b> A vault can be forked; a live fleet's routing data cannot. Every request improves the charts.</li>
+      <li><b>The port network.</b> Wholesale contracts and volume guarantees compound.</li>
+      <li><b>The balance.</b> Once treasury, routes, and agent budgets sit in one harbor, departure means a new voyage with an empty hold — in every direction.</li>
+    </ol>
+  </div>
+
+  <div class="sec">
+    <div class="secno">IX · The Regulatory Posture</div>
+    <h2>Designed in, not <em>retrofitted.</em></h2>
+    <p>Yield is carried by existing regulated venues — we route to vaults, we never issue yield. The BYOK layer holds zero custody — we orchestrate the principal's own assets on the principal's behalf: a sophisticated client, not a marketplace. Staking opens by invitation among known parties, on counsel's architecture. The credit is a balance, not a token. Third-party capacity is never resold.</p>
+  </div>
+
+  <div class="sec">
+    <div class="secno">X · The Voyage</div>
+    <h2>From a fleet of one to the open <em>coast.</em></h2>
+    <ol>
+      <li><b>Our own fleet.</b> Our hardware, our agents, our orphaned credits: a company of one proving the loop before another principal boards.</li>
+      <li><b>By invitation.</b> Known parties, known counterparties — small enough to remain, in every dimension that matters, friends testing a system.</li>
+      <li><b>The open wedge.</b> The Navigator and the Ledger open to any trader with keys to connect: zero-risk, zero-capital first contact — the account opened with a promotional check.</li>
+      <li><b>The full harbor.</b> Staking opens; capital-consciousness closes the loop.</li>
+    </ol>
+  </div>
+
+  <div class="sec">
+    <div class="secno">XI · The Pitch</div>
+    <h2>One principal. Many agents. One <em>harbor.</em></h2>
+    <p>Solopreneurs run businesses whose cost of goods is tokens, managed as if it were 2023 — a dozen gated ports, expiring credits, idle capital, and no manifest. We are the financial house that sees all of it, routes across it at the best price, and turns idle capital into fuel.</p>
+    <p><b>Both AI and crypto are token management — and someone was always going to build the exchange for both. We are building the harbor.</b></p>
+    <div class="rally">Death to tokenmaxxing.</div>
+  </div>
+
+</article>
+
+<footer class="wrap">
+  <div class="foot-row">
+    <div>shipyard · inference</div>
+    <div>
+      <a href="/">inference</a> &nbsp; <a href="/pricing">pricing</a> &nbsp; <a href="/me">usage</a> &nbsp; <a href="/dashboard/">dashboard</a> &nbsp; <a href="/connect">connect</a>
+    </div>
+  </div>
+  <div class="foot-note">Fair winds and a following sea.</div>
+</footer>
+
+</body>
+</html>
