@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Shipyard Inference · Chat Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -145,10 +148,11 @@
         <div class="thread" id="thread">
           <div class="empty" id="empty">
             <div class="empty-mark">⚓</div>
-            <h1>Frontier models, <span class="grad">for less</span></h1>
-            <p>Shipyard Inference routes every prompt to the cheapest capable model and pays from
-               your wallet — the same answer for a smaller bill. Each reply shows exactly
-               what it cost and what you saved.</p>
+            <div class="empty-kicker">openai-compatible · one endpoint · x402 settlement</div>
+            <h1>The inference layer that <span class="grad">pays for itself.</span></h1>
+            <p>Every prompt routed to the cheapest capable model, failed over when a provider
+               blinks, billed per call in <b>USDC</b> from your wallet — the same answer
+               for a <b>smaller bill</b>. Each reply shows exactly what it cost and what you saved.</p>
             <div class="examples" id="examples">
               <button class="example" data-prompt="Explain how x402 micropayments work, with a diagram in code.">
                 <span class="example-k">Explain</span>

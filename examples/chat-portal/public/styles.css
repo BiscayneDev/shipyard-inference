@@ -1,20 +1,26 @@
 :root {
-  --bg: #09090b;
-  --bg-2: #111113;
-  --glass: rgba(255, 255, 255, .03);
-  --glass-2: rgba(255, 255, 255, .05);
-  --hair: rgba(255, 255, 255, .07);
-  --hair-2: rgba(255, 255, 255, .12);
-  --text: #ededf0;
-  --muted: #a0a0a8;
-  --faint: #7e7e86;
-  --accent: #8b8bf0;
+  /* "The Crossing" — the Shipyard Inference design language from the
+     landing page: deep night navy, Playfair serif headings, JetBrains
+     Mono kickers, a single blue accent, hairline glass, film grain. */
+  --night: #050a18;
+  --deep: #0a1226;
+  --bg: var(--night);
+  --bg-2: var(--deep);
+  --glass: rgba(185, 201, 222, .04);
+  --glass-2: rgba(185, 201, 222, .07);
+  --hair: rgba(110, 130, 156, .16);
+  --hair-2: rgba(110, 130, 156, .3);
+  --text: #e8eef6;
+  --muted: #b9c9de;
+  --faint: #8fa3bd;
+  --accent: #6b9ce0;
   --accent-2: #6ea88e;
   --violet: #9d8ec7;
   --amber: #d4b576;
   --danger: #d47a7a;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --serif: "Playfair Display", Georgia, serif;
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --ease: cubic-bezier(.25, .8, .25, 1);
 }
 
@@ -38,13 +44,20 @@ button { font-family: inherit; }
 .aurora {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(55% 45% at 15% -12%, rgba(139, 139, 240, .06), transparent 60%),
-    radial-gradient(50% 45% at 85% 2%, rgba(110, 168, 142, .05), transparent 60%);
+    radial-gradient(55% 45% at 15% -12%, rgba(107, 156, 224, .07), transparent 60%),
+    radial-gradient(50% 45% at 85% 2%, rgba(61, 111, 181, .06), transparent 60%);
   filter: saturate(100%);
 }
 .aurora::after {
   content: ""; position: absolute; inset: 0;
-  background: radial-gradient(120% 80% at 50% 0%, transparent 40%, rgba(9, 9, 11, .5) 100%);
+  background: radial-gradient(120% 80% at 50% 0%, transparent 40%, rgba(5, 10, 24, .5) 100%);
+}
+
+/* Film grain — the landing page's signature texture, over everything. */
+body::after {
+  content: ""; position: fixed; inset: -50%; z-index: 90; pointer-events: none; opacity: .22;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
 }
 
 /* ---------- shell ---------- */
@@ -69,8 +82,14 @@ button { font-family: inherit; }
   background: var(--bg-2);
   border: 1px solid var(--hair-2);
 }
-.brand-name { font-weight: 700; font-size: 16px; letter-spacing: -.2px; }
-.brand-sub { font-size: 12px; color: var(--faint); }
+.brand-name {
+  font-family: var(--mono); font-weight: 400; font-size: 12px;
+  letter-spacing: 0.24em; text-transform: uppercase; color: #cdd9e8;
+}
+.brand-sub {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--faint);
+}
 
 .card {
   background: var(--glass); border: 1px solid var(--hair);
@@ -250,16 +269,30 @@ button { font-family: inherit; }
 .msg, .empty { width: 100%; max-width: 60rem; margin: 0 auto; padding: 0 26px; }
 
 /* empty / hero — vertically centered in the thread so whitespace splits
-   evenly above/below instead of pooling in a dead band above the composer */
+   evenly above/below instead of pooling in a dead band above the composer.
+   Speaks in the landing page's voice: mono kicker, Playfair serif with
+   blue italic emphasis, quiet mist body copy. */
 .empty { text-align: center; margin-top: auto; margin-bottom: auto; }
 .empty-mark {
   width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 18px;
   display: grid; place-items: center; font-size: 32px;
-  background: var(--bg-2); border: 1px solid var(--hair-2);
+  background: var(--glass); border: 1px solid var(--hair);
+  backdrop-filter: blur(8px);
 }
-.empty h1 { font-size: 34px; font-weight: 700; letter-spacing: -1px; margin: 0 0 12px; }
-.empty h1 .grad { color: var(--accent); }
-.empty p { color: var(--muted); line-height: 1.65; max-width: 520px; margin: 0 auto; font-size: 15px; }
+.empty-kicker {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .3em;
+  text-transform: uppercase; color: var(--faint);
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-bottom: 20px;
+}
+.empty-kicker::before, .empty-kicker::after { content: ""; width: 34px; height: 1px; background: var(--hair-2); }
+.empty h1 {
+  font-family: var(--serif); font-weight: 600; font-size: clamp(30px, 4.6vw, 44px);
+  line-height: 1.08; letter-spacing: -0.015em; margin: 0 0 14px;
+}
+.empty h1 .grad { font-style: italic; font-weight: 400; color: var(--accent); }
+.empty p { color: var(--muted); line-height: 1.7; max-width: 520px; margin: 0 auto; font-size: 15px; }
+.empty p b { color: #fff; font-weight: 500; }
 
 .examples {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
@@ -905,8 +938,10 @@ main.dec { display: flex; flex-direction: column; }
 .qtype.active { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .pbar { background: var(--glass-2); }
 .empty h1 .grad, .dec-empty h1 .grad {
-  background: none; -webkit-text-fill-color: currentColor; color: var(--text);
+  background: none; -webkit-text-fill-color: currentColor;
+  color: var(--accent); font-style: italic; font-weight: 400;
 }
+.dec-empty h1 { font-family: var(--serif); font-weight: 600; }
 .savings-toast {
   background: var(--bg-2);
   border: 1px solid var(--hair-2);
