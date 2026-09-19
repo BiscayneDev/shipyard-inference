@@ -6,6 +6,7 @@ test('probeHardware parses macOS sysctl output', () => {
   const hw = probeHardware({
     execSync: (cmd: string) =>
       cmd.includes('hw.memsize') ? '8589934592' : 'Apple M2',
+    platform: 'darwin',
   })
   assert.equal(hw!.totalRamGb, 8)
   assert.equal(hw!.chip, 'Apple M2')

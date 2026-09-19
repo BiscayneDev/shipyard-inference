@@ -45,19 +45,20 @@ const FALLBACK_LADDER: LocalLadder = {
  * (never throws) so callers can fall back to a conservative ladder.
  */
 export function probeHardware(
-  deps?: { execSync?: (cmd: string) => string },
+  deps?: { execSync?: (cmd: string) => string; platform?: NodeJS.Platform },
 ): HardwareProfile | null {
   const run =
     deps?.execSync ??
     ((cmd: string) => execSync(cmd, { encoding: 'utf8' }) as string)
+  const platform = deps?.platform ?? process.platform
   try {
-    if (process.platform === 'darwin') {
+    if (platform === 'darwin') {
       const chip = run('sysctl -n machdep.cpu.brand_string').trim()
       const memBytes = Number(run('sysctl -n hw.memsize').trim())
       if (!Number.isFinite(memBytes) || memBytes <= 0 || !chip) return null
       return { chip, totalRamGb: Math.round(memBytes / 1024 ** 3), platform: 'darwin' }
     }
-    if (process.platform === 'linux') {
+    if (platform === 'linux') {
       const memKb = Number(run("awk '/MemTotal/{print $2}' /proc/meminfo").trim())
       const chip = run("grep -m1 'model name' /proc/cpuinfo").split(':').pop()!.trim()
       if (!Number.isFinite(memKb) || memKb <= 0) return null
