@@ -47,7 +47,7 @@ export function buildAgentWiring(
       OPENAI_API_KEY: key,
     },
     instructions:
-      'Export these in the agent process (OpenAI-compatible). Request model `auto` — ' +
+      'Export these in the agent process (OpenAI-compatible). Request model: auto — ' +
       'explicit model ids get pinned by the gateway and never fail over.',
   }
 }
