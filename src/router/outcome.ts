@@ -26,15 +26,18 @@ export interface OutcomeInput {
  * Classify how a request ended.
  *
  * Priority order matters: a pre-flight rejection (nothing attempted) wins
- * outright; a client abort after tokens were emitted is its own outcome
- * (billed partial, excluded from error rate); an incomplete stream after
- * tokens were emitted is truncated — mid-stream cutoffs never fail over, so
- * this is terminal; a clean completion is ok; everything else (provider was
- * attempted, nothing emitted, no completion) is provider_error.
+ * outright; a client abort is its own outcome — before any token arrived it
+ * classified as provider_error in earlier revisions, but nothing billable
+ * reached the client and the disconnect is the caller's doing, not a provider
+ * failure; an abort after tokens were emitted is billed partial; an
+ * incomplete stream after tokens were emitted (no abort) is truncated —
+ * mid-stream cutoffs never fail over, so this is terminal; a clean completion
+ * without a disconnect is ok; everything else (provider was attempted,
+ * nothing emitted, no completion) is provider_error.
  */
 export function classifyOutcome(r: OutcomeInput): Outcome {
   if (r.attempted === 0) return 'rejected_pre_flight'
-  if (r.tokensEmitted && r.clientAborted) return 'client_abort'
+  if (r.clientAborted) return 'client_abort'
   if (r.tokensEmitted && !r.completed) return 'truncated'
   if (r.completed) return 'ok'
   return 'provider_error'

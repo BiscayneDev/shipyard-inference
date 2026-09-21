@@ -14,7 +14,7 @@ The outcome is the shared vocabulary for three downstream decisions:
 |---|---|---|---|---|
 | `rejected_pre_flight` | The request never reached a provider: auth failure, 402 payment required, spend ceiling, invalid body, or no candidate satisfies the routing hints (`NoCapableModelError`). | **No** — nothing was served. | No — not a provider failure. | None — nothing was attempted. Caller fixes the request / tops up. |
 | `truncated` | The upstream stream ended after tokens were emitted but without a clean `done` (mid-stream cutoff / upstream error post-commit). | **Yes** — tokens that reached the client are billable. | **Yes** — the caller got an incomplete answer. | **Never retried or failed over.** Once any token is emitted the request is committed; re-running on another model would duplicate output. Surfaced as an error event on the stream. |
-| `client_abort` | The client disconnected mid-stream after tokens were emitted (the gateway aborts the upstream, stopping token spend). | **Yes** — for tokens that arrived before the disconnect (usage recorded at the trailer). | **No** — not a gateway or provider failure. | **Never retried.** The caller is gone; failover is meaningless. Mid-stream cutoffs never trigger candidate retry. |
+| `client_abort` | The client disconnected before or during the stream without a clean completion (pre-token aborts included — the gateway aborts the upstream, stopping token spend). | Pre-token: **No** — nothing arrived. Post-token: **Yes** — for tokens that arrived before the disconnect (usage recorded at the trailer). | **No** — not a gateway or provider failure; a pre-token abort is the caller's doing, not a provider error. | **Never retried.** The caller is gone; failover is meaningless. Mid-stream cutoffs never trigger candidate retry. |
 | `ok` | The upstream stream completed normally (`done`, usage recorded, `request_completed` emitted). | **Yes** — full usage (input + output tokens × model pricing). | No. | N/A — success. Health tracker records a success for the candidate. |
 | `provider_error` | A provider was attempted, nothing was emitted, and the request never completed — the final candidate's error propagated (or all retry/failover budget was exhausted). | **No** — no tokens reached the client. | **Yes** — this is the gateway's error signal. | Pre-commit only: retryable errors (429, 5xx, `ETIMEDOUT`/`ECONNRESET`/`ECONNREFUSED`, deprecation/overloaded) retry the same candidate within `retry.maxRetries` (default 0) with capped full-jitter backoff (250 ms base, 20 s cap, `Retry-After` honored), then fail over to the next candidate. Non-retryable errors (other 4xx — auth, malformed request, context-length) propagate immediately: never retried, never failed over. A failed candidate is put in **cooldown** (default 30 s, half-open probe) by the health tracker. |
 
@@ -29,5 +29,6 @@ The outcome is the shared vocabulary for three downstream decisions:
   first content event; `truncated` and `client_abort` are therefore terminal
   outcomes that never trigger candidate retry.
 - Outcome classification priority: `attempted === 0` → `rejected_pre_flight`;
-  tokens + client abort → `client_abort`; tokens + no completion → `truncated`;
-  completed → `ok`; otherwise `provider_error`.
+  client abort without completion → `client_abort` (pre-token aborts included:
+  zero tokens arrived, so not billed and not a provider failure); tokens + no
+  completion → `truncated`; completed → `ok`; otherwise `provider_error`.

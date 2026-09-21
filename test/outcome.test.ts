@@ -23,6 +23,16 @@ test('client abort excluded from error classification', () => {
   )
 })
 
+test('pre-token client abort classifies as client_abort, not provider_error', () => {
+  // Disconnect after route_selected but before the first delta: attempted>0,
+  // nothing billable emitted, no completion — the caller walked away, so this
+  // must not inflate the provider error rate.
+  assert.equal(
+    classifyOutcome({ attempted: 1, tokensEmitted: false, clientAborted: true, completed: false }),
+    'client_abort',
+  )
+})
+
 test('ok on clean completion', () => {
   assert.equal(
     classifyOutcome({ attempted: 1, tokensEmitted: true, clientAborted: false, completed: true }),
