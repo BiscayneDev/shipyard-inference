@@ -1,5 +1,7 @@
 # Hopscotch Parity & Partnership Plan — Shipyard Inference
 
+> **STATUS (2026-09-21): Tracks 0–4 SHIPPED.** Commits: `d66f06f` (memo), `67270f6`+`304e993` (outcome taxonomy + receipt + billing doc), `bb26e26` (project cap), `4c60765` (catalog), `7965a24`/`f5b85e5`/`af2c8ea` (review fixes), `14b03a4` (Hopscotch spike), `1852df9` (BYOK), `520e469` (BYOK coverage for review minors). Integration review: APPROVED, 359/359 tests. Track 5 (playground) remains parked pending the partnership call. Live Hopscotch verification blocked on `HOPSCOTCH_KEY`.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Adopt the best of Hopscotch's model-layer UX (classified outcomes, project spend caps, BYO upstream keys, public catalog) while opening a partnership conversation that makes us complementary instead of head-to-head.
