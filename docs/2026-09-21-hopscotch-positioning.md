@@ -33,3 +33,25 @@ We open the conversation with (a), and list all three:
 ## 3. The ask
 
 An intro call. We demo the local gateway plus the x402 demo stack: Surfnet billing and the browser payer chat portal. The pitch in one line: **you are the catalog, we are the edge — agents get both.**
+
+## Spike findings (Task 0.2, spikes/hopscotch-provider.mts — throwaway)
+
+**Interface compatibility.** `OpenAIProvider` pointed at `https://hopscotchlabs.ai/v1` is the entire integration: `createHopscotchProvider()` constructs an `OpenAIProvider` with `baseURL` + placeholder model and satisfies `LLMProvider` (chat + chatStream) with zero adapter code. No new provider class needed — the same shape as OpenRouter/Venice.
+
+**Mapped cleanly:**
+- Base URL / wire format: standard OpenAI `/v1` chat completions per their docs.
+- Streaming: their SSE chunks flow through the existing `chatStream` delta parser; the usage-only terminal chunk is already tolerated.
+- Auth: OpenAI SDK sends `Authorization: Bearer <key>`; if Hopscotch uses a custom header instead, `OpenAIProviderOptions.defaultHeaders` covers it — still no adapter class.
+- Priority: dropping it into the candidate ladder as the lowest-priority cloud candidate is config, not code.
+
+**Needs verification / possible adapter work (no API key exists — live run unverified):**
+- Model naming: `hopscotch/auto` is a placeholder; need their real model IDs and whether their router-style default exists.
+- `max_tokens` vs `max_completion_tokens` acceptance; `stream_options: { include_usage: true }` support.
+- Tool-call chunk shape (function-tool deltas in OpenAI form?) — untested.
+- Usage accounting in the terminal chunk (affects cost math / x402 metering).
+
+**Open questions for the partnership call:**
+1. Cost pass-through: wholesale + we settle, or metered pass-through at their list price?
+2. BYO-key interplay: if users bring their own Hopscotch key, does our x402 pay-per-call layer coexist (skip billing on BYO-key routes)?
+3. Whether their BYO-key mode means OUR users could pay Hopscotch directly — i.e. Shipyard routes but never touches Hopscotch spend, which changes where `createPayingFetch` hooks in (not at all, for those routes).
+4. Rate limits / 402-vs-429 semantics on their side for the payment-layer retry path.
