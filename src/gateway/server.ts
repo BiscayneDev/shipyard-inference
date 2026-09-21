@@ -36,6 +36,7 @@ import {
   perTokenAtomic,
 } from './x402-upto.js'
 import type { UptoVerified, UptoSettlement } from './x402-upto.js'
+import { classifyOutcome } from '../router/outcome.js'
 import { isCapable } from '../router/capabilities.js'
 import type { RoutingHints } from '../types.js'
 
@@ -210,6 +211,10 @@ interface RequestContext {
   model?: string
   provider?: string
   costUsd?: number
+  /** How many provider candidates were attempted (route_selected attempts + 1). */
+  attempted?: number
+  /** The upstream stream finished normally (done event / request_completed). */
+  completed?: boolean
   /** Failover receipt for this request, set when a provider failed over. */
   failover?: { from: string; to?: string; reason: string }
   routing?: {
@@ -230,11 +235,13 @@ const als = new AsyncLocalStorage<RequestContext>()
 function capture(ctx: RequestContext, event: RouterEvent): void {
   if (event.type === 'route_selected') {
     ctx.provider = event.candidateId
+    ctx.attempted = event.attempt + 1
     if (event.model) ctx.model = event.model
     // A route_selected after a failover event is the rung we landed on.
     if (ctx.failover && !ctx.failover.to) ctx.failover.to = event.candidateId
   } else if (event.type === 'request_completed') {
     ctx.provider = event.candidateId
+    ctx.completed = true
     if (event.model) ctx.model = event.model
     ctx.costUsd = event.actualCostUsd
   } else if (event.type === 'failover') {
@@ -629,6 +636,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         )
         const controller = new AbortController()
         stream.onAbort(() => controller.abort())
+        // Hono only routes the request signal into stream.onAbort on (old) Bun;
+        // on Node a client disconnect fires nothing on the SSE stream, so wire
+        // the request signal directly — otherwise an upstream abort-aware
+        // stream waits forever and the response never terminates.
+        c.req.raw.signal.addEventListener('abort', () => controller.abort(), { once: true })
 
         const { stream: tstream, finish } = wrapTender(
           auth.account?.userId,
@@ -641,8 +653,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           let meterChars = 0
           let meterUsage: { inputTokens: number; outputTokens: number } | undefined
           let guardText = ''
+          let tokensEmitted = false
           await als.run(ctx, async () => {
             for await (const event of tstream) {
+              if (event.type === 'text_delta') tokensEmitted = true
               if (upto) {
                 if (event.type === 'text_delta') meterChars += event.text.length
                 const usage = (event as { usage?: { inputTokens: number; outputTokens: number } }).usage
@@ -684,6 +698,14 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                   model: ctx.model,
                   provider: ctx.provider,
                   costUsd: ctx.costUsd,
+                  // Classified terminal outcome (docs/billing-outcomes.md):
+                  // drives billing and error-rate accounting downstream.
+                  outcome: classifyOutcome({
+                    attempted: ctx.attempted ?? (ctx.provider ? 1 : 0),
+                    tokensEmitted,
+                    clientAborted: controller.signal.aborted,
+                    completed: ctx.completed,
+                  }),
                   ...(ctx.failover
                     ? {
                         failover: {

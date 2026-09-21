@@ -32,6 +32,37 @@ export function streamingProvider(
   }
 }
 
+/**
+ * A streaming provider that emits one text delta, then waits for the caller's
+ * abort signal before yielding a `done` event carrying real usage — models a
+ * client disconnect mid-stream where the upstream is cut off but the tokens
+ * that arrived are still billable.
+ */
+export function abortAwareStreamProvider(): LLMProvider {
+  return {
+    async chat() {
+      return { content: '(nonstream)', toolCalls: [], stopReason: 'end_turn' }
+    },
+    async *chatStream(_params, opts) {
+      yield { type: 'text_delta', text: 'partial' } as LLMStreamEvent
+      await new Promise<void>((resolve) => {
+        const signal = opts?.signal
+        if (!signal || signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      yield {
+        type: 'done',
+        response: {
+          content: 'partial',
+          toolCalls: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 10, outputTokens: 5 },
+        },
+      } as LLMStreamEvent
+    },
+  }
+}
+
 /** Build a Response carrying an SSE body, returned from an injected `fetch`. */
 export function sseFetch(sse: string): typeof fetch {
   return (async () =>
