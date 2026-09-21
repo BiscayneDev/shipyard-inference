@@ -167,9 +167,13 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
     return c.json(body)
   })
   // --- public catalog (Lighthouse): static model catalog with hardware fit ---
-  // Follows the /appliance caching convention so repeated polls don't recompute.
+  // Public on purpose: the static /catalog page is ungated, and this is its
+  // data source. Registered on `app` (NOT the operator-token-gated `api`
+  // router) so it stays reachable without a bearer header even when
+  // operatorTokens are configured. Payload is static catalog data only —
+  // no tokens, keys, or telemetry.
   let catalogCache: { at: number; body: unknown } | null = null
-  api.get('/catalog', (c) => {
+  app.get('/api/catalog', (c) => {
     if (catalogCache && Date.now() - catalogCache.at < 30_000) {
       return c.json(catalogCache.body)
     }

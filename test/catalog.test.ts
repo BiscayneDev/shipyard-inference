@@ -60,6 +60,21 @@ test('GET /api/catalog serves the catalog module and /catalog serves the page', 
   assert.match(await page.text(), /catalog\.js/)
 })
 
+test('GET /api/catalog stays public even when operator tokens are set', async () => {
+  const hub = new TelemetryHub({ now: () => Date.now() })
+  const app = createOperatorConsole({ hub, operatorTokens: ['t'], ingestTokens: [] })
+  const res = await app.request('/api/catalog') // no Authorization header
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.ok(Array.isArray(body.models))
+  // Ungated payload must carry no secrets: static catalog rows only.
+  const text = JSON.stringify(body)
+  assert.ok(!text.includes('token') && !text.includes('key') && !text.includes('sk-'), 'catalog payload must not leak credentials')
+  // Gated endpoints stay gated.
+  const gated = await app.request('/api/overview')
+  assert.equal(gated.status, 401)
+})
+
 test('local entries are free and cloud entries carry both prices', () => {
   for (const entry of CATALOG) {
     if (entry.localAvailable) {
