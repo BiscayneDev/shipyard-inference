@@ -44,8 +44,6 @@ test('spent totals are reported per key', () => {
 // traffic through the project 402s (with topUpUrl) until the window resets.
 // Free/zero-cost traffic still passes when the project is NOT drained.
 
-// --- Project-level aggregate cap ---
-
 function usageProvider() {
   return mockProvider(() => ({
     content: 'hello',
@@ -227,4 +225,29 @@ test('gateway records actual cost after a keyed completion', async () => {
     body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
   })
   assert.ok(tracker.spent('sk-acc') > 0, 'actual cost should be recorded post-completion')
+})
+
+test('project cap with ceilingUsd 0 blocks everything (no dead >0 guard)', () => {
+  // ceilingUsd: 0 must not silently pass: amount 0 >= 0 → drained from the start.
+  const s = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+  const cap = { ceilingUsd: 0, windowMs: 60_000 }
+  assert.equal(s.checkProject('p', cap, 0), 'block')
+  assert.equal(s.checkProject('p', cap, 1), 'block')
+  // A sane ceiling still allows free traffic when not drained.
+  const ok = { ceilingUsd: 10, windowMs: 60_000 }
+  assert.equal(s.checkProject('q', ok, 0), 'allow')
+})
+
+test('startGateway rejects invalid project cap config at load', async () => {
+  const { startGateway } = await import('../src/gateway/serve.js')
+  type GatewayConfig = Parameters<typeof startGateway>[0]
+  const cfg = (spend: object): GatewayConfig => ({ spend } as unknown as GatewayConfig)
+  assert.throws(
+    () => startGateway(cfg({ tracker: new MemorySpendTracker({ defaultCeilingUsd: 1 }), project: { ceilingUsd: 0, windowMs: 60_000 } })),
+    /ceilingUsd must be > 0/,
+  )
+  assert.throws(
+    () => startGateway(cfg({ tracker: new MemorySpendTracker({ defaultCeilingUsd: 1 }), project: { ceilingUsd: 10, windowMs: 0 } })),
+    /windowMs must be > 0/,
+  )
 })

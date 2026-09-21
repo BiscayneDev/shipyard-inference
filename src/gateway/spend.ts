@@ -109,8 +109,15 @@ export class MemorySpendTracker implements SpendTracker {
     // Unlike the per-key breaker (which allows zero-cost traffic), a project
     // cap is an operator budget — once aggregate recorded spend crosses the
     // ceiling, ALL keyed traffic 402s until the window resets.
+    // TOCTOU (in-flight overshoot): check happens at request start, spend is
+    // recorded only at completion, so N concurrent in-flight requests each
+    // pass checkProject and the aggregate can overshoot the ceiling by up to
+    // the sum of their un-recorded costs — bounded by N-1 × per-request
+    // estimate. This is accepted for the in-memory reference implementation;
+    // a reservation/hold system is deliberately out of scope (YAGNI) until a
+    // distributed tracker replaces this one.
     const b = this.projectBucket(projectId, cap)
-    if (b.amount > 0 && b.amount >= cap.ceilingUsd) return 'block'
+    if (b.amount >= cap.ceilingUsd) return 'block'
     return b.amount + estimatedCostUsd > cap.ceilingUsd ? 'block' : 'allow'
   }
 
