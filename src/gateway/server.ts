@@ -217,6 +217,8 @@ interface RequestContext {
   completed?: boolean
   /** Failover receipt for this request, set when a provider failed over. */
   failover?: { from: string; to?: string; reason: string }
+  /** False when the serving rung was a BYO (own-key) candidate — not debited. */
+  billed?: boolean
   routing?: {
     tier: string
     source: 'jev' | 'structural'
@@ -244,6 +246,7 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
     ctx.completed = true
     if (event.model) ctx.model = event.model
     ctx.costUsd = event.actualCostUsd
+    if (event.billed !== undefined) ctx.billed = event.billed
   } else if (event.type === 'failover') {
     // Record the receipt; the `to` rung is filled in by the next
     // route_selected (the candidate the failover loop lands on).
@@ -408,6 +411,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     cache: config.cache,
     usageRecorder: config.usageRecorder,
     health: config.health,
+    byok: config.byok,
     onEvent: (event) => {
       const ctx = als.getStore()
       if (ctx) capture(ctx, event)
@@ -590,6 +594,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     /** Record actual spend after the request completes (never blocks). */
     const recordSpend = (costUsd: number | undefined): void => {
       if (!config.spend || !spendKey || !costUsd || costUsd <= 0) return
+      // BYO ("your key, your bill"): served on the caller's own upstream key —
+      // never debited from the shared balance.
+      if (ctx.billed === false) return
       config.spend.tracker.record(spendKey, costUsd)
       const projectCap = config.spend.project
       if (projectCap) {
@@ -698,6 +705,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
                   model: ctx.model,
                   provider: ctx.provider,
                   costUsd: ctx.costUsd,
+                  // False when served on the caller's own upstream key.
+                  billed: ctx.billed === false ? false : true,
                   // Classified terminal outcome (docs/billing-outcomes.md):
                   // drives billing and error-rate accounting downstream.
                   outcome: classifyOutcome({

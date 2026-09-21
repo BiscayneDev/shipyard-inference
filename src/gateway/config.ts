@@ -198,6 +198,15 @@ export interface GatewayConfig {
    * cost is recorded after completion. Off when omitted.
    */
   spend?: SpendConfig
+  /**
+   * BYO upstream keys ("your key, your bill"). Each entry names a candidate id
+   * (`provider`) and the env var holding the caller's own upstream API key.
+   * When `process.env[apiKeyEnv]` is set, that candidate's decisions are tried
+   * BEFORE shared-pool candidates and requests it serves are recorded as
+   * `costUsd: 0` + `billed: false` (never debited from the shared balance).
+   * When the env var is unset, the candidate is skipped entirely.
+   */
+  byok?: { provider: string; apiKeyEnv: string }[]
 }
 
 export interface SpendConfig {

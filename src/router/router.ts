@@ -85,6 +85,12 @@ export type RouterEvent =
       latencyMs: number
       /** True when the caller pinned a specific provider/model via `routingHints.pin`. */
       pinned?: boolean
+      /**
+       * False when the request was served on a BYO (own-key) candidate — the
+       * caller pays the upstream directly, so nothing is debited. Absent
+       * otherwise.
+       */
+      billed?: boolean
     }
 
 export interface RouterOptions {
@@ -140,6 +146,13 @@ export interface RouterOptions {
   videoPollIntervalMs?: number
   /** Max poll attempts for video generation polling. Default 60. */
   videoMaxPollAttempts?: number
+  /**
+   * BYO upstream keys: `{ provider: candidateId, apiKeyEnv }` entries. A
+   * candidate whose id matches and whose env var is set is tried BEFORE
+   * shared-pool candidates; requests it serves cost the caller $0 (their own
+   * upstream bill). Candidates whose env var is unset are skipped entirely.
+   */
+  byok?: { provider: string; apiKeyEnv: string }[]
 }
 
 /**
@@ -422,15 +435,48 @@ export class Router implements LLMProvider {
       return [{ candidate, model: meta?.model ?? requested, ...(meta ? { meta } : {}) }]
     }
 
-    return this.strategy.select({
+    /**
+     * Live BYO candidate ids (config-matched and env-backed), used to skip
+     * unkeyed BYO candidates and promote keyed ones ahead of the shared pool.
+     */
+    const byokLive = new Set<string>()
+    if (this.opts.byok) {
+      for (const entry of this.opts.byok) {
+        if (process.env[entry.apiKeyEnv]) byokLive.add(entry.provider)
+      }
+    }
+
+    const pool = this.opts.byok
+      ? // A BYO candidate with no key in the env is skipped entirely.
+        this.opts.candidates.filter((c) => !this.isByokDeclared(c.id) || byokLive.has(c.id))
+      : this.opts.candidates
+
+    const selected = this.strategy.select({
       params: await this.applyAutoTier(params),
       candidates: this.opts.health
-        ? this.opts.candidates.filter((c) => this.opts.health!.isAvailable(c.id))
-        : this.opts.candidates,
+        ? pool.filter((c) => this.opts.health!.isAvailable(c.id))
+        : pool,
       attempt: 0,
       previousErrors: [],
       pricingOverrides: this.opts.pricingOverrides,
     })
+    return byokLive.size ? this.promoteByok(selected, byokLive) : selected
+  }
+
+  /** Whether `candidateId` is named by any `byok` entry (keyed or not). */
+  private isByokDeclared(candidateId: string): boolean {
+    return (this.opts.byok ?? []).some((b) => b.provider === candidateId)
+  }
+
+  /** Stable reorder: BYO decisions ahead of shared-pool ones, tagged `byok`. */
+  private promoteByok(decisions: RoutingDecision[], live: Set<string>): RoutingDecision[] {
+    const byokDecisions: RoutingDecision[] = []
+    const shared: RoutingDecision[] = []
+    for (const d of decisions) {
+      if (live.has(d.candidate.id)) byokDecisions.push({ ...d, byok: true })
+      else shared.push(d)
+    }
+    return [...byokDecisions, ...shared]
   }
 
   /**
@@ -514,6 +560,10 @@ export class Router implements LLMProvider {
         ? resolveModelMetadata(decision.model, undefined, this.opts.pricingOverrides).meta
         : undefined)
     const actualCostUsd = computeActualCostUsd(meta, usage)
+    // BYO ("your key, your bill"): the caller pays the upstream directly, so
+    // the gateway records $0 and flags the receipt as not debited.
+    const byok = decision.byok === true
+    const debitCostUsd = byok ? 0 : actualCostUsd
 
     // Baseline = the model the caller would otherwise have used: an explicit
     // `baselineModel` wins, else the model the request asked for (`params.model`).
@@ -538,34 +588,39 @@ export class Router implements LLMProvider {
         ? routingSavingsUsd + cachingSavingsUsd + (compressionSavingsUsd ?? 0)
         : undefined
     const requestClassLabel = requestClass
+    // Savings math presumes the gateway's metered cost; on a BYO rung the
+    // caller's own upstream bill is outside our ledger, so claim nothing.
+    const savings = byok
+      ? {}
+      : {
+          routingSavingsUsd,
+          cachingSavingsUsd,
+          compressionSavingsUsd,
+          savedUsd,
+        }
 
     this.emit({
       type: 'request_completed',
       candidateId: decision.candidate.id,
       model: decision.model,
       usage,
-      actualCostUsd,
+      actualCostUsd: debitCostUsd,
       baselineCostUsd,
-      savedUsd,
-      routingSavingsUsd,
-      cachingSavingsUsd,
-      compressionSavingsUsd,
+      ...savings,
       baselineModel: baselineModelId,
       requestClass: requestClassLabel,
       userId,
       latencyMs,
       pinned,
+      ...(byok ? { billed: false } : {}),
     })
     this.opts.usageRecorder?.record({
       candidateId: decision.candidate.id,
       model: decision.model,
       usage,
-      actualCostUsd,
+      actualCostUsd: debitCostUsd,
       baselineCostUsd,
-      savedUsd,
-      routingSavingsUsd,
-      cachingSavingsUsd,
-      compressionSavingsUsd,
+      ...savings,
       baselineModel: baselineModelId,
       requestClass: requestClassLabel,
       userId,

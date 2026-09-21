@@ -298,6 +298,7 @@ export function computeFeed(events: StoredEvent[], limit: number): FeedRow[] {
       savedUsd: e.savedUsd,
       latencyMs: e.latencyMs,
       pinned: e.pinned,
+      ...(e.billed !== undefined ? { billed: e.billed } : {}),
       ...(receipt ? { failover: receipt } : {}),
     })
   }

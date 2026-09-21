@@ -12,6 +12,12 @@ export interface RoutingDecision {
   meta?: ModelMetadata
   /** Estimated USD cost for this call, when priced. */
   estimatedCostUsd?: number
+  /**
+   * True when this decision was promoted by a BYO (bring-your-own-key) rule —
+   * the caller pays the upstream directly, so the gateway records $0 cost and
+   * `billed: false` for requests served on this rung.
+   */
+  byok?: boolean
 }
 
 export interface RoutingContext {

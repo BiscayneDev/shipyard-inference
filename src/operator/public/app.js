@@ -248,7 +248,7 @@ function renderFeed(rows) {
   const body = rows.map((r) => `<tr>
     <td>${ago(r.at)}</td>
     <td>${esc(r.source)}</td>
-    <td>${esc(r.model || '—')} ${r.pinned ? '<span class="tag pin">pin</span>' : ''}${r.failover ? `<span class="tag" title="${esc('failed over from ' + r.failover.from + (r.failover.error ? ' — ' + r.failover.error : ''))}">↪ ${esc(r.failover.from)}</span>` : ''}</td>
+    <td>${esc(r.model || '—')} ${r.pinned ? '<span class="tag pin">pin</span>' : ''}${r.failover ? `<span class="tag" title="${esc('failed over from ' + r.failover.from + (r.failover.error ? ' — ' + r.failover.error : ''))}">↪ ${esc(r.failover.from)}</span>` : ''}${r.billed === false ? '<span class="tag" title="served on the caller\u2019s own upstream key — not debited">own key</span>' : ''}</td>
     <td>${esc(r.userId || '—')}</td>
     <td>${fmtInt(r.inputTokens)}/${fmtInt(r.outputTokens)}</td>
     <td>${fmtUsd(r.actualCostUsd)}</td>

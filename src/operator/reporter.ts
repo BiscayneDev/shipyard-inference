@@ -87,6 +87,7 @@ function normalize(event: RouterEvent, at: number): TelemetryEvent | null {
         requestClass: event.requestClass,
         latencyMs: event.latencyMs,
         pinned: event.pinned,
+        billed: event.billed,
       }
     case 'route_selected':
       return {

@@ -39,6 +39,8 @@ export interface RequestEvent {
   latencyMs: number
   /** True when the caller pinned a specific model (vs. letting the router pick). */
   pinned?: boolean
+  /** False when served on the caller's own upstream key (BYO) — not debited. */
+  billed?: boolean
 }
 
 /** A routing decision (which candidate/model was chosen for an attempt). */
@@ -241,6 +243,8 @@ export interface FeedRow {
   requestClass?: string
   latencyMs: number
   pinned?: boolean
+  /** False when served on the caller's own upstream key (BYO) — not debited. */
+  billed?: boolean
   /** Failover receipt when this request was rescued off a failing rung. */
   failover?: { from: string; error?: string }
 }
