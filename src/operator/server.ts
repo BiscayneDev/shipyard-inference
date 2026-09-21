@@ -7,6 +7,7 @@ import { cors } from 'hono/cors'
 import { checkBearer } from '../gateway/auth.js'
 import { MemoryApiKeyStore, type ApiKeyIssueInput, type ApiKeyStore } from '../gateway/keys.js'
 import { probeHardware, ladderForHardware } from '../connect/hardware.js'
+import { CATALOG } from '../catalog/models.js'
 import { matchLocalModels } from '../connect/ollama-probe.js'
 import type { TelemetryHub } from './hub.js'
 import type { IngestPayload } from './types.js'
@@ -36,6 +37,10 @@ const STATIC: Record<string, [string, string]> = {
   '/dashboard/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/dashboard/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/dashboard/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  // Public catalog page (same shell styles, no token gate).
+  '/catalog': ['catalog.html', 'text/html; charset=utf-8'],
+  '/catalog/': ['catalog.html', 'text/html; charset=utf-8'],
+  '/catalog/catalog.js': ['catalog.js', 'text/javascript; charset=utf-8'],
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -159,6 +164,17 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
       missing: runtime.missing.map((m) => m.model),
     }
     applianceCache = { at: Date.now(), body }
+    return c.json(body)
+  })
+  // --- public catalog (Lighthouse): static model catalog with hardware fit ---
+  // Follows the /appliance caching convention so repeated polls don't recompute.
+  let catalogCache: { at: number; body: unknown } | null = null
+  api.get('/catalog', (c) => {
+    if (catalogCache && Date.now() - catalogCache.at < 30_000) {
+      return c.json(catalogCache.body)
+    }
+    const body = { at: Date.now(), models: CATALOG }
+    catalogCache = { at: Date.now(), body }
     return c.json(body)
   })
   api.get('/billing', (c) => c.json(hub.billing(window(c), source(c))))
