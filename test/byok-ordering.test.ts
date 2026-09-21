@@ -172,3 +172,92 @@ test('BYO attempt fails → failover to shared, and THAT request bills normally'
     delete process.env[BYO_ENV]
   }
 })
+
+test('explicit pin bypasses BYO promotion — pinned model serves even with BYO key set', async () => {
+  process.env[BYO_ENV] = 'sk-own'
+  try {
+    const { byo, shared } = anthropicPair()
+    const app = createGatewayApp({
+      candidates: [byo, shared],
+      apiKeys: ['k'],
+      byok: [{ provider: 'byo-anthropic', apiKeyEnv: BYO_ENV }],
+    })
+    // Pin the SHARED model: pin semantics must win over BYO promotion.
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        model: 'shared-claude',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+    assert.equal(res.status, 200)
+    const chunks = parseSSE(await res.text())
+    const trailer = chunks.find((c) => c.x_shipyard !== undefined)
+    assert.ok(trailer, 'expected an x_shipyard trailer chunk')
+    const receipt = trailer.x_shipyard as { provider?: string; billed?: boolean }
+    assert.equal(receipt.provider, 'shared-anthropic', 'pin wins over BYO ordering')
+    // Pinned onto a shared (non-BYO) rung → billed normally.
+    assert.notEqual(receipt.billed, false)
+  } finally {
+    delete process.env[BYO_ENV]
+  }
+})
+
+test('BYO-served spend never counts toward the project aggregate cap', async () => {
+  process.env[BYO_ENV] = 'sk-own'
+  try {
+    const { byo, shared } = anthropicPair()
+    const spend = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+    const cap = { ceilingUsd: 0.001, windowMs: 60_000 }
+    const app = createGatewayApp({
+      candidates: [byo, shared],
+      apiKeys: ['k'],
+      byok: [{ provider: 'byo-anthropic', apiKeyEnv: BYO_ENV }],
+      spend: { tracker: spend, project: cap },
+    })
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        model: 'auto',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+    // BYO rung serves (shared would blow the tiny cap) and records nothing.
+    assert.equal(res.status, 200)
+    const chunks = parseSSE(await res.text())
+    const trailer = chunks.find((c) => c.x_shipyard !== undefined)
+    const receipt = trailer?.x_shipyard as { provider?: string }
+    assert.equal(receipt?.provider, 'byo-anthropic')
+    assert.equal(spend.projectSpent?.('default', cap), 0)
+    // A shared-pool request afterwards still works — the project is NOT drained
+    // by BYO traffic (contrast: a billed request of the same size would 402).
+    // Fresh app: the original captured the BYO key at plan time, so build one
+    // without byok to force the shared rung.
+    delete process.env[BYO_ENV]
+    const sharedApp = createGatewayApp({
+      candidates: [byo, shared],
+      apiKeys: ['k'],
+      spend: { tracker: spend, project: cap },
+    })
+    const res2 = await sharedApp.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        model: 'auto',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+    assert.equal(res2.status, 200, 'BYO traffic must not consume the project budget')
+    // Consume the stream: recordSpend fires at end-of-stream, so the body must
+    // be fully read before the aggregate is asserted on.
+    parseSSE(await res2.text())
+    assert.ok((spend.projectSpent?.('default', cap) ?? 0) > 0, 'the shared request DID bill against the project')
+  } finally {
+    delete process.env[BYO_ENV]
+  }
+})
