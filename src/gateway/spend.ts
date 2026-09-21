@@ -23,6 +23,28 @@ export interface SpendTracker {
   spent(key: string): number
   /** Reset `key`'s accumulated spend (post-top-up / new budget period). */
   reset(key: string): void
+  /**
+   * Optional project-level aggregate cap: `checkProject` blocks a request when
+   * the AGGREGATE recorded spend across all keys in `projectId` crosses the
+   * project ceiling within its window. A drained project blocks even zero-cost
+   * keyed requests until the window resets. The cap config is passed per call
+   * (the gateway forwards `spend.project`), so no state duplication.
+   */
+  checkProject?(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+    estimatedCostUsd: number,
+  ): 'allow' | 'block'
+  /** Record actual spend against `projectId`'s aggregate after completion. */
+  recordProject?(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+    actualCostUsd: number,
+  ): void
+  /** Aggregate USD spent across all keys in `projectId` within the window. */
+  projectSpent?(projectId: string, cap: { ceilingUsd: number; windowMs: number }): number
+  /** Reset `projectId`'s aggregate (post-top-up / new budget period). */
+  resetProject?(projectId: string): void
 }
 
 export class MemorySpendTracker implements SpendTracker {
@@ -57,5 +79,60 @@ export class MemorySpendTracker implements SpendTracker {
 
   reset(key: string): void {
     this.spentByKey.delete(key)
+  }
+
+  // --- Project-level aggregate cap ---
+
+  private readonly projectBuckets = new Map<
+    string,
+    { amount: number; windowStart: number }
+  >()
+
+  private projectBucket(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+  ): { amount: number; windowStart: number } {
+    const b = this.projectBuckets.get(projectId)
+    if (b && Date.now() - b.windowStart >= cap.windowMs) {
+      this.projectBuckets.delete(projectId)
+      return { amount: 0, windowStart: Date.now() }
+    }
+    return b ?? { amount: 0, windowStart: Date.now() }
+  }
+
+  checkProject(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+    estimatedCostUsd: number,
+  ): 'allow' | 'block' {
+    // DECISION: a drained project stays drained even for zero-cost requests.
+    // Unlike the per-key breaker (which allows zero-cost traffic), a project
+    // cap is an operator budget — once aggregate recorded spend crosses the
+    // ceiling, ALL keyed traffic 402s until the window resets.
+    const b = this.projectBucket(projectId, cap)
+    if (b.amount > 0 && b.amount >= cap.ceilingUsd) return 'block'
+    return b.amount + estimatedCostUsd > cap.ceilingUsd ? 'block' : 'allow'
+  }
+
+  recordProject(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+    actualCostUsd: number,
+  ): void {
+    if (actualCostUsd <= 0) return
+    const b = this.projectBuckets.get(projectId)
+    if (b && Date.now() - b.windowStart < cap.windowMs) b.amount += actualCostUsd
+    else this.projectBuckets.set(projectId, { amount: actualCostUsd, windowStart: Date.now() })
+  }
+
+  projectSpent(
+    projectId: string,
+    cap: { ceilingUsd: number; windowMs: number },
+  ): number {
+    return this.projectBucket(projectId, cap).amount
+  }
+
+  resetProject(projectId: string): void {
+    this.projectBuckets.delete(projectId)
   }
 }

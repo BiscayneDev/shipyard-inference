@@ -537,6 +537,32 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       // an unknown/unpriced request is checked at zero cost (free traffic
       // always passes — the breaker guards paid bursts).
       const estimate = 0
+      // Project-level aggregate cap first: once aggregate recorded spend
+      // crosses the ceiling within the window, ANY keyed request is rejected
+      // until the window resets — even a zero-cost one (a drained project
+      // stays drained; a project cap is an operator budget).
+      const projectCap = config.spend.project
+      const projectId = projectCap?.id ?? 'default'
+      if (
+        projectCap &&
+        config.spend.tracker.checkProject?.(projectId, projectCap, estimate) === 'block'
+      ) {
+        return c.json(
+          {
+            error: {
+              message:
+                'Project spend ceiling exceeded. Top up to continue — blocked until the window resets.',
+              type: 'spend_ceiling_exceeded',
+              code: null,
+              param: null,
+              cap: 'project',
+              spentUsd: config.spend.tracker.projectSpent?.(projectId, projectCap) ?? 0,
+              ...(config.spend.topUpUrl ? { topUpUrl: config.spend.topUpUrl } : {}),
+            },
+          },
+          402,
+        )
+      }
       if (config.spend.tracker.check(spendKey, estimate) === 'block') {
         return c.json(
           {
@@ -545,6 +571,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
               type: 'spend_ceiling_exceeded',
               code: null,
               param: null,
+              cap: 'key',
               spentUsd: config.spend.tracker.spent(spendKey),
               ...(config.spend.topUpUrl ? { topUpUrl: config.spend.topUpUrl } : {}),
             },
@@ -555,8 +582,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     /** Record actual spend after the request completes (never blocks). */
     const recordSpend = (costUsd: number | undefined): void => {
-      if (config.spend && spendKey && costUsd && costUsd > 0) {
-        config.spend.tracker.record(spendKey, costUsd)
+      if (!config.spend || !spendKey || !costUsd || costUsd <= 0) return
+      config.spend.tracker.record(spendKey, costUsd)
+      const projectCap = config.spend.project
+      if (projectCap) {
+        config.spend.tracker.recordProject?.(projectCap.id ?? 'default', projectCap, costUsd)
       }
     }
 

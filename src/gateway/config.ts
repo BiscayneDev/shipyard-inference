@@ -208,6 +208,13 @@ export interface SpendConfig {
    * e.g. a MoonPay buy link (optionally with the wallet address pre-filled).
    */
   topUpUrl?: string
+  /**
+   * Optional project-level aggregate cap: once the SUM of recorded spend
+   * across all keys crosses `ceilingUsd` within a `windowMs` window, every
+   * keyed request is blocked with a 402 (body `cap: 'project'`) until the
+   * window resets. Scopes to project `id` (default `'default'`).
+   */
+  project?: { ceilingUsd: number; windowMs: number; id?: string }
 }
 
 /**

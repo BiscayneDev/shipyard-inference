@@ -35,6 +35,135 @@ test('spent totals are reported per key', () => {
   assert.equal(s.spent('b'), 0)
 })
 
+// --- Project-level aggregate cap ---
+
+// DECISION: a drained project stays drained even for zero-cost requests —
+// unlike the per-key breaker, which only blocks zero-cost requests once that
+// *key* has recorded spend. A project cap is an operator budget: once the
+// aggregate recorded spend crosses the ceiling within the window, ALL keyed
+// traffic through the project 402s (with topUpUrl) until the window resets.
+// Free/zero-cost traffic still passes when the project is NOT drained.
+
+// --- Project-level aggregate cap ---
+
+function usageProvider() {
+  return mockProvider(() => ({
+    content: 'hello',
+    toolCalls: [],
+    stopReason: 'end_turn',
+    usage: { inputTokens: 1_000_000, outputTokens: 1_000_000 }, // $1 in + $1 out = $2 per call
+  }))
+}
+
+test('project cap blocks any keyed request once aggregate spend crosses the ceiling', async () => {
+  const { MemorySpendTracker } = await import('../src/gateway/spend.js')
+  const tracker = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+  const app = createGatewayApp({
+    candidates: [candidate('c', usageProvider(), [model('m')])],
+    apiKeys: ['sk-a', 'sk-b'],
+    spend: {
+      tracker,
+      topUpUrl: 'https://buy.moonpay.com',
+      project: { ceilingUsd: 3, windowMs: 60_000 },
+    },
+  })
+  const post = (key: string) =>
+    app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+  // Two keys spend $2 each → aggregate $4 > $3 ceiling.
+  const r1 = await post('sk-a')
+  assert.equal(r1.status, 200)
+  const r2 = await post('sk-b')
+  assert.equal(r2.status, 200)
+  // Neither key is individually drained, but the project is.
+  const r3 = await post('sk-a')
+  assert.equal(r3.status, 402)
+  const body = (await r3.json()) as { error: { cap?: string; topUpUrl?: string } }
+  assert.equal(body.error.cap, 'project')
+  assert.equal(body.error.topUpUrl, 'https://buy.moonpay.com')
+})
+
+test('project cap window resets after windowMs', async () => {
+  const { MemorySpendTracker } = await import('../src/gateway/spend.js')
+  const tracker = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+  const app = createGatewayApp({
+    candidates: [candidate('c', usageProvider(), [model('m')])],
+    apiKeys: ['sk-a'],
+    spend: { tracker, project: { ceilingUsd: 1, windowMs: 10 } },
+  })
+  const post = () =>
+    app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer sk-a', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+  assert.equal((await post()).status, 200) // $2 > $1 ceiling → project drained
+  assert.equal((await post()).status, 402)
+  await new Promise((r) => setTimeout(r, 20)) // window elapsed
+  assert.equal((await post()).status, 200)
+})
+
+test('zero-cost request inside a drained project still returns 402', async () => {
+  const { MemorySpendTracker } = await import('../src/gateway/spend.js')
+  const tracker = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+  const app = createGatewayApp({
+    candidates: [candidate('c', staticProvider('free'), [model('m')])],
+    apiKeys: ['sk-a'],
+    spend: { tracker, project: { ceilingUsd: 1, windowMs: 60_000 } },
+  })
+  const post = () =>
+    app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer sk-a', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+  // Drain the project out-of-band (no spend recorded by the free requests).
+  tracker.recordProject!('default', { ceilingUsd: 1, windowMs: 60_000 }, 2)
+  assert.equal((await post()).status, 402, 'drained project stays drained even at zero cost')
+})
+
+test('project cap defaults to project id "default"', async () => {
+  const { MemorySpendTracker } = await import('../src/gateway/spend.js')
+  const tracker = new MemorySpendTracker({ defaultCeilingUsd: 100 })
+  const app = createGatewayApp({
+    candidates: [candidate('c', usageProvider(), [model('m')])],
+    apiKeys: ['sk-a'],
+    spend: { tracker, project: { ceilingUsd: 1, windowMs: 60_000 } },
+  })
+  await app.request('/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: 'Bearer sk-a', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+  })
+  assert.equal(tracker.projectSpent!('default', { ceilingUsd: 1, windowMs: 60_000 }), 2)
+})
+
+test('per-key breaker fires before the project cap and reports cap "key"', async () => {
+  const { MemorySpendTracker } = await import('../src/gateway/spend.js')
+  const tracker = new MemorySpendTracker({ defaultCeilingUsd: 1 })
+  const app = createGatewayApp({
+    candidates: [candidate('c', staticProvider('x'), [model('m')])],
+    apiKeys: ['sk-a'],
+    spend: {
+      tracker,
+      topUpUrl: 'https://buy.moonpay.com',
+      project: { ceilingUsd: 100, windowMs: 60_000 },
+    },
+  })
+  tracker.record('sk-a', 5)
+  const res = await app.request('/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: 'Bearer sk-a', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+  })
+  assert.equal(res.status, 402)
+  const body = (await res.json()) as { error: { cap?: string } }
+  assert.equal(body.error.cap, 'key')
+})
+
 // --- Gateway wiring ---
 
 import { createGatewayApp } from '../src/gateway/index.js'
