@@ -25,6 +25,7 @@ import {
   OpenAIProvider,
   createOpenRouterProvider,
   createUsePodProvider,
+  createHopscotchCandidate,
   costOptimized,
   GatewayTender,
   MemoryCreditStore,
@@ -142,25 +143,24 @@ function demoProvider() {
  * with neither, an always-on free demo model keeps the endpoint live.
  */
 function buildCandidates(): { candidates: GatewayConfig['candidates']; baselineModel: string } {
-  // Primary: wallet-funded inference through Shipyard's own rails (UsePod USDC).
+  // Every configured upstream joins the same routing/failover pool.
+  // UsePod remains the wallet-funded path; Hopscotch adds its multi-provider
+  // catalog without displacing UsePod or any direct provider.
+  const candidates: GatewayConfig['candidates'] = []
   if (process.env.USEPOD_TOKEN) {
-    return {
-      candidates: [
-        {
-          id: 'usepod',
-          provider: createUsePodProvider({
-            token: process.env.USEPOD_TOKEN,
-            family: 'anthropic',
-          }),
-          models: claudeModels,
-        },
-      ],
-      baselineModel: 'claude-sonnet-4-5',
-    }
+    candidates.push({
+      id: 'usepod',
+      provider: createUsePodProvider({
+        token: process.env.USEPOD_TOKEN,
+        family: 'anthropic',
+      }),
+      models: claudeModels,
+    })
   }
+  const hopscotch = createHopscotchCandidate(process.env)
+  if (hopscotch) candidates.push(hopscotch)
 
   // Optional escape hatch: raw provider keys, if someone wires them.
-  const candidates: GatewayConfig['candidates'] = []
   if (process.env.ANTHROPIC_API_KEY) {
     candidates.push({ id: 'anthropic', provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }), models: claudeModels })
   }
@@ -171,7 +171,7 @@ function buildCandidates(): { candidates: GatewayConfig['candidates']; baselineM
     candidates.push({ id: 'openrouter', provider: createOpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY }), models: claudeModels })
   }
   if (candidates.length > 0) {
-    const baseline = candidates.some((c) => c.id === 'anthropic')
+    const baseline = candidates.some((c) => c.id === 'usepod' || c.id === 'anthropic')
       ? 'claude-sonnet-4-5'
       : (candidates[0].models?.[1]?.model ?? candidates[0].models![0].model)
     return { candidates, baselineModel: baseline }

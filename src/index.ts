@@ -28,6 +28,13 @@ export type {
 export * from './usepod/index.js'
 
 export { createNousProvider } from './providers/nous.js'
+export {
+  createHopscotchProvider,
+  createHopscotchCandidate,
+  HOPSCOTCH_BASE_URL,
+  HOPSCOTCH_MODELS,
+} from './providers/hopscotch.js'
+export type { HopscotchProviderOptions } from './providers/hopscotch.js'
 export type { NousProviderOptions } from './providers/nous.js'
 export { createOpenRouterProvider } from './providers/openrouter.js'
 export type { OpenRouterProviderOptions } from './providers/openrouter.js'
