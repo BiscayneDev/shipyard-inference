@@ -7,6 +7,7 @@ import type {
   LLMStreamOptions,
 } from '../types.js'
 import type { ModelMetadata, ModelTier, ProviderCandidate } from './candidates.js'
+import { TIER_RANK } from './candidates.js'
 import type { AutoTierResult, TierDecision } from './jev-tier.js'
 import { inferTier } from './auto-tier.js'
 import type { CacheStore } from './cache.js'
@@ -446,10 +447,11 @@ export class Router implements LLMProvider {
       }
     }
 
-    const pool = this.opts.byok
+    const basePool = this.opts.byok
       ? // A BYO candidate with no key in the env is skipped entirely.
         this.opts.candidates.filter((c) => !this.isByokDeclared(c.id) || byokLive.has(c.id))
       : this.opts.candidates
+    const pool = filterByProviders(basePool, params.routingHints?.providers)
 
     const selected = this.strategy.select({
       params: await this.applyAutoTier(params),
@@ -485,6 +487,14 @@ export class Router implements LLMProvider {
    * inferrer may consult an external decision model (with its own fallback).
    */
   private async applyAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
+    const decided = await this.decideAutoTier(params)
+    const hints = decided.routingHints
+    if (!hints || hints.tier === undefined && !hints.minTier) return decided
+    const tier = clampTier(hints.tier, hints.minTier, hints.maxTier)
+    return tier === hints.tier ? decided : { ...decided, routingHints: { ...hints, tier } }
+  }
+
+  private async decideAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
     if (!this.opts.autoTier) return params
     if (params.routingHints?.tier) return params // explicit tier wins
     const raw: AutoTierResult =
@@ -643,4 +653,25 @@ export function withFailover(
     candidates: [primary, fallback],
     strategy: failover([primary.id, fallback.id]),
   })
+}
+
+/** Keep only allowlisted candidates; an allowlist that matches nothing is ignored. */
+export function filterByProviders<T extends { id: string }>(pool: T[], providers: string[] | undefined): T[] {
+  if (!providers || providers.length === 0) return pool
+  const allowed = new Set(providers.map((p) => p.toLowerCase()))
+  const kept = pool.filter((c) => allowed.has(c.id.toLowerCase()))
+  return kept.length > 0 ? kept : pool
+}
+
+/** Clamp a tier into [min, max]; an undefined tier takes the floor. */
+export function clampTier(
+  tier: ModelTier | undefined,
+  min: ModelTier | undefined,
+  max: ModelTier | undefined,
+): ModelTier | undefined {
+  let t = tier ?? min
+  if (t === undefined) return undefined
+  if (min && TIER_RANK[t] < TIER_RANK[min]) t = min
+  if (max && TIER_RANK[t] > TIER_RANK[max]) t = max
+  return t
 }

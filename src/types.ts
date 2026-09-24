@@ -61,6 +61,16 @@ export interface RoutingHints {
   maxCostPerMTokOut?: number
   /** Free-form tags matched against a model's declared capabilities. */
   tags?: string[]
+  /**
+   * Candidate allowlist (candidate ids, e.g. `['hopscotch']`). Routing only
+   * considers these; if none of them is configured, the full pool is used so a
+   * stale preference never takes an app down.
+   */
+  providers?: string[]
+  /** Client floor on the auto-tier decision: the effective tier is never below this. */
+  minTier?: 'economy' | 'standard' | 'frontier'
+  /** Client cap on the auto-tier decision: the effective tier is never above this. */
+  maxTier?: 'economy' | 'standard' | 'frontier'
 }
 
 export interface LLMChatParams {
