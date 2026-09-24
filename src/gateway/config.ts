@@ -10,6 +10,7 @@ import type { X402Config } from './x402.js'
 import type { DecisionProvider } from '../decisions/types.js'
 import type { DecisionFeedbackRecorder } from '../router/decision-feedback.js'
 import type { SpendTracker } from './spend.js'
+import type { ProjectCapsConfig } from './project-caps.js'
 import type { ProviderHealthTracker } from '../router/health.js'
 
 /** A verified x402 payment collected for one request. */
@@ -198,6 +199,12 @@ export interface GatewayConfig {
    * cost is recorded after completion. Off when omitted.
    */
   spend?: SpendConfig
+  /**
+   * Per-project daily USD caps, persisted per UTC day. Applies only to keyed
+   * requests whose account `projectId` has a configured cap; over-cap requests
+   * get a 402 pointing at a USDC top-up in PayBox. Off when omitted.
+   */
+  projectCaps?: ProjectCapsConfig
   /**
    * BYO upstream keys ("your key, your bill"). Each entry names a candidate id
    * (`provider`) and the env var holding the caller's own upstream API key.
