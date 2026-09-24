@@ -139,7 +139,18 @@ export async function issueKey(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ wallet: opts.wallet, label: opts.label ?? 'claude-code' }),
   })
-  if (!res.ok) throw new Error(`key issue failed: ${res.status} ${await res.text().catch(() => '')}`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    let closed: string | undefined
+    try {
+      const j = JSON.parse(text) as { code?: string; error?: string }
+      if (j.code === 'self_serve_closed') closed = j.error
+    } catch {
+      // not JSON; fall through to the generic error
+    }
+    if (closed) throw new Error(closed)
+    throw new Error(`key issue failed: ${res.status} ${text}`)
+  }
   return (await res.json()) as { key: string; userId: string; wallet: string | null }
 }
 
