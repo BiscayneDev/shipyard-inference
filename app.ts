@@ -58,8 +58,12 @@ import {
   createDevKey,
   revokeDevKey,
   relabelDevKey,
+  MemoryProjectSpendStore,
+  SupabaseProjectSpendStore,
+  parseProjectCaps,
   x402Config,
   type GatewayConfig,
+  type ProjectSpendStore,
   type ApiKeyStore,
 } from './dist/gateway/index.js'
 import {
@@ -223,6 +227,16 @@ const keyStore: ApiKeyStore =
     : new MemoryApiKeyStore()
 const bootstrapAuth = !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
 
+// Per-project daily spend caps, e.g. SHIPYARD_PROJECT_CAPS='{"dinghy-sandbox-prod":10}'.
+// Only keys whose project id has a cap are limited. Spend is kept per UTC day in
+// Supabase (survives cold starts); over-cap requests get a 402 that points the
+// developer at adding USDC in PayBox. No caps configured = no behavior change.
+const PROJECT_CAPS = parseProjectCaps(process.env.SHIPYARD_PROJECT_CAPS)
+const projectSpendStore: ProjectSpendStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseProjectSpendStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY })
+    : new MemoryProjectSpendStore()
+
 // Tender on the gateway — an agent's OWN traffic earns kickbacks: a sponsored
 // line is auctioned during each request's wait and shown in the developer's
 // status line, and the (real, billed) impression accrues their kickback. Seeded
@@ -368,6 +382,14 @@ const gateway = createGatewayApp({
   apiKeys: API_KEYS,
   keyStore,
   bootstrapAuth,
+  projectCaps: Object.keys(PROJECT_CAPS).length
+    ? {
+        caps: PROJECT_CAPS,
+        store: projectSpendStore,
+        topUpUrl: process.env.SHIPYARD_TOPUP_URL || undefined,
+        onPending: (p) => keepAlive(p),
+      }
+    : undefined,
   tender: gatewayTender,
   telemetry: reporter,
   cors: { origins: '*' },

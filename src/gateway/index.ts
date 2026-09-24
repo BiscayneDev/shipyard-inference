@@ -13,6 +13,15 @@ export type {
 } from './config.js'
 export { checkBearer, resolveAuth } from './auth.js'
 export { MemorySpendTracker } from './spend.js'
+export {
+  MemoryProjectSpendStore,
+  SupabaseProjectSpendStore,
+  SUPABASE_SPEND_WINDOWS_SCHEMA,
+  DEFAULT_TOP_UP_URL,
+  parseProjectCaps,
+  utcDay,
+} from './project-caps.js'
+export type { ProjectCapsConfig, ProjectSpendStore, SupabaseProjectSpendStoreOptions } from './project-caps.js'
 export type { SpendTracker, SpendTrackerOptions } from './spend.js'
 export type { AuthResult } from './auth.js'
 export { x402Config, buildChallenge, verifyX402Payment } from './x402.js'
