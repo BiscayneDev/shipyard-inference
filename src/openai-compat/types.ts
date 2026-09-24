@@ -33,6 +33,17 @@ export interface OpenAIChatRequest {
   stream_options?: { include_usage?: boolean }
   /** Opaque end-user id (OpenAI-standard). Mapped to `metadata.userId` for per-user attribution. */
   user?: string
+  /**
+   * Shipyard routing preferences (non-OpenAI extension, ignored when a catalog
+   * model is named): candidate allowlist and a floor/cap on the auto tier.
+   */
+  shipyard?: ShipyardRoutingPrefs
+}
+
+export interface ShipyardRoutingPrefs {
+  providers?: string[]
+  min_tier?: string
+  max_tier?: string
 }
 
 export interface OpenAIUsage {

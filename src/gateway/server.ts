@@ -76,6 +76,26 @@ function explicitModelHints(
   return undefined
 }
 
+const TIERS = new Set(['economy', 'standard', 'frontier'])
+
+/**
+ * Client routing preferences for `auto` requests: `shipyard.providers`
+ * (candidate allowlist), `shipyard.min_tier` / `shipyard.max_tier` (clamp the
+ * auto-tier decision). Unknown values are ignored, never an error.
+ */
+export function clientRoutingHints(prefs: unknown): RoutingHints | undefined {
+  if (!prefs || typeof prefs !== 'object') return undefined
+  const p = prefs as { providers?: unknown; min_tier?: unknown; max_tier?: unknown }
+  const hints: RoutingHints = {}
+  if (Array.isArray(p.providers)) {
+    const providers = p.providers.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
+    if (providers.length) hints.providers = providers
+  }
+  if (typeof p.min_tier === 'string' && TIERS.has(p.min_tier)) hints.minTier = p.min_tier as RoutingHints['minTier']
+  if (typeof p.max_tier === 'string' && TIERS.has(p.max_tier)) hints.maxTier = p.max_tier as RoutingHints['maxTier']
+  return Object.keys(hints).length ? hints : undefined
+}
+
 /** Auth outcome extended with a pending `upto` settlement (metered billing). */
 interface AuthOutcome extends AuthResult {
   /** Present when a keyless request paid via x402 `upto` — the caller settles
@@ -628,6 +648,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // routes by strategy with the auto-tier quality floor.
     const explicitHints = explicitModelHints(config, body.model, params)
     if (explicitHints) params.routingHints = explicitHints
+    else {
+      const prefs = clientRoutingHints(body.shipyard)
+      if (prefs) params.routingHints = { ...params.routingHints, ...prefs }
+    }
     // A tenant/project-scoped key attributes the request to its account — so
     // the caller's traffic ties to the right tenant, project, and wallet.
     if (auth.account) {
