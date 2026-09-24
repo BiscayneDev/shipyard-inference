@@ -28,6 +28,7 @@ import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
+import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
 import {
   buildUptoChallenge,
   verifyUptoOpen,
@@ -539,6 +540,13 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     const upto = auth.upto
 
+    // Per-project daily cap (keyed requests whose project has a cap).
+    const capProjectId = auth.account?.projectId
+    const overCap = await overProjectCap(config.projectCaps, capProjectId)
+    if (overCap && config.projectCaps) {
+      return c.json({ error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
+    }
+
     // Spend circuit breaker (keyed requests only): block before serving with a
     // recoverable 402 — never a dead session. Keyless x402 requests skip this;
     // their wallet balance is their own limit.
@@ -593,6 +601,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     /** Record actual spend after the request completes (never blocks). */
     const recordSpend = (costUsd: number | undefined): void => {
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd)
       if (!config.spend || !spendKey || !costUsd || costUsd <= 0) return
       // BYO ("your key, your bill"): served on the caller's own upstream key —
       // never debited from the shared balance.
@@ -818,6 +827,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (auth instanceof Response) return auth
     if (!auth.ok) return c.json(anthropicAuthError, 401)
     const upto = auth.upto
+    const capProjectId = auth.account?.projectId
+    const overCap = await overProjectCap(config.projectCaps, capProjectId)
+    if (overCap && config.projectCaps) {
+      return c.json({ type: 'error' as const, error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
+    }
 
     let body: AnthropicChatRequest
     try {
@@ -867,6 +881,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             }
           })
           await finish(ctx)
+          if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
           if (config.guardrails && guardText) {
             evaluateGuardrails(config, id, params, guardText, ctx.model)
           }
@@ -911,6 +926,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toAnthropicError(err)
