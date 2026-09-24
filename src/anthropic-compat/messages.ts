@@ -1,4 +1,4 @@
-import type { ChatMessage, LLMChatParams, ToolCall, ToolCallResult } from '../types.js'
+import type { ChatMessage, ImagePart, LLMChatParams, ToolCall, ToolCallResult } from '../types.js'
 import type {
   AnthropicChatRequest,
   AnthropicContentBlock,
@@ -56,11 +56,17 @@ function fromAnthropicMessage(msg: AnthropicRequestMessage): ChatMessage[] {
     return [{ role: 'assistant', content: text, toolCalls: toolCalls.length ? toolCalls : undefined }]
   }
 
-  // user message: split text vs tool_result blocks
+  // user message: split text vs tool_result blocks; image blocks ride along
   let text: string | null = null
   const toolResults: ToolCallResult[] = []
+  const images: ImagePart[] = []
   for (const b of blocks) {
     if (b.type === 'text') text = (text ?? '') + (b as AnthropicTextBlock).text
+    else if (b.type === 'image') {
+      const src = (b as { source?: { type?: string; media_type?: string; data?: string; url?: string } }).source
+      if (src?.type === 'base64' && src.media_type && src.data) images.push({ url: `data:${src.media_type};base64,${src.data}` })
+      else if (src?.type === 'url' && src.url) images.push({ url: src.url })
+    }
     else if (b.type === 'tool_result') {
       const tr = b as AnthropicToolResultBlock
       toolResults.push(
@@ -72,7 +78,9 @@ function fromAnthropicMessage(msg: AnthropicRequestMessage): ChatMessage[] {
   }
   const out: ChatMessage[] = []
   if (toolResults.length) out.push({ role: 'tool', content: null, toolResults })
-  if (text !== null) out.push({ role: 'user', content: text })
+  if (text !== null || images.length > 0) {
+    out.push({ role: 'user', content: text ?? '', ...(images.length > 0 ? { images } : {}) })
+  }
   if (out.length === 0) out.push({ role: 'user', content: '' })
   return out
 }

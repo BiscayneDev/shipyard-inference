@@ -160,6 +160,12 @@ export class AnthropicProvider implements LLMProvider {
 
   private toAnthropicMessage(msg: ChatMessage): Anthropic.MessageParam {
     if (msg.role === 'user') {
+      if (msg.images && msg.images.length > 0) {
+        // Anthropic wants images before the text that refers to them.
+        const content: Anthropic.ContentBlockParam[] = msg.images.map(toAnthropicImage)
+        if (msg.content) content.push({ type: 'text', text: msg.content })
+        return { role: 'user', content }
+      }
       return { role: 'user', content: msg.content ?? '' }
     }
 
@@ -242,4 +248,20 @@ export function parseAnthropicUsage(
     info.cacheWriteTokens = usage.cache_creation_input_tokens
   }
   return info
+}
+
+/** data: URIs become base64 image blocks; http(s) URLs become url sources. */
+export function toAnthropicImage(img: { url: string }): Anthropic.ImageBlockParam {
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(img.url)
+  if (m) {
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: m[1] as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+        data: m[2],
+      },
+    }
+  }
+  return { type: 'image', source: { type: 'url', url: img.url } } as Anthropic.ImageBlockParam
 }
