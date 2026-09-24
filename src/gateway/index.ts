@@ -33,4 +33,12 @@ export {
   hashApiKey,
   SUPABASE_API_KEYS_SCHEMA,
 } from './keys.js'
+export {
+  listDevKeys,
+  createDevKey,
+  revokeDevKey,
+  relabelDevKey,
+  MAX_ACTIVE_KEYS_PER_PROJECT,
+} from './dev-keys.js'
+export type { DevKeyView, DevKeyResult } from './dev-keys.js'
 export type { ApiKeyStore, Account, IssuedKey, SupabaseApiKeyStoreOptions } from './keys.js'

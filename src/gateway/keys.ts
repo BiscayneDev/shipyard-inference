@@ -26,6 +26,15 @@ export interface Account {
   createdAt: number
   /** Unix-ms revocation time, when revoked. */
   revokedAt?: number
+  /**
+   * Public, non-secret handle for this key (`k_` + 16 hex of its hash). Safe to
+   * show and to use for revoke/relabel; never enough to authenticate.
+   */
+  keyId?: string
+  /** First characters of the plaintext key, kept for masked display. */
+  keyPrefix?: string
+  /** Last 4 characters of the plaintext key, kept for masked display. */
+  last4?: string
 }
 
 export interface IssuedKey {
@@ -52,6 +61,16 @@ export interface ApiKeyStore {
   revoke(key: string, at?: number): Promise<boolean>
   /** All known accounts (live + revoked) for an operator view. */
   listAccounts(): Promise<Account[]>
+  /**
+   * Keys belonging to a developer project, newest first. A key belongs to
+   * project P when its `projectId` is P, or when it has no project and its
+   * `userId` is P (a developer's first key anchors their project).
+   */
+  listProject?(projectId: string): Promise<Account[]>
+  /** Soft-revoke a key by its public `keyId`, only within `projectId`. */
+  revokeInProject?(projectId: string, keyId: string, at?: number): Promise<boolean>
+  /** Relabel a key by its public `keyId`, only within `projectId`. */
+  relabelInProject?(projectId: string, keyId: string, label: string): Promise<boolean>
 }
 
 const KEY_PREFIX = 'sk-shipyard-'
@@ -64,6 +83,36 @@ export function generateApiKey(): string {
 
 function newUserId(): string {
   return `u_${randomBytes(8).toString('hex')}`
+}
+
+/** A fresh, unique per-key user id (`u_…`). */
+export function newKeyUserId(): string {
+  return newUserId()
+}
+
+/** Public handle for a key hash: `k_` + first 16 hex chars. */
+export function keyIdFromHash(keyHash: string): string {
+  return `k_${keyHash.slice(0, 16)}`
+}
+
+/** Display parts kept for a plaintext key (never enough to use it). */
+export function keyDisplayParts(key: string): { keyPrefix: string; last4: string } {
+  return { keyPrefix: key.slice(0, KEY_PREFIX.length + 4), last4: key.slice(-4) }
+}
+
+/** Masked form, e.g. `sk-shipyard-AbCd…9f3c`; legacy keys show `sk-shipyard-…`. */
+export function maskKey(account: Pick<Account, 'keyPrefix' | 'last4'>): string {
+  if (account.keyPrefix && account.last4) return `${account.keyPrefix}…${account.last4}`
+  return `${KEY_PREFIX}…`
+}
+
+/** A developer's project: explicit `projectId`, else the key's own `userId`. */
+export function effectiveProjectId(account: Pick<Account, 'projectId' | 'userId'>): string {
+  return account.projectId ?? account.userId
+}
+
+function inProject(account: Account, projectId: string): boolean {
+  return account.projectId === projectId || (!account.projectId && account.userId === projectId)
 }
 
 function normalizeIssueInput(input: ApiKeyIssueInput): Account {
@@ -93,9 +142,39 @@ export class MemoryApiKeyStore implements ApiKeyStore {
 
   async issue(input: ApiKeyIssueInput, at: number): Promise<IssuedKey> {
     const key = generateApiKey()
-    const account = { ...normalizeIssueInput(input), createdAt: at }
-    this.byHash.set(hashApiKey(key), { key, account })
+    const h = hashApiKey(key)
+    const account: Account = { ...normalizeIssueInput(input), createdAt: at, keyId: keyIdFromHash(h), ...keyDisplayParts(key) }
+    this.byHash.set(h, { key, account })
     return { key, account }
+  }
+
+  async listProject(projectId: string): Promise<Account[]> {
+    return [...this.byHash.values()]
+      .map((r) => r.account)
+      .filter((a) => inProject(a, projectId))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((a) => ({ ...a }))
+  }
+
+  async revokeInProject(projectId: string, keyId: string, at = Date.now()): Promise<boolean> {
+    for (const record of this.byHash.values()) {
+      const a = record.account
+      if (a.keyId === keyId && inProject(a, projectId) && a.status === 'active') {
+        record.account = { ...a, status: 'revoked', revokedAt: at }
+        return true
+      }
+    }
+    return false
+  }
+
+  async relabelInProject(projectId: string, keyId: string, label: string): Promise<boolean> {
+    for (const record of this.byHash.values()) {
+      if (record.account.keyId === keyId && inProject(record.account, projectId)) {
+        record.account = { ...record.account, label }
+        return true
+      }
+    }
+    return false
   }
 
   async revoke(key: string, at = Date.now()): Promise<boolean> {
@@ -134,6 +213,8 @@ interface KeyRow {
   status: 'active' | 'revoked'
   created_at: number
   revoked_at: number | null
+  key_prefix?: string | null
+  last4?: string | null
 }
 
 function rowToAccount(row: KeyRow): Account {
@@ -147,6 +228,9 @@ function rowToAccount(row: KeyRow): Account {
     status: row.status,
     createdAt: row.created_at,
     revokedAt: row.revoked_at ?? undefined,
+    keyId: row.key_hash ? keyIdFromHash(row.key_hash) : undefined,
+    keyPrefix: row.key_prefix ?? undefined,
+    last4: row.last4 ?? undefined,
   }
 }
 
@@ -198,13 +282,17 @@ export class SupabaseApiKeyStore implements ApiKeyStore {
 
   async issue(input: ApiKeyIssueInput, at: number): Promise<IssuedKey> {
     const key = generateApiKey()
-    const account: Account = { ...normalizeIssueInput(input), createdAt: at }
-    const res = await this.fetchImpl(`${this.base}/${this.table}`, {
+    const h = hashApiKey(key)
+    const display = keyDisplayParts(key)
+    const account: Account = { ...normalizeIssueInput(input), createdAt: at, keyId: keyIdFromHash(h), ...display }
+    const insert = (withDisplay: boolean) =>
+      this.fetchImpl(`${this.base}/${this.table}`, {
       method: 'POST',
       headers: { ...this.headers, prefer: 'return=minimal' },
       body: JSON.stringify([
         {
-          key_hash: hashApiKey(key),
+          ...(withDisplay ? { key_prefix: display.keyPrefix, last4: display.last4 } : {}),
+          key_hash: h,
           user_id: account.userId,
           tenant_id: account.tenantId ?? null,
           project_id: account.projectId ?? null,
@@ -217,8 +305,58 @@ export class SupabaseApiKeyStore implements ApiKeyStore {
         },
       ]),
     })
-    if (!res.ok) throw new Error(`supabase key issue failed: ${res.status} ${await res.text().catch(() => '')}`)
+    let res = await insert(true)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      // Display columns not migrated yet: issue the key without them.
+      if (/key_prefix|last4|PGRST204|42703/.test(text)) {
+        res = await insert(false)
+        if (res.ok) return { key, account: { ...account, keyPrefix: undefined, last4: undefined } }
+        throw new Error(`supabase key issue failed: ${res.status} ${await res.text().catch(() => '')}`)
+      }
+      throw new Error(`supabase key issue failed: ${res.status} ${text}`)
+    }
     return { key, account }
+  }
+
+  private projectFilter(projectId: string): string {
+    const p = encodeURIComponent(projectId)
+    return `or=(project_id.eq.${p},and(project_id.is.null,user_id.eq.${p}))`
+  }
+
+  async listProject(projectId: string): Promise<Account[]> {
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?select=key_hash,user_id,tenant_id,project_id,wallet,label,scopes,status,created_at,revoked_at,key_prefix,last4` +
+        `&${this.projectFilter(projectId)}&order=created_at.desc&limit=200`,
+      { headers: this.headers },
+    )
+    if (!res.ok) throw new Error(`supabase project key list failed: ${res.status}`)
+    return ((await res.json()) as KeyRow[]).map(rowToAccount)
+  }
+
+  private async patchByKeyId(projectId: string, keyId: string, patch: Record<string, unknown>, activeOnly: boolean): Promise<boolean> {
+    const hex = keyId.replace(/^k_/, '')
+    if (!/^[0-9a-f]{16}$/.test(hex)) return false
+    const res = await this.fetchImpl(
+      `${this.base}/${this.table}?key_hash=like.${hex}*&${this.projectFilter(projectId)}${activeOnly ? '&status=eq.active' : ''}`,
+      {
+        method: 'PATCH',
+        headers: { ...this.headers, prefer: 'return=representation' },
+        body: JSON.stringify(patch),
+      },
+    )
+    if (!res.ok) return false
+    const rows = (await res.json().catch(() => [])) as KeyRow[]
+    for (const row of rows) this.cache.delete(row.key_hash)
+    return rows.length > 0
+  }
+
+  async revokeInProject(projectId: string, keyId: string, at = Date.now()): Promise<boolean> {
+    return this.patchByKeyId(projectId, keyId, { status: 'revoked', revoked_at: at }, true)
+  }
+
+  async relabelInProject(projectId: string, keyId: string, label: string): Promise<boolean> {
+    return this.patchByKeyId(projectId, keyId, { label }, false)
   }
 
   async revoke(key: string, at = Date.now()): Promise<boolean> {
