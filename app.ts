@@ -61,6 +61,11 @@ import {
   MemoryProjectSpendStore,
   SupabaseProjectSpendStore,
   parseProjectCaps,
+  selfServeKeysOpen,
+  canMintKey,
+  closedPage,
+  SELF_SERVE_CSS,
+  SELF_SERVE_CLOSED_BODY,
   x402Config,
   type GatewayConfig,
   type ProjectSpendStore,
@@ -90,6 +95,10 @@ const OPERATOR_TOKENS = (process.env.SHIPYARD_OPERATOR_TOKEN ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
+
+// Self-serve key creation is closed unless SHIPYARD_SELF_SERVE_KEYS=on.
+// Closed: no new keys without the operator token; existing keys keep working.
+const SELF_SERVE_KEYS = selfServeKeysOpen(process.env)
 
 const claudeModels = [
   { model: 'claude-haiku-4-5', inputCostPerMTok: 0.8, outputCostPerMTok: 4, contextWindow: 200_000, tier: 'economy' as const, capabilities: ['tools' as const] },
@@ -524,18 +533,24 @@ td .act.danger:hover{color:#ff8f8f;border-color:#ff8f8f}
 .bar button{margin-top:0}
 .linkbtn{appearance:none;background:none;border:none;color:var(--muted);font:12px var(--mono);padding:0;margin:0;cursor:pointer;text-decoration:underline}
 .linkbtn:hover{color:#fff;background:none;transform:none}
+${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
 ${navHtml('keys')}
-<span class="pill"><span class="blip"></span> developers · self-serve</span>
+<span class="pill ss"><span class="blip"></span> developers · self-serve</span>
+<span class="pill cl"><span class="blip"></span> developers · opening soon</span>
 <h1>Shipyard API keys</h1>
-<p class="sub">Create a key in one click, then add, rename, or revoke keys whenever you need to. Works with any OpenAI or Anthropic SDK. No signup.</p>
+<p class="sub ss">Create a key in one click, then add, rename, or revoke keys whenever you need to. Works with any OpenAI or Anthropic SDK. No signup.</p>
+<p class="sub cl">Self-serve keys aren't open yet. We're opening Shipyard to developers soon.</p>
 
 <div id="start" class="card hero">
+  <div class="ss">
   <strong>Create your first key</strong>
   <div class="row">
     <div><label for="label0">Name (optional)</label><input id="label0" maxlength="64" placeholder="e.g. my-agent, cursor-laptop"/></div>
     <div style="flex:0"><button id="create0">Create key</button></div>
   </div>
+  </div>
+  <div class="cl"><strong>Not open yet</strong><div class="note">New keys are paused while we finish the developer launch. Check back soon.</div></div>
   <div class="err" id="err0"></div>
   <div class="note">Already have a key? <button class="linkbtn" id="showpaste">Manage your keys</button></div>
   <div id="paste" class="hidden">
@@ -559,7 +574,7 @@ ${navHtml('keys')}
     <div><strong>Your keys</strong> <span class="muted" id="count"></span></div>
     <button class="linkbtn" id="signout">Close</button>
   </div>
-  <div class="row">
+  <div class="row ss">
     <div><label for="label1">New key name</label><input id="label1" maxlength="64" placeholder="e.g. staging"/></div>
     <div style="flex:0"><button id="create1">Create key</button></div>
   </div>
@@ -642,18 +657,23 @@ ${TERMINAL_FONTS}
 .key{color:var(--green);word-break:break-all}
 .card.hero{border-color:#22345a;background:rgba(15,26,48,.6)}
 .divider{text-align:center;margin:20px 0 6px;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.03em}
+${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
 ${navHtml('connect')}
 <span class="pill"><span class="blip"></span> claude code · cursor · codex · any agent</span>
 <h1>Connect Shipyard to your IDE</h1>
 <p class="sub">Issue a key, keep your model — and route through Shipyard for <strong>cheaper, more reliable inference</strong> with per-call USDC billing. No subscription.</p>
-<div class="card hero">
+<div class="card hero cl">
+  <strong>Not open yet</strong>
+  <div class="note">Self-serve keys aren't open yet. We're opening Shipyard to developers soon. Already have a key? Manage it on the <a href="/keys">keys page</a>.</div>
+</div>
+<div class="card hero ss">
   <strong>Fastest — one command</strong> <span class="muted">— adds the status line, keeps your model</span>
   <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
   <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> for payouts, or <code>--route</code> to also route through Shipyard for savings.</div>
 </div>
-<div class="divider">— optional · route through Shipyard for cheaper inference —</div>
-<div class="card">
+<div class="divider ss">— optional · route through Shipyard for cheaper inference —</div>
+<div class="card ss">
   <div class="row">
     <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
     <div style="flex:0"><button id="gen">Generate key</button></div>
@@ -984,11 +1004,14 @@ app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 // Consumer surface — the "connect your IDE" page + self-serve key issuance.
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
-app.get('/connect', (c) => c.html(CONNECT_HTML))
+app.get('/connect', (c) => c.html(closedPage(CONNECT_HTML, SELF_SERVE_KEYS)))
 app.get('/pricing', (c) => c.html(PRICING_HTML))
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.post('/api/keys', async (c) => {
+  if (!canMintKey({ open: SELF_SERVE_KEYS, operatorTokens: OPERATOR_TOKENS, authHeader: c.req.header('authorization') })) {
+    return c.json(SELF_SERVE_CLOSED_BODY, 403)
+  }
   const body = (await c.req.json().catch(() => ({}))) as { wallet?: unknown; label?: unknown }
   const wallet = typeof body.wallet === 'string' && body.wallet.trim() ? body.wallet.trim() : undefined
   const label = typeof body.label === 'string' ? body.label.slice(0, 64) : undefined
@@ -1006,7 +1029,7 @@ app.post('/api/keys', async (c) => {
 // Developer key management — the bearer key is the developer's identity; every
 // action is scoped to that key's project. Registered before the /api/* hub
 // middleware and the operator mount so these stay fast and developer-owned.
-app.get('/keys', (c) => c.html(KEYS_HTML))
+app.get('/keys', (c) => c.html(closedPage(KEYS_HTML, SELF_SERVE_KEYS)))
 const devCaller = async (c: Context) => {
   const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
   return auth.ok && auth.account ? auth.account : undefined
@@ -1021,6 +1044,7 @@ app.get('/api/dev/keys', async (c) => {
 app.post('/api/dev/keys', async (c) => {
   const caller = await devCaller(c)
   if (!caller) return c.json(devUnauthorized, 401)
+  if (!SELF_SERVE_KEYS) return c.json(SELF_SERVE_CLOSED_BODY, 403)
   const body = (await c.req.json().catch(() => ({}))) as { label?: unknown }
   const r = await createDevKey(keyStore, caller, body)
   return c.json(r.body, r.status as 201)

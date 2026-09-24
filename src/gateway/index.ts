@@ -42,3 +42,11 @@ export {
 } from './dev-keys.js'
 export type { DevKeyView, DevKeyResult } from './dev-keys.js'
 export type { ApiKeyStore, Account, IssuedKey, SupabaseApiKeyStoreOptions } from './keys.js'
+export {
+  selfServeKeysOpen,
+  canMintKey,
+  closedPage,
+  SELF_SERVE_CSS,
+  SELF_SERVE_CLOSED_BODY,
+  SELF_SERVE_CLOSED_MESSAGE,
+} from './self-serve.js'
