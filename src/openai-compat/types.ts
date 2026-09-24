@@ -12,7 +12,7 @@ export interface OpenAIToolCall {
 
 export interface OpenAIChatMessage {
   role: 'system' | 'developer' | 'user' | 'assistant' | 'tool'
-  content?: string | null | Array<{ type: string; text?: string }>
+  content?: string | null | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } | string }>
   name?: string
   tool_calls?: OpenAIToolCall[]
   tool_call_id?: string

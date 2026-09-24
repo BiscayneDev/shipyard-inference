@@ -1,8 +1,19 @@
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | null
+  /**
+   * Images on a user message, in order after the text. `url` is an http(s)
+   * URL or a `data:<mime>;base64,...` URI, passed to the provider untouched.
+   */
+  images?: ImagePart[]
   toolCalls?: ToolCall[]
   toolResults?: ToolCallResult[]
+}
+
+export interface ImagePart {
+  url: string
+  /** OpenAI's optional detail hint ('auto' | 'low' | 'high'). */
+  detail?: string
 }
 
 export interface ToolCall {

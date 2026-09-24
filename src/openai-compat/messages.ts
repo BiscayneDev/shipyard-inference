@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  ImagePart,
   LLMChatParams,
   ToolCall,
   ToolDefinition,
@@ -11,6 +12,19 @@ function flattenContent(content: OpenAIChatMessage['content']): string {
   if (content == null) return ''
   if (typeof content === 'string') return content
   return content.map((part) => part.text ?? '').join('')
+}
+
+/** image_url parts of a content array, in order (OpenAI allows a bare string url too). */
+function imageParts(content: OpenAIChatMessage['content']): ImagePart[] {
+  if (!Array.isArray(content)) return []
+  const out: ImagePart[] = []
+  for (const part of content) {
+    if (part.type !== 'image_url' || !part.image_url) continue
+    const iu = part.image_url
+    if (typeof iu === 'string') out.push({ url: iu })
+    else if (typeof iu.url === 'string') out.push({ url: iu.url, ...(iu.detail ? { detail: iu.detail } : {}) })
+  }
+  return out
 }
 
 /**
@@ -30,7 +44,8 @@ export function openAIRequestToChatParams(body: OpenAIChatRequest): LLMChatParam
     }
 
     if (msg.role === 'user') {
-      messages.push({ role: 'user', content: flattenContent(msg.content) })
+      const images = imageParts(msg.content)
+      messages.push({ role: 'user', content: flattenContent(msg.content), ...(images.length > 0 ? { images } : {}) })
       continue
     }
 
