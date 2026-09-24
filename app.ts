@@ -17,6 +17,7 @@
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import type { Context } from 'hono'
 import { waitUntil } from '@vercel/functions'
 // Imported from the built SDK (./dist) via relative paths so the entrypoint
 // resolves deterministically under Vercel's bundler — `npm run build` runs first.
@@ -53,6 +54,10 @@ import {
   resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
+  listDevKeys,
+  createDevKey,
+  revokeDevKey,
+  relabelDevKey,
   x402Config,
   type GatewayConfig,
   type ApiKeyStore,
@@ -470,8 +475,136 @@ footer{color:var(--muted);font-size:13px;padding:34px 0 0;border-top:1px solid v
 const navHtml = (active: string): string => {
   const link = (href: string, id: string, label: string): string =>
     `<a href="${href}"${id === active ? ' class="active"' : ''}>${label}</a>`
-  return `<header class="tnav"><a class="brand" href="/"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</a><div class="lnk">${link('/connect', 'connect', 'connect')}${link('/pricing', 'pricing', 'pricing')}${link('/me', 'me', 'usage')}${link('/dashboard/', 'dashboard', 'dashboard')}</div></header>`
+  return `<header class="tnav"><a class="brand" href="/"><span class="sig">◢</span> shipyard <span class="dim">·</span> inference</a><div class="lnk">${link('/keys', 'keys', 'keys')}${link('/connect', 'connect', 'connect')}${link('/pricing', 'pricing', 'pricing')}${link('/me', 'me', 'usage')}${link('/dashboard/', 'dashboard', 'dashboard')}</div></header>`
 }
+
+// ---------------------------------------------------------------------------
+// Developer keys — self-serve: create a key, then manage your project's keys
+// (create, label, revoke, masked view). Holding a key is the sign-in.
+// ---------------------------------------------------------------------------
+const KEYS_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>API keys · Shipyard Inference</title>
+${TERMINAL_FONTS}
+<style>${TERMINAL_CSS}
+.wrap{max-width:820px}
+.k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 4px}
+.key{color:var(--green);word-break:break-all}
+.card.hero{border-color:#22345a;background:rgba(15,26,48,.6)}
+.once{border-color:#2d5a45;background:rgba(20,48,36,.35)}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line2);border-radius:999px;padding:2px 9px;color:var(--muted)}
+.tag.on{color:var(--green);border-color:#2d5a45}.tag.off{color:var(--dim)}.tag.you{color:var(--term2);border-color:#2a4470}
+td .act{appearance:none;background:none;border:1px solid var(--line2);color:var(--muted);border-radius:999px;font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;margin:0 0 0 6px;cursor:pointer}
+td .act:hover{color:#fff;border-color:#fff;transform:none;background:none}
+td .act.danger:hover{color:#ff8f8f;border-color:#ff8f8f}
+.err{color:#ff9a9a;font-size:13px;margin-top:10px;min-height:1em}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.bar button{margin-top:0}
+.linkbtn{appearance:none;background:none;border:none;color:var(--muted);font:12px var(--mono);padding:0;margin:0;cursor:pointer;text-decoration:underline}
+.linkbtn:hover{color:#fff;background:none;transform:none}
+</style></head><body><div class="wrap">
+${navHtml('keys')}
+<span class="pill"><span class="blip"></span> developers · self-serve</span>
+<h1>Shipyard API keys</h1>
+<p class="sub">Create a key in one click, then add, rename, or revoke keys whenever you need to. Works with any OpenAI or Anthropic SDK. No signup.</p>
+
+<div id="start" class="card hero">
+  <strong>Create your first key</strong>
+  <div class="row">
+    <div><label for="label0">Name (optional)</label><input id="label0" maxlength="64" placeholder="e.g. my-agent, cursor-laptop"/></div>
+    <div style="flex:0"><button id="create0">Create key</button></div>
+  </div>
+  <div class="err" id="err0"></div>
+  <div class="note">Already have a key? <button class="linkbtn" id="showpaste">Manage your keys</button></div>
+  <div id="paste" class="hidden">
+    <div class="row">
+      <div><label for="keyin">Your API key</label><input id="keyin" type="password" autocomplete="off" placeholder="sk-shipyard-…"/></div>
+      <div style="flex:0"><button id="open">Open</button></div>
+    </div>
+    <div class="note">Your key is only used to load your keys. It stays in this browser tab and is never shown again.</div>
+  </div>
+</div>
+
+<div id="fresh" class="card once hidden">
+  <strong>Your new key</strong> <span class="muted">— copy it now, it won't be shown again</span>
+  <pre><span class="copy" data-copy="#freshkey">copy</span><span id="freshkey" class="key"></span></pre>
+  <div class="k">Use it</div>
+  <pre><span class="copy" data-copy="#snippet">copy</span><span id="snippet"></span></pre>
+</div>
+
+<div id="manage" class="card hidden">
+  <div class="bar">
+    <div><strong>Your keys</strong> <span class="muted" id="count"></span></div>
+    <button class="linkbtn" id="signout">Close</button>
+  </div>
+  <div class="row">
+    <div><label for="label1">New key name</label><input id="label1" maxlength="64" placeholder="e.g. staging"/></div>
+    <div style="flex:0"><button id="create1">Create key</button></div>
+  </div>
+  <div class="err" id="err1"></div>
+  <table><thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Status</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+  <div class="note">Revoking stops a key right away (allow up to a minute everywhere). Usage and daily limits are shared across the keys in your project. If you hit the limit, add USDC to your PayBox wallet to keep going.</div>
+</div>
+
+<p class="note">Next: <a href="/connect">connect your IDE</a> · <a href="/me">see usage</a> · <a href="/pricing">pricing</a></p>
+<footer>Shipyard Inference · keys are stored hashed; only a short prefix and the last 4 characters are kept for display.</footer>
+<script>
+const $=s=>document.querySelector(s);
+const base=location.origin+'/v1';
+let session=sessionStorage.getItem('shipyard_dev_key')||'';
+function show(el,on){el.classList.toggle('hidden',!on)}
+function fmt(ms){try{return new Date(ms).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch(e){return ''}}
+function snippet(k){return 'export OPENAI_BASE_URL='+base+'\\nexport OPENAI_API_KEY='+k+'\\n\\n# Anthropic SDK / Claude Code\\nexport ANTHROPIC_BASE_URL='+location.origin+'\\nexport ANTHROPIC_API_KEY='+k}
+function showFresh(k){$('#freshkey').textContent=k;$('#snippet').textContent=snippet(k);show($('#fresh'),true);$('#fresh').scrollIntoView({behavior:'smooth',block:'nearest'})}
+async function api(method,path,body){
+  const r=await fetch(path,{method,headers:Object.assign({'content-type':'application/json'},session?{authorization:'Bearer '+session}:{}),body:body?JSON.stringify(body):undefined});
+  let d={};try{d=await r.json()}catch(e){}
+  if(!r.ok) throw new Error(d.error||('request failed ('+r.status+')'));
+  return d;
+}
+function cell(text,cls){const td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td}
+function tag(text,cls){const s=document.createElement('span');s.className='tag '+cls;s.textContent=text;return s}
+function btn(text,cls,fn){const b=document.createElement('button');b.className='act '+(cls||'');b.textContent=text;b.addEventListener('click',fn);return b}
+async function load(){
+  try{
+    const d=await api('GET','/api/dev/keys');
+    show($('#start'),false);show($('#manage'),true);
+    $('#count').textContent='· '+d.activeCount+' active of '+d.maxActive;
+    const tb=$('#rows');tb.textContent='';
+    for(const k of d.keys){
+      const tr=document.createElement('tr');
+      tr.appendChild(cell(k.label||'untitled'));
+      tr.appendChild(cell(k.masked,'mono'));
+      tr.appendChild(cell(fmt(k.createdAt)));
+      const st=document.createElement('td');st.appendChild(tag(k.status==='active'?'active':'revoked',k.status==='active'?'on':'off'));if(k.current){st.appendChild(document.createTextNode(' '));st.appendChild(tag('this key','you'))}tr.appendChild(st);
+      const ac=document.createElement('td');ac.style.textAlign='right';ac.style.whiteSpace='nowrap';
+      ac.appendChild(btn('Rename','',async()=>{const n=prompt('New name for this key',k.label||'');if(n===null)return;try{await api('PATCH','/api/dev/keys/'+encodeURIComponent(k.id),{label:n});load()}catch(e){$('#err1').textContent=e.message}}));
+      if(k.status==='active') ac.appendChild(btn('Revoke','danger',async()=>{const msg=k.current?'This is the key you opened this page with. Revoke it? Apps using it stop working.':'Revoke "'+(k.label||k.masked)+'"? Apps using it stop working.';if(!confirm(msg))return;try{await api('POST','/api/dev/keys/'+encodeURIComponent(k.id)+'/revoke');if(k.current){signout()}else{load()}}catch(e){$('#err1').textContent=e.message}}));
+      tr.appendChild(ac);tb.appendChild(tr);
+    }
+  }catch(e){
+    sessionStorage.removeItem('shipyard_dev_key');session='';
+    show($('#manage'),false);show($('#start'),true);show($('#paste'),true);$('#err0').textContent=e.message;
+  }
+}
+function signout(){sessionStorage.removeItem('shipyard_dev_key');session='';show($('#manage'),false);show($('#fresh'),false);show($('#start'),true)}
+$('#showpaste').addEventListener('click',()=>{show($('#paste'),true);$('#keyin').focus()});
+$('#open').addEventListener('click',()=>{const k=$('#keyin').value.trim();if(!k){$('#err0').textContent='Paste a key first.';return}$('#err0').textContent='';session=k;sessionStorage.setItem('shipyard_dev_key',k);$('#keyin').value='';load()});
+$('#create0').addEventListener('click',async()=>{
+  $('#create0').disabled=true;$('#err0').textContent='';
+  try{const r=await fetch('/api/keys',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({label:$('#label0').value.trim()||undefined})});const d=await r.json();if(!r.ok||!d.key)throw new Error(d.error||'could not create a key');session=d.key;sessionStorage.setItem('shipyard_dev_key',d.key);showFresh(d.key);load()}catch(e){$('#err0').textContent=e.message}
+  $('#create0').disabled=false;
+});
+$('#create1').addEventListener('click',async()=>{
+  $('#create1').disabled=true;$('#err1').textContent='';
+  try{const d=await api('POST','/api/dev/keys',{label:$('#label1').value.trim()||undefined});$('#label1').value='';showFresh(d.key);load()}catch(e){$('#err1').textContent=e.message}
+  $('#create1').disabled=false;
+});
+$('#signout').addEventListener('click',signout);
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.copy');if(!t)return;const src=document.querySelector(t.dataset.copy);if(!src)return;navigator.clipboard.writeText(src.textContent).then(()=>{t.textContent='copied';setTimeout(()=>t.textContent='copy',1400)})});
+if(session) load();
+</script>
+</div></body></html>`
 
 // ---------------------------------------------------------------------------
 // "Connect your IDE" — self-serve key + copy-paste config for any OpenAI-
@@ -838,7 +971,50 @@ app.post('/api/keys', async (c) => {
   const wallet = typeof body.wallet === 'string' && body.wallet.trim() ? body.wallet.trim() : undefined
   const label = typeof body.label === 'string' ? body.label.slice(0, 64) : undefined
   const { key, account } = await keyStore.issue({ wallet, label }, Date.now())
-  return c.json({ key, userId: account.userId, wallet: account.wallet ?? null, createdAt: account.createdAt })
+  return c.json({
+    key,
+    userId: account.userId,
+    wallet: account.wallet ?? null,
+    createdAt: account.createdAt,
+    id: account.keyId ?? null,
+    label: account.label ?? null,
+  })
+})
+
+// Developer key management — the bearer key is the developer's identity; every
+// action is scoped to that key's project. Registered before the /api/* hub
+// middleware and the operator mount so these stay fast and developer-owned.
+app.get('/keys', (c) => c.html(KEYS_HTML))
+const devCaller = async (c: Context) => {
+  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
+  return auth.ok && auth.account ? auth.account : undefined
+}
+const devUnauthorized = { error: 'Paste an active Shipyard API key to manage your keys.' }
+app.get('/api/dev/keys', async (c) => {
+  const caller = await devCaller(c)
+  if (!caller) return c.json(devUnauthorized, 401)
+  const r = await listDevKeys(keyStore, caller)
+  return c.json(r.body, r.status as 200)
+})
+app.post('/api/dev/keys', async (c) => {
+  const caller = await devCaller(c)
+  if (!caller) return c.json(devUnauthorized, 401)
+  const body = (await c.req.json().catch(() => ({}))) as { label?: unknown }
+  const r = await createDevKey(keyStore, caller, body)
+  return c.json(r.body, r.status as 201)
+})
+app.post('/api/dev/keys/:id/revoke', async (c) => {
+  const caller = await devCaller(c)
+  if (!caller) return c.json(devUnauthorized, 401)
+  const r = await revokeDevKey(keyStore, caller, c.req.param('id'))
+  return c.json(r.body, r.status as 200)
+})
+app.patch('/api/dev/keys/:id', async (c) => {
+  const caller = await devCaller(c)
+  if (!caller) return c.json(devUnauthorized, 401)
+  const body = (await c.req.json().catch(() => ({}))) as { label?: unknown }
+  const r = await relabelDevKey(keyStore, caller, c.req.param('id'), body)
+  return c.json(r.body, r.status as 200)
 })
 
 // Advertiser surface — self-serve sponsored campaigns (the other side of the
@@ -955,7 +1131,10 @@ app.get('/api/me', async (c) => {
   }
   const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
   const windowMs = Number(c.req.query('windowMs') ?? 24 * 60 * 60 * 1000)
-  const row = hub.breakdown('user', windowMs).find((x) => x.key === auth.account!.userId)
+  // Usage is attributed to the key's project (projectId ?? userId), so every key in a
+  // developer's project sees the project's shared usage.
+  const usageKey = auth.account.projectId ?? auth.account.userId
+  const row = hub.breakdown('user', windowMs).find((x) => x.key === usageKey)
   const spent = row?.actualCostUsd ?? 0
   const baseline = row?.baselineCostUsd ?? 0
   const saved = row?.savedUsd ?? 0
