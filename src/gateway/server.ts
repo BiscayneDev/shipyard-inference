@@ -241,6 +241,9 @@ interface RequestContext {
   /** False when the serving rung was a BYO (own-key) candidate — not debited. */
   billed?: boolean
   routing?: {
+    /** True when a client min/max tier changed the judgment; decidedTier is the pre-clamp call. */
+    clamped?: boolean
+    decidedTier?: string
     tier: string
     source: 'jev' | 'structural'
     jevTier?: string
@@ -278,6 +281,7 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
     ctx.routing = {
       tier: event.tier,
       source: event.source,
+      ...(event.clamped ? { clamped: true, decidedTier: event.decidedTier } : {}),
       ...(event.jevTier !== undefined ? { jevTier: event.jevTier } : {}),
       ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
       ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
@@ -792,6 +796,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.routing) {
           c.header('x-shipyard-tier', ctx.routing.tier)
           c.header('x-shipyard-tier-source', ctx.routing.source)
+          if (ctx.routing.clamped && ctx.routing.decidedTier) c.header('x-shipyard-tier-decided', ctx.routing.decidedTier)
           if (ctx.routing.confidence !== undefined)
             c.header('x-shipyard-jev-confidence', String(ctx.routing.confidence))
         }
@@ -934,6 +939,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         if (ctx.routing) {
           c.header('x-shipyard-tier', ctx.routing.tier)
           c.header('x-shipyard-tier-source', ctx.routing.source)
+          if (ctx.routing.clamped && ctx.routing.decidedTier) c.header('x-shipyard-tier-decided', ctx.routing.decidedTier)
           if (ctx.routing.confidence !== undefined)
             c.header('x-shipyard-jev-confidence', String(ctx.routing.confidence))
         }

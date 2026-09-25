@@ -53,6 +53,10 @@ export type RouterEvent =
       usage?: { inputTokens: number; outputTokens: number }
       /** True when the decision was served from the inferrer's cache. */
       cached?: boolean
+      /** Pre-clamp tier when a client min/max tier changed the judgment. */
+      decidedTier?: ModelTier
+      /** True when a client min/max tier changed the judgment. */
+      clamped?: boolean
     }
   | {
       type: 'retry'
@@ -487,36 +491,42 @@ export class Router implements LLMProvider {
    * inferrer may consult an external decision model (with its own fallback).
    */
   private async applyAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
-    const decided = await this.decideAutoTier(params)
-    const hints = decided.routingHints
-    if (!hints || hints.tier === undefined && !hints.minTier) return decided
-    const tier = clampTier(hints.tier, hints.minTier, hints.maxTier)
-    return tier === hints.tier ? decided : { ...decided, routingHints: { ...hints, tier } }
-  }
-
-  private async decideAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
-    if (!this.opts.autoTier) return params
     if (params.routingHints?.tier) return params // explicit tier wins
-    const raw: AutoTierResult =
-      typeof this.opts.autoTier === 'function' ? await this.opts.autoTier(params) : inferTier(params)
-    const d = raw as TierDecision | undefined
-    if (!d || typeof d !== 'object' || d.tier === undefined) {
-      return { ...params, routingHints: { ...params.routingHints, tier: raw as ModelTier } }
+    const hints0 = params.routingHints
+    let tier: ModelTier | undefined
+    let d: TierDecision | undefined
+    if (this.opts.autoTier) {
+      const raw: AutoTierResult =
+        typeof this.opts.autoTier === 'function' ? await this.opts.autoTier(params) : inferTier(params)
+      const dd = raw as TierDecision | undefined
+      if (dd && typeof dd === 'object' && dd.tier !== undefined) {
+        d = dd
+        tier = dd.tier
+      } else {
+        tier = raw as ModelTier
+      }
     }
-    this.emit({
-      type: 'tier_decided',
-      tier: d.tier,
-      source: d.source,
-      ...(d.jevTier !== undefined ? { jevTier: d.jevTier } : {}),
-      ...(d.structuralTier !== undefined ? { structuralTier: d.structuralTier } : {}),
-      ...(d.confidence !== undefined ? { confidence: d.confidence } : {}),
-      ...(d.needsReasoning !== undefined ? { needsReasoning: d.needsReasoning } : {}),
-      ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
-      ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
-      ...(d.usage ? { usage: d.usage } : {}),
-      ...(d.cached !== undefined ? { cached: d.cached } : {}),
-    })
-    return { ...params, routingHints: { ...params.routingHints, tier: d.tier } }
+    if (tier === undefined && !hints0?.minTier) return params
+    // Client clamps (min/max tier) apply after the judgment. The emitted tier
+    // is the one routing actually uses; `decidedTier` keeps the pre-clamp call.
+    const finalTier = clampTier(tier, hints0?.minTier, hints0?.maxTier)
+    if (d) {
+      this.emit({
+        type: 'tier_decided',
+        tier: finalTier ?? d.tier,
+        source: d.source,
+        ...(finalTier !== undefined && finalTier !== d.tier ? { decidedTier: d.tier, clamped: true } : {}),
+        ...(d.jevTier !== undefined ? { jevTier: d.jevTier } : {}),
+        ...(d.structuralTier !== undefined ? { structuralTier: d.structuralTier } : {}),
+        ...(d.confidence !== undefined ? { confidence: d.confidence } : {}),
+        ...(d.needsReasoning !== undefined ? { needsReasoning: d.needsReasoning } : {}),
+        ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
+        ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
+        ...(d.usage ? { usage: d.usage } : {}),
+        ...(d.cached !== undefined ? { cached: d.cached } : {}),
+      })
+    }
+    return finalTier === undefined ? params : { ...params, routingHints: { ...hints0, tier: finalTier } }
   }
 
   private emit(event: RouterEvent): void {

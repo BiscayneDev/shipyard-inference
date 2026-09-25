@@ -179,3 +179,91 @@ test('maxTier caps the effective tier (appliance with no frontier rung)', async 
   assert.equal(d.tier, 'standard')
   assert.equal(d.jevTier, 'frontier') // the raw judgment is preserved for telemetry
 })
+
+// Jev owns the tier: tools and system-prompt size no longer floor its call,
+// the state centers on the latest user message, and client clamps are
+// reported as the final tier with the pre-clamp call alongside.
+
+const toolDef = { name: 'web_search', description: 'search', inputSchema: { type: 'object' } }
+
+test('tools attached do not floor an economy judgment ("hey" stays cheap)', async () => {
+  const withTools = chatParams({ system: 'x'.repeat(8000), messages: [{ role: 'user', content: 'hey' }], tools: [toolDef] })
+  assert.equal(inferTier(withTools), 'standard') // the old structural floor
+  const d = (await createJevTierInferrer({ provider: answering('economy') })(withTools)) as TierDecision
+  assert.equal(d.tier, 'economy')
+})
+
+test('a huge prompt still floors at frontier under max combine', async () => {
+  const d = (await createJevTierInferrer({ provider: answering('economy') })(bigPrompt)) as TierDecision
+  assert.equal(d.tier, 'frontier')
+})
+
+function capturing(): { provider: DecisionProvider; states: unknown[] } {
+  const states: unknown[] = []
+  return {
+    states,
+    provider: {
+      id: 'capture',
+      async decide(req) {
+        states.push(req.state)
+        return answering('frontier').decide(req)
+      },
+    },
+  }
+}
+
+test('state leads with the latest user message and skips the tool loop after it', async () => {
+  const { provider, states } = capturing()
+  const inferrer = createJevTierInferrer({ provider, cacheTtlMs: 60_000 })
+  const round1 = chatParams({
+    system: 'long persona '.repeat(2000),
+    tools: [toolDef],
+    messages: [
+      { role: 'user', content: 'what launched this week?' },
+      { role: 'assistant', content: 'here is a list' },
+      { role: 'user', content: "that's wrong, check again" },
+    ],
+  })
+  const round2 = chatParams({
+    ...round1,
+    messages: [
+      ...round1.messages,
+      { role: 'assistant', content: null, toolCalls: [{ id: 't1', name: 'web_search', input: { query: 'x' } }] },
+      { role: 'tool', content: null, toolResults: [{ id: 't1', result: { success: true, data: 'results' } }] },
+    ],
+  })
+  const d1 = (await inferrer(round1)) as TierDecision
+  const d2 = (await inferrer(round2)) as TierDecision
+  assert.equal(states.length, 1) // round 2 reused round 1's judgment
+  assert.equal(d2.cached, true)
+  assert.equal(d1.tier, d2.tier)
+  const s = states[0] as { latest_user_message: string; recent_context: { content: string }[]; system_excerpt: string }
+  assert.equal(s.latest_user_message, "that's wrong, check again")
+  assert.equal(s.recent_context.length, 2)
+  assert.ok(s.system_excerpt.length <= 401)
+})
+
+test('client clamps: tier_decided reports the final tier and the pre-clamp call', async () => {
+  const events: Array<Record<string, unknown>> = []
+  const premium = mockProvider(async () => ({ content: 'premium', toolCalls: [], stopReason: 'end_turn' as const }))
+  const cheap = mockProvider(async () => ({ content: 'cheap', toolCalls: [], stopReason: 'end_turn' as const }))
+  const router = new Router({
+    candidates: [
+      candidate('premium', premium, [model('frontier-model', { inputCostPerMTok: 10, outputCostPerMTok: 10, tier: 'frontier' })]),
+      candidate('cheap', cheap, [model('economy-model', { inputCostPerMTok: 0.1, outputCostPerMTok: 0.1, tier: 'economy' })]),
+    ],
+    autoTier: createJevTierInferrer({ provider: answering('economy') }),
+    onEvent: (e) => {
+      if (e.type === 'tier_decided') events.push(e as unknown as Record<string, unknown>)
+    },
+  })
+  const res = await router.chat({ ...simple, routingHints: { minTier: 'frontier' } })
+  assert.equal(res.content, 'premium')
+  assert.equal(events[0]!['tier'], 'frontier')
+  assert.equal(events[0]!['decidedTier'], 'economy')
+  assert.equal(events[0]!['clamped'], true)
+  events.length = 0
+  await router.chat(simple)
+  assert.equal(events[0]!['tier'], 'economy')
+  assert.equal(events[0]!['clamped'], undefined)
+})
