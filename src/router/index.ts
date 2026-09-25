@@ -34,7 +34,7 @@ export type {
 export { isCapable } from './capabilities.js'
 export { inferTier } from './auto-tier.js'
 export type { AutoTierThresholds } from './auto-tier.js'
-export { createJevTierInferrer } from './jev-tier.js'
+export { createJevTierInferrer, sizeFloor } from './jev-tier.js'
 export type { JevTierInferrerOptions, JevTierResult, TierDecision, AutoTierResult } from './jev-tier.js'
 export { MemoryDecisionFeedback } from './decision-feedback.js'
 export type {

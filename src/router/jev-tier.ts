@@ -29,6 +29,13 @@ export interface JevTierInferrerOptions {
   /** Structural fallback when Jev errors, times out, or answers weakly. Default `inferTier`. */
   fallback?: (params: LLMChatParams) => ModelTier
   /**
+   * Structural floor combined with Jev's answer under `'max'`. Default
+   * {@link sizeFloor}: only hard size limits (huge prompt or requested output)
+   * floor the judgment. Tools being available or a long system prompt do not -
+   * Jev judges the task, so "hey" with tools attached can still be economy.
+   */
+  floor?: (params: LLMChatParams) => ModelTier
+  /**
    * Cap on added routing latency. When the decision call exceeds this the
    * structural fallback applies — routing stays available even if the decision
    * backend is down. Default 2000ms.
@@ -115,14 +122,14 @@ const TIER_QUESTIONS = {
   tier: {
     type: 'choice' as const,
     instructions:
-      'What minimum quality tier does an AI model need to answer this request well? Judge the task, not its length.',
+      'Which quality tier of AI model does answering the LATEST user message well require? Judge the task being asked, not the length of the prompt or the tools that happen to be available.',
     criteria: {
       economy:
-        'Simple, casual, or well-defined tasks — greetings, quick facts, classification, short edits, boilerplate answers',
+        'Casual or trivial turns - greetings, small talk, thanks, acknowledgements (ok, cool, got it), emoji, one-line chit-chat, simple classification, or a quick answer that needs no research or reasoning',
       standard:
-        'Professional or technical work — multi-step instructions, code changes, structured writing, data extraction, tool use',
+        'Ordinary well-defined tasks - setting a reminder, a single simple lookup, a short rewrite or draft, formatting, extracting data, a straightforward how-to or code change',
       frontier:
-        'High-stakes or deeply complex work — architecture design, long-horizon reasoning, nuanced judgment, complex refactors, deep analysis',
+        "Research and judgment - questions about news, recent events or anything 'this week'/'latest' that must be searched and verified, comparisons and recommendations, multi-step planning, fact-checking, deep analysis, architecture or complex reasoning, and corrections where the user says a previous answer was wrong",
     },
   },
   needs_reasoning: {
@@ -130,6 +137,14 @@ const TIER_QUESTIONS = {
     instructions:
       'Answering this request well requires careful multi-step reasoning rather than a quick top-of-mind response.',
   },
+}
+
+/**
+ * Hard structural floor under a Jev judgment: frontier only when the prompt or
+ * requested output is too big for smaller models, otherwise no floor.
+ */
+export function sizeFloor(params: LLMChatParams): ModelTier {
+  return inferTier({ ...params, tools: [] }, { standardInputTokens: Number.POSITIVE_INFINITY })
 }
 
 /**
@@ -148,6 +163,7 @@ export function createJevTierInferrer(
 ): (params: LLMChatParams) => Promise<AutoTierResult> {
   const combine = opts.combine ?? 'max'
   const structural = opts.fallback ?? inferTier
+  const floorOf = opts.floor ?? sizeFloor
   const timeoutMs = opts.timeoutMs ?? 2000
   const stateCharBudget = opts.stateCharBudget ?? 6000
   const minConfidence = opts.minConfidence ?? 0
@@ -157,16 +173,36 @@ export function createJevTierInferrer(
 
   function buildState(params: LLMChatParams): unknown {
     const toolNames = (params.tools ?? []).map((t) => t.name).filter(Boolean)
-    const raw = JSON.stringify({
-      system: params.system,
-      messages: params.messages?.map((m) => ({ role: m.role, content: m.content })),
-      tools: toolNames,
-      requested_output_tokens: params.maxTokens ?? null,
-    })
-    const state = raw.length > stateCharBudget ? raw.slice(0, stateCharBudget) + '…[truncated]' : raw
+    const msgs = params.messages ?? []
+    // Judge the task, not the transcript: the latest user message is the ask.
+    // Anything after it (assistant tool calls, tool results) is the model
+    // working on that ask, so it is excluded - every round of one turn gets
+    // the same state, the same judgment, and a cache hit.
+    let lastUser = -1
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]!.role === 'user' && (msgs[i]!.content ?? '').trim()) {
+        lastUser = i
+        break
+      }
+    }
+    const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + '…' : t)
+    const latest = lastUser >= 0 ? msgs[lastUser]!.content ?? '' : ''
+    const latestBudget = Math.max(500, Math.floor(stateCharBudget * 0.6))
+    // A few prior text turns so "that's wrong" or "do it again" can be judged.
+    const context: { role: string; content: string }[] = []
+    for (let i = lastUser - 1; i >= 0 && context.length < 4; i--) {
+      const m = msgs[i]!
+      if (m.role === 'tool' || !(m.content ?? '').trim()) continue
+      context.unshift({ role: m.role, content: clip(m.content!, 300) })
+    }
     return {
-      request: state,
-      note: 'This is an AI inference request about to be routed to a model. Judge what answering it well requires.',
+      latest_user_message: clip(latest, latestBudget),
+      ...(lastUser >= 0 && msgs[lastUser]!.images?.length ? { latest_user_images: msgs[lastUser]!.images!.length } : {}),
+      recent_context: context,
+      system_excerpt: clip(params.system ?? '', 400),
+      tools_available: toolNames,
+      requested_output_tokens: params.maxTokens ?? null,
+      note: 'This is an AI inference request about to be routed to a model. Judge what answering the latest user message well requires.',
     }
   }
 
@@ -236,7 +272,8 @@ export function createJevTierInferrer(
       if (jevTier === 'economy' && reasoningAnswer?.type === 'noul' && reasoningAnswer.noul > 0.75) {
         jevTier = 'standard'
       }
-      const tier0 = combine === 'max' && TIER_RANK[structuralTier] > TIER_RANK[jevTier] ? structuralTier : jevTier
+      const floorTier = floorOf(params)
+      const tier0 = combine === 'max' && TIER_RANK[floorTier] > TIER_RANK[jevTier] ? floorTier : jevTier
       // Cap the effective tier (appliance with no frontier rung); the raw
       // judgment is preserved on the decision for telemetry.
       const tier = opts.maxTier && TIER_RANK[tier0] > TIER_RANK[opts.maxTier] ? opts.maxTier : tier0
