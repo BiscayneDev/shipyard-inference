@@ -85,6 +85,7 @@ create table if not exists decision_feedback (
   at                       bigint not null,
   primary key (request_id, kind)
 );
+alter table decision_feedback enable row level security;
 create index if not exists decision_feedback_at_idx on decision_feedback (at);
 create index if not exists decision_feedback_tier_idx on decision_feedback (kind, tier);
 `
