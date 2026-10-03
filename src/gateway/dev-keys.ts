@@ -101,6 +101,7 @@ export async function createDevKey(
       userId: newKeyUserId(),
       projectId,
       tenantId: caller.tenantId,
+      scopes: caller.scopes ? [...caller.scopes] : undefined,
       wallet: caller.wallet,
       label,
     },

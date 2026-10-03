@@ -50,3 +50,5 @@ export {
   SELF_SERVE_CLOSED_BODY,
   SELF_SERVE_CLOSED_MESSAGE,
 } from './self-serve.js'
+
+export { createOwnerKeyApp, INFERENCE_SCOPES, scopeForEndpoint } from './owner-keys.js'
