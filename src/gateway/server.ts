@@ -1,3 +1,4 @@
+import { scopeForEndpoint } from './owner-keys.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
@@ -532,6 +533,19 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   }
 
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
+
+  app.use('/v1/*', async (c, next) => {
+    const xkey = c.req.header('x-api-key')
+    const header = c.req.header('authorization') ?? (c.req.path.startsWith('/v1/messages') && xkey ? `Bearer ${xkey}` : undefined)
+    const auth = await resolveAuth(config, header)
+    if (auth.account?.scopes !== undefined) {
+      const required = scopeForEndpoint(c.req.method, c.req.path)
+      if (!required || !auth.account.scopes.includes(required)) {
+        return errorJson(c, 403, 'API key does not permit this endpoint', 'permission_error')
+      }
+    }
+    await next()
+  })
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
 

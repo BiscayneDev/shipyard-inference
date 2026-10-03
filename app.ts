@@ -51,6 +51,7 @@ import {
 } from './dist/index.js'
 import {
   createGatewayApp,
+  createOwnerKeyApp,
   resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
@@ -1008,6 +1009,7 @@ app.get('/connect', (c) => c.html(closedPage(CONNECT_HTML, SELF_SERVE_KEYS)))
 app.get('/pricing', (c) => c.html(PRICING_HTML))
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
+app.route('/', createOwnerKeyApp({ operatorTokens: OPERATOR_TOKENS, keyStore, caps: PROJECT_CAPS }))
 app.post('/api/keys', async (c) => {
   if (!canMintKey({ open: SELF_SERVE_KEYS, operatorTokens: OPERATOR_TOKENS, authHeader: c.req.header('authorization') })) {
     return c.json(SELF_SERVE_CLOSED_BODY, 403)
