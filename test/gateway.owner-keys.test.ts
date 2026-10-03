@@ -52,9 +52,10 @@ test('scopes enforce endpoints on both auth surfaces and legacy keys stay compat
   const d = await (await t.issue({ ...input, scopes: ['models:read'] })).json() as any
   assert.equal((await app.request('/v1/models', { headers: { authorization: `Bearer ${d.key}` } })).status, 200)
   for (const path of ['/v1/chat/completions', '/v1/messages', '/v1/messages/count_tokens', '/v1/video/generate', '/v1/decisions']) {
-    assert.equal((await app.request(path, { method: 'POST', headers: { 'x-api-key': d.key } })).status, 403)
+    assert.equal((await app.request(path, { method: 'POST', headers: { 'x-api-key': d.key, ...(path.startsWith('/v1/messages') ? {} : { authorization: `Bearer ${d.key}` }) } })).status, 403)
   }
   const legacy = await t.keyStore.issue({}, Date.now())
+  assert.equal((await app.request('/v1/messages', { method: 'POST', headers: { authorization: `Bearer ${d.key}`, 'x-api-key': legacy.key } })).status, 403)
   assert.equal((await app.request('/v1/models', { headers: { authorization: `Bearer ${legacy.key}` } })).status, 200)
 })
 

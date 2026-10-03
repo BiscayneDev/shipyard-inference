@@ -535,7 +535,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   app.use('*', cors({ origin: config.cors?.origins ?? '*' }))
 
   app.use('/v1/*', async (c, next) => {
-    const auth = await resolveAuth(config, c.req.header('authorization') ?? (c.req.header('x-api-key') ? `Bearer ${c.req.header('x-api-key')}` : undefined))
+    const xkey = c.req.header('x-api-key')
+    const header = c.req.header('authorization') ?? (c.req.path.startsWith('/v1/messages') && xkey ? `Bearer ${xkey}` : undefined)
+    const auth = await resolveAuth(config, header)
     if (auth.account?.scopes !== undefined) {
       const required = scopeForEndpoint(c.req.method, c.req.path)
       if (!required || !auth.account.scopes.includes(required)) {
