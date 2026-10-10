@@ -488,16 +488,32 @@ export class Router implements LLMProvider {
       : this.opts.candidates
     const pool = filterByProviders(basePool, params.routingHints?.providers)
 
-    const selected = this.strategy.select({
-      params: await this.applyAutoTier(params),
+    const tuned = await this.applyAutoTier(params)
+    const selected = this.applyCeiling(this.strategy.select({
+      params: tuned,
       candidates: this.opts.health
         ? pool.filter((c) => this.opts.health!.isAvailable(c.id))
         : pool,
       attempt: 0,
       previousErrors: [],
       pricingOverrides: this.opts.pricingOverrides,
-    })
+    }), tuned.routingHints?.maxTier)
     return byokLive.size ? this.promoteByok(selected, byokLive) : selected
+  }
+
+  /**
+   * Make a tier ceiling real. The tier check in selection is a floor, so
+   * without this a frontier model can still be the first pick. Models at or
+   * below the ceiling keep their order and go first; models above it follow as
+   * fallback only. If nothing is at or below the ceiling the list is unchanged
+   * (a request is never starved for lack of a cheaper tier).
+   */
+  private applyCeiling(decisions: RoutingDecision[], ceiling: ModelTier | undefined): RoutingDecision[] {
+    if (!ceiling) return decisions
+    const within: RoutingDecision[] = []
+    const above: RoutingDecision[] = []
+    for (const d of decisions) (d.meta && TIER_RANK[d.meta.tier] > TIER_RANK[ceiling] ? above : within).push(d)
+    return [...within, ...above]
   }
 
   /** Whether `candidateId` is named by any `byok` entry (keyed or not). */
@@ -537,10 +553,17 @@ export class Router implements LLMProvider {
         tier = raw as ModelTier
       }
     }
-    if (tier === undefined && !hints0?.minTier) return params
-    // Client clamps (min/max tier) apply after the judgment. The emitted tier
-    // is the one routing actually uses; `decidedTier` keeps the pre-clamp call.
-    const finalTier = clampTier(tier, hints0?.minTier, hints0?.maxTier)
+    // Task-class policy (caller-declared). chat/lookup with Jev confidence under
+    // CASCADE_CONFIDENCE start with a standard-tier CEILING; synthesize is capped
+    // at standard and background at economy. An explicit client max_tier wins.
+    // The ceiling is real, not just a clamp on the inferred floor: plan() puts
+    // models above it behind every model at or below it, so they run only as
+    // fallback after a failure or timeout, never as the first attempt.
+    const ceiling = hints0?.maxTier ?? taskClassMaxTier(hints0?.taskClass, d?.confidence)
+    if (tier === undefined && !hints0?.minTier && !ceiling) return params
+    // The emitted tier is the one routing actually uses; `decidedTier` keeps
+    // the pre-clamp call.
+    const finalTier = clampTier(tier, hints0?.minTier, ceiling)
     if (d) {
       this.emit({
         type: 'tier_decided',
@@ -557,7 +580,11 @@ export class Router implements LLMProvider {
         ...(d.cached !== undefined ? { cached: d.cached } : {}),
       })
     }
-    return finalTier === undefined ? params : { ...params, routingHints: { ...hints0, tier: finalTier } }
+    if (finalTier === undefined && !ceiling) return params
+    return {
+      ...params,
+      routingHints: { ...hints0, ...(finalTier !== undefined ? { tier: finalTier } : {}), ...(ceiling ? { maxTier: ceiling } : {}) },
+    }
   }
 
   private emit(event: RouterEvent): void {
@@ -702,6 +729,21 @@ export function filterByProviders<T extends { id: string }>(pool: T[], providers
   const allowed = new Set(providers.map((p) => p.toLowerCase()))
   const kept = pool.filter((c) => allowed.has(c.id.toLowerCase()))
   return kept.length > 0 ? kept : pool
+}
+
+/** Confidence below which a fast-class call starts a tier down (cascade). */
+export const CASCADE_CONFIDENCE = 0.7
+
+/** Per-task-class tier ceiling; undefined = no cap. */
+export function taskClassMaxTier(taskClass: string | undefined, confidence: number | undefined): ModelTier | undefined {
+  switch (taskClass) {
+    case 'background': return 'economy'
+    case 'synthesize': return 'standard'
+    case 'chat':
+    case 'lookup':
+      return confidence !== undefined && confidence < CASCADE_CONFIDENCE ? 'standard' : undefined
+    default: return undefined
+  }
 }
 
 /** Clamp a tier into [min, max]; an undefined tier takes the floor. */

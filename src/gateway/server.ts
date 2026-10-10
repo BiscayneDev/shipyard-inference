@@ -98,6 +98,23 @@ export function clientRoutingHints(prefs: unknown): RoutingHints | undefined {
   return Object.keys(hints).length ? hints : undefined
 }
 
+const TASK_CLASS_BUDGET_MS: Record<string, number> = { chat: 4000, lookup: 12000, synthesize: 12000, research: 40000 }
+
+/**
+ * Task hints a client sends as headers (Dinghy: `x-dinghy-task-class`,
+ * `x-dinghy-latency-budget-ms`). The class steers the tier policy; the budget
+ * bounds each attempt (about 1.5x, inside the 1s-60s attempt bound) so a slow
+ * model fails over instead of eating the whole turn. Unknown values ignored.
+ */
+export function taskHeaderHints(get: (name: string) => string | undefined | null): RoutingHints | undefined {
+  const cls = (get('x-dinghy-task-class') ?? '').trim().toLowerCase()
+  const hints: RoutingHints = {}
+  if (cls in TASK_CLASS_BUDGET_MS || cls === 'background') hints.taskClass = cls
+  const budget = Number.parseInt(get('x-dinghy-latency-budget-ms') ?? '', 10)
+  if (Number.isFinite(budget) && budget > 0) hints.attemptTimeoutMs = Math.min(60000, Math.max(1000, Math.round(budget * 1.5)))
+  return Object.keys(hints).length ? hints : undefined
+}
+
 /** Auth outcome extended with a pending `upto` settlement (metered billing). */
 interface AuthOutcome extends AuthResult {
   /** Present when a keyless request paid via x402 `upto` — the caller settles
@@ -671,7 +688,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (explicitHints) params.routingHints = explicitHints
     else {
       const prefs = clientRoutingHints(body.shipyard)
-      if (prefs) params.routingHints = { ...params.routingHints, ...prefs }
+      const task = taskHeaderHints((n) => c.req.header(n))
+      // Body prefs win over header hints (explicit beats inferred).
+      if (prefs || task) params.routingHints = { ...params.routingHints, ...task, ...prefs }
     }
     // A tenant/project-scoped key attributes the request to its account — so
     // the caller's traffic ties to the right tenant, project, and wallet.
