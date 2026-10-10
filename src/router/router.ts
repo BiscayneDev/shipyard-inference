@@ -540,7 +540,12 @@ export class Router implements LLMProvider {
     if (tier === undefined && !hints0?.minTier) return params
     // Client clamps (min/max tier) apply after the judgment. The emitted tier
     // is the one routing actually uses; `decidedTier` keeps the pre-clamp call.
-    const finalTier = clampTier(tier, hints0?.minTier, hints0?.maxTier)
+    // Task-class policy (caller-declared): cascade starts fast. A low-confidence
+    // frontier call on chat/lookup/synthesize starts at standard, and the higher
+    // tier stays in the fallback pool. Synthesis and background never need the
+    // top tier. An explicit client max_tier always wins.
+    const policyMax = hints0?.maxTier ?? taskClassMaxTier(hints0?.taskClass, d?.confidence)
+    const finalTier = clampTier(tier, hints0?.minTier, policyMax)
     if (d) {
       this.emit({
         type: 'tier_decided',
@@ -702,6 +707,21 @@ export function filterByProviders<T extends { id: string }>(pool: T[], providers
   const allowed = new Set(providers.map((p) => p.toLowerCase()))
   const kept = pool.filter((c) => allowed.has(c.id.toLowerCase()))
   return kept.length > 0 ? kept : pool
+}
+
+/** Confidence below which a fast-class call starts a tier down (cascade). */
+export const CASCADE_CONFIDENCE = 0.7
+
+/** Per-task-class tier ceiling; undefined = no cap. */
+export function taskClassMaxTier(taskClass: string | undefined, confidence: number | undefined): ModelTier | undefined {
+  switch (taskClass) {
+    case 'background': return 'economy'
+    case 'synthesize': return 'standard'
+    case 'chat':
+    case 'lookup':
+      return confidence !== undefined && confidence < CASCADE_CONFIDENCE ? 'standard' : undefined
+    default: return undefined
+  }
 }
 
 /** Clamp a tier into [min, max]; an undefined tier takes the floor. */
