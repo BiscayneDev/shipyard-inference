@@ -103,6 +103,9 @@ export interface GatewayTenderHook {
 }
 
 export interface GatewayConfig {
+  /** Non-streaming auto-route per-model timeout. Omit for legacy behavior. */
+  attemptTimeoutMs?: number
+
   /** Routable backends, exactly as passed to `Router`. */
   candidates: ProviderCandidate[]
   /** Routing strategy. Defaults to the Router default (`costOptimized`). */
@@ -271,4 +274,4 @@ export function resolveModelList(config: GatewayConfig): GatewayModel[] {
     }
   }
   return out
-}
+  }

@@ -47,6 +47,9 @@ export interface ToolDefinition {
  * providers (Anthropic/OpenAI/UsePod) — only `Router` reads them.
  */
 export interface RoutingHints {
+  /** Auto-route per-model non-streaming timeout, preserving the capable fallback pool. */
+  attemptTimeoutMs?: number
+
   /** Minimum quality tier the chosen model must meet. */
   tier?: 'economy' | 'standard' | 'frontier'
   /** Require a tool-capable model (implied when `tools` is non-empty). */
@@ -150,7 +153,7 @@ export interface LLMStreamOptions {
 }
 
 export interface LLMProvider {
-  chat(params: LLMChatParams): Promise<LLMResponse>
+  chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse>
   /**
    * Optional streaming variant. Yields incremental events ending in a single
    * `done` event carrying the assembled `LLMResponse`. Optional so existing

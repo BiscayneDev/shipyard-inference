@@ -53,8 +53,8 @@ export class AnthropicProvider implements LLMProvider {
     this.promptCaching = options.promptCaching ?? true
   }
 
-  async chat(params: LLMChatParams): Promise<LLMResponse> {
-    const response = await this.client.messages.create(this.buildRequest(params))
+  async chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse> {
+    const response = await this.client.messages.create(this.buildRequest(params), { signal: opts?.signal, maxRetries: opts?.signal ? 0 : undefined })
     return this.parseResponse(response)
   }
 

@@ -99,6 +99,9 @@ export type RouterEvent =
     }
 
 export interface RouterOptions {
+  /** Non-streaming auto-route attempt budget; pinned calls only honor caller abort. */
+  attemptTimeoutMs?: number
+
   candidates: ProviderCandidate[]
   /** Selection strategy. Defaults to `costOptimized()`. */
   strategy?: RoutingStrategy
@@ -195,7 +198,7 @@ export class Router implements LLMProvider {
     return this._video
   }
 
-  async chat(params: LLMChatParams): Promise<LLMResponse> {
+  async chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse> {
     const compressed = this.opts.compress ? await this.opts.compress(params) : params
 
     const key = this.opts.cache ? cacheKey(compressed) : undefined
@@ -208,6 +211,7 @@ export class Router implements LLMProvider {
       this.emit({ type: 'cache_miss', key })
     }
 
+    opts?.signal?.throwIfAborted()
     const decisions = await this.plan(compressed)
     if (decisions.length === 0) {
       throw new NoCapableModelError(
@@ -232,10 +236,7 @@ export class Router implements LLMProvider {
       for (;;) {
         const startedAt = performance.now()
         try {
-          const res = await decision.candidate.provider.chat({
-            ...compressed,
-            model: decision.model ?? compressed.model,
-          })
+          const res = await this.chatAttempt(decision, compressed, opts?.signal)
           if (this.opts.cache && key) await this.opts.cache.set(compressed, res)
           this.opts.health?.recordSuccess(decision.candidate.id)
           this.emit({
@@ -256,6 +257,7 @@ export class Router implements LLMProvider {
           return res
         } catch (error) {
           lastError = error
+          opts?.signal?.throwIfAborted()
           this.opts.health?.recordFailure(decision.candidate.id)
           if (this.shouldRetry(retryAttempt, error)) {
             await this.delayRetry(decision, attempt, retryAttempt, error)
@@ -286,6 +288,35 @@ export class Router implements LLMProvider {
     }
 
     throw lastError
+  }
+
+  private async chatAttempt(decision: RoutingDecision, params: LLMChatParams, parent?: AbortSignal): Promise<LLMResponse> {
+    const requestedMs = params.routingHints?.attemptTimeoutMs ?? this.opts.attemptTimeoutMs
+    const ms = this.isPinned(params) || !Number.isFinite(requestedMs) || requestedMs! <= 0 ? undefined : requestedMs
+    if (!ms && !parent) return decision.candidate.provider.chat({ ...params, model: decision.model ?? params.model })
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let abort: (() => void) | undefined
+    const stopped = new Promise<never>((_, reject) => {
+      abort = () => { controller.abort(parent?.reason); reject(parent?.reason ?? new Error('client aborted')) }
+      parent?.addEventListener('abort', abort, { once: true })
+      if (parent?.aborted) abort()
+      if (ms && ms > 0) timer = setTimeout(() => {
+        const error = Object.assign(new Error(`provider attempt timeout after ${ms}ms`), { code: 'ETIMEDOUT' })
+        controller.abort(error)
+        reject(error)
+      }, ms)
+    })
+    try {
+      controller.signal.throwIfAborted()
+      return await Promise.race([
+        decision.candidate.provider.chat({ ...params, model: decision.model ?? params.model }, { signal: controller.signal }),
+        stopped,
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (abort) parent?.removeEventListener('abort', abort)
+    }
   }
 
   /**
@@ -535,7 +566,7 @@ export class Router implements LLMProvider {
 
   /** Whether to retry the same candidate: within the budget and the error is retryable. */
   private shouldRetry(retryAttempt: number, error: unknown): boolean {
-    return retryAttempt < (this.opts.retry?.maxRetries ?? 0) && isRetryable(error)
+    return (error as {code?: string})?.code !== 'ETIMEDOUT' && retryAttempt < (this.opts.retry?.maxRetries ?? 0) && isRetryable(error)
   }
 
   /** Emit a `retry` event and sleep the backoff (Retry-After-aware) before retrying. */

@@ -86,12 +86,13 @@ const TIERS = new Set(['economy', 'standard', 'frontier'])
  */
 export function clientRoutingHints(prefs: unknown): RoutingHints | undefined {
   if (!prefs || typeof prefs !== 'object') return undefined
-  const p = prefs as { providers?: unknown; min_tier?: unknown; max_tier?: unknown }
+  const p = prefs as { providers?: unknown; min_tier?: unknown; max_tier?: unknown; attempt_timeout_ms?: unknown }
   const hints: RoutingHints = {}
   if (Array.isArray(p.providers)) {
     const providers = p.providers.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
     if (providers.length) hints.providers = providers
   }
+  if (typeof p.attempt_timeout_ms === 'number' && Number.isFinite(p.attempt_timeout_ms) && p.attempt_timeout_ms >= 1000 && p.attempt_timeout_ms <= 60000) hints.attemptTimeoutMs = Math.floor(p.attempt_timeout_ms)
   if (typeof p.min_tier === 'string' && TIERS.has(p.min_tier)) hints.minTier = p.min_tier as RoutingHints['minTier']
   if (typeof p.max_tier === 'string' && TIERS.has(p.max_tier)) hints.maxTier = p.max_tier as RoutingHints['maxTier']
   return Object.keys(hints).length ? hints : undefined
@@ -301,6 +302,7 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
 function classifyFailoverReason(error: unknown): string {
   const e = error as { status?: number; message?: string } | null
   if (e && typeof e === 'object') {
+    if ((e as {code?: string}).code === 'ETIMEDOUT') return 'provider_timeout'
     if (e.status === 429 || /rate.?limit|429/i.test(e.message ?? '')) return 'rate_limited'
     if (e.status === 400 && /context|token limit|too long/i.test(e.message ?? '')) {
       return 'context_overflow'
@@ -434,6 +436,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     baselineModel: config.baselineModel,
     pricingOverrides: config.pricingOverrides,
     autoTier: config.autoTier,
+    attemptTimeoutMs: config.attemptTimeoutMs,
     cache: config.cache,
     usageRecorder: config.usageRecorder,
     health: config.health,
@@ -802,7 +805,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     try {
-      const res = await als.run(ctx, () => router.chat(params))
+      const res = await als.run(ctx, () => router.chat(params, { signal: c.req.raw.signal }))
       if (exposeCost) {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
@@ -945,7 +948,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     try {
-      const res = await als.run(ctx, () => router.chat(params))
+      const res = await als.run(ctx, () => router.chat(params, { signal: c.req.raw.signal }))
       if (exposeCost) {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
@@ -1205,4 +1208,4 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   return app
-}
+      }

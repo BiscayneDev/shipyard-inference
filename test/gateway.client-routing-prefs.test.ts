@@ -68,3 +68,8 @@ test('helpers', () => {
   assert.equal(clientRoutingHints({ min_tier: 'bogus', providers: [1, ''] }), undefined)
   assert.deepEqual(clientRoutingHints({ providers: ['hopscotch'], max_tier: 'economy' }), { providers: ['hopscotch'], maxTier: 'economy' })
 })
+
+test('attempt timeout accepts finite bounded numbers only',()=>{
+ assert.deepEqual(clientRoutingHints({attempt_timeout_ms:15000}),{attemptTimeoutMs:15000})
+ for(const bad of [0,-1,999,60001,Infinity,NaN,'15000',null]) assert.equal(clientRoutingHints({attempt_timeout_ms:bad}),undefined)
+})
