@@ -43,8 +43,8 @@ export class OpenAIProvider implements LLMProvider {
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096
   }
 
-  async chat(params: LLMChatParams): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create(this.buildRequest(params))
+  async chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse> {
+    const response = await this.client.chat.completions.create(this.buildRequest(params), { signal: opts?.signal, maxRetries: opts?.signal ? 0 : undefined })
     return this.parseResponse(response)
   }
 
