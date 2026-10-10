@@ -53,3 +53,49 @@ test('end to end: low-confidence frontier chat starts at standard; research keep
   assert.equal(await ask('chat'), 'std')
   assert.equal(await ask('research'), 'big')
 })
+
+test('ceiling is real: the frontier model is not the first attempt even when it is the cheapest; it runs only as fallback', async () => {
+  const calls: string[] = []
+  const mk = (n: string, fail = false) => mockProvider(async () => { calls.push(n); if (fail) throw Object.assign(new Error('boom'), { status: 503 }); return { content: n, toolCalls: [], stopReason: 'end_turn' as const } })
+  const build = (stdFails: boolean) => createGatewayApp({
+    candidates: [
+      // frontier is CHEAPER than standard on purpose: cost ordering alone would pick it first
+      candidate('f', mk('big'), [model('big', { inputCostPerMTok: 0.1, outputCostPerMTok: 0.1, tier: 'frontier' })]),
+      candidate('s', mk('std', stdFails), [model('std', { inputCostPerMTok: 1, outputCostPerMTok: 1, tier: 'standard' })]),
+    ],
+    apiKeys: ['k'],
+    autoTier: () => ({ tier: 'frontier', source: 'jev', confidence: 0.4 }) as never,
+  })
+  const ask = async (gw: ReturnType<typeof build>, cls: string) => {
+    const res = await gw.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer k', 'content-type': 'application/json', 'x-dinghy-task-class': cls },
+      body: JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    return { status: res.status, text: res.status === 200 ? ((await res.json()) as { choices: Array<{ message: { content: string } }> }).choices[0]!.message.content : '' }
+  }
+  const ok = build(false)
+  assert.equal((await ask(ok, 'chat')).text, 'std')
+  assert.deepEqual(calls, ['std'], 'frontier must not be attempted first')
+  calls.length = 0
+  assert.equal((await ask(ok, 'research')).text, 'big', 'research is uncapped')
+  calls.length = 0
+  const flaky = build(true)
+  assert.equal((await ask(flaky, 'chat')).text, 'big', 'falls back above the ceiling after a failure')
+  assert.equal(calls[0], 'std')
+})
+
+test('ceiling never starves a request: with only frontier models available it is still served', async () => {
+  const mk = (n: string) => mockProvider(async () => ({ content: n, toolCalls: [], stopReason: 'end_turn' as const }))
+  const gw = createGatewayApp({
+    candidates: [candidate('f', mk('big'), [model('big', { inputCostPerMTok: 5, outputCostPerMTok: 5, tier: 'frontier' })])],
+    apiKeys: ['k'],
+    autoTier: () => ({ tier: 'frontier', source: 'jev', confidence: 0.4 }) as never,
+  })
+  const res = await gw.request('/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: 'Bearer k', 'content-type': 'application/json', 'x-dinghy-task-class': 'chat' },
+    body: JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'hi' }] }),
+  })
+  assert.equal(res.status, 200)
+})
