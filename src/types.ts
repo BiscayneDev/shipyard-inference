@@ -50,6 +50,9 @@ export interface RoutingHints {
   /** Auto-route per-model non-streaming timeout, preserving the capable fallback pool. */
   attemptTimeoutMs?: number
 
+  /** Caller-declared task class (Dinghy `x-dinghy-task-class`): chat | lookup | research | synthesize | background. */
+  taskClass?: string
+
   /** Minimum quality tier the chosen model must meet. */
   tier?: 'economy' | 'standard' | 'frontier'
   /** Require a tool-capable model (implied when `tools` is non-empty). */
