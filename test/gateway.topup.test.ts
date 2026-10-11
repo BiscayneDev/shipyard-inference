@@ -189,6 +189,24 @@ test('topup: amountUsd 0.01 (min) and 1000 (max) are accepted shapes', async () 
   assert.equal((await post(max.app, k2.key, { amountUsd: 1000 }, paymentHeader())).status, 200)
 })
 
+// ── replay protection ────────────────────────────────────────────────────────
+
+test('topup: the same signed payment cannot credit twice (replay gets 402)', async () => {
+  // Regression guard for the consumed-payment registry: a replayed X-PAYMENT
+  // must 402 with "already consumed", never credit the balance a second time.
+  const h = await harness(happyRpc(0.25))
+  const wallet = 'AgentWallet1111111111111111111111111111111'
+  const { key, userId } = await h.issueKey(wallet)
+  const header = paymentHeader()
+  const first = await post(h.app, key, { amountUsd: 0.25 }, header)
+  assert.equal(first.status, 200)
+  const replay = await post(h.app, key, { amountUsd: 0.25 }, header)
+  assert.equal(replay.status, 402)
+  const body = (await replay.json()) as { error?: string }
+  assert.match(String(body.error), /consumed/)
+  assert.equal(await h.credits.balance(userId), 0.25, 'credited exactly once')
+})
+
 // ── key eligibility ──────────────────────────────────────────────────────────
 
 test('topup: non-wallet key gets a clear error (403), nothing credited', async () => {
