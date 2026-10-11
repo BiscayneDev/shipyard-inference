@@ -30,6 +30,7 @@ import { resolveModelList, type GatewayConfig, type GuardrailResult } from './co
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
 import { createWalletKeyIssuer, MemoryNonceRegistry } from './keys-wallet.js'
+import { topupRoute } from './topup.js'
 import type { CreditStore } from '../tender/credit-store.js'
 import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
 import {
@@ -604,6 +605,13 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       )
     }
   })
+
+  // One-call x402 top-up (agent self-funding): a wallet-bound key pays USDC
+  // against a challenge priced at its requested amount; settlement credits the
+  // key's balance through the shared credit store. Requires x402 charging.
+  if (config.x402) {
+    app.post('/v1/topup', topupRoute(config))
+  }
 
   app.get('/v1/models', async (c) => {
     if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
