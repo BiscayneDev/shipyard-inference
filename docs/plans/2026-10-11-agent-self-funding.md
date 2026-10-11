@@ -93,3 +93,24 @@
 2. Merge order: `feat/agent-topup` first (risk), then `feat/billing-mcp` (rebase onto it; only shared file is package.json-adjacent — resolve simply).
 3. Full suite on merged main; final integration review; push.
 4. Local e2e on the Surfnet/localnet stack per the existing skill runbook (402 loop) before any deploy.
+
+---
+
+# Round 2 (2026-10-11, post-merge): balance drawdown + dogfood
+
+**Discovery:** keyed requests record spend against the breaker but never DEBIT `config.creditStore` — a topped-up balance is decorative. Round 2 closes the loop:
+
+## Task R1: Balance drawdown on keyed requests (branch `feat/balance-drawdown`)
+- Pre-flight: for wallet-bound keys (account has a balance account), check balance > 0 before serving; exhausted → 402 `insufficient_balance` with the x402 top-up challenge/hint. Free ($0) traffic always passes. Non-wallet keys (dev/owner) unchanged.
+- Post-completion: debit ACTUAL costUsd from the credit store (same identity the topup credited — `auth.account.userId`/balanceAccount). BYO-key routes (`billed === false`) and $0 local traffic never debit. Debit must be idempotent per request id (replay-safe like topup's consumed map).
+- Per-key ceiling at issuance: wallet-issued keys accept an optional operator-configured default ceiling (spend tracker) so a stolen key can't drain faster than the balance allows.
+- Tests: funded key serves and balance declines by actual cost; exhausted key blocked pre-flight with top-up hint; free model never debits/blocks; BYO route never debits; double-settle cannot double-debit.
+
+## Task R2: `shipyard_topup` MCP tool (branch `feat/balance-drawdown`, same WS)
+- Add to `mcp/server.ts`: triggers `POST /v1/topup` with the configured key, returns the 402 challenge payload (payTo/amount/nonce) + current balance; when the gateway responds 200 (already settled), returns `{balanceUsd}`. The MCP process does not hold a Solana wallet — payment happens via the wallet path (createPayingFetch in the agent's own runtime).
+
+## Task R3: Dogfood on prod (controller, after R1 merges)
+- Mint a prod key for a real agent runtime (Bonnet), fund it with ~$1 REAL mainnet USDC (payer = operator wallet, pays our own treasury — needs user-provided funding wallet), wire the Bonnet Hermes profile to the prod base URL + key, run a real session, show balance declining. Blocked on user for the funding wallet.
+
+## Task R4: SHIPusd design doc update (separate repo: ~/shipyard-os/docs/ship-credits-design.md)
+- Add the live third acquisition path (agent self-funding via x402 top-up, one-call), document drawdown semantics (burn-on-settle, per-request debit, idempotent), per-key ceilings, and sketch Buoy tool-metering as the next surface (out of scope to build this round).
