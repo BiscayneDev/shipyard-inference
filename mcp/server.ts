@@ -9,10 +9,10 @@
  *   - gatewayKey: arg override ?? SHIPYARD_GATEWAY_KEY
  *
  * Tools:
- *   - shipyard_balance: credit balance for the key. No gateway route exposes
- *     credit balance today (top-up/balance arrive with the /v1/topup route,
- *     Workstream A) — returns a clear "not exposed yet" error instead of
- *     guessing at an endpoint.
+ *   - shipyard_balance: credit balance via GET /api/me (`kickbacksUsd` — the
+ *     gateway credits top-ups into the same durable CreditStore the tender
+ *     kickbacks accrue into, so that field IS the balance). Older gateways
+ *     without the shared ledger get a clear `not_exposed` error.
  *   - shipyard_usage: GET /api/me (key-authed usage breakdown: requests,
  *     spentUsd, savedUsd, kickbacks) projected to a compact JSON object.
  *   - shipyard_models: GET /v1/models.
@@ -176,17 +176,25 @@ export function createBillingServer(opts: BillingServerOptions = {}): { server: 
     'shipyard_balance',
     {
       description:
-        'Credit balance (SHIPusd) for the configured gateway key. NOT exposed by the gateway yet — returns a clear not-exposed error until the /v1/topup + balance routes land.',
+        'Credit balance (SHIPusd) for the configured gateway key, via gateway GET /api/me (`kickbacksUsd` — top-ups and tender kickbacks share one durable credit ledger).',
       inputSchema: z.object({}),
     },
     async () =>
       safe(async () => {
-        // No gateway route exposes credit balance today. Probing /api/me would
-        // only return usage/kickbacks — not balance — so fail clearly instead.
+        const out = (await fetchGatewayJson(`${gatewayUrl}/api/me`, { key: gatewayKey })) as {
+          account?: { wallet?: string | null }
+          kickbacksUsd?: number
+        }
+        if (typeof out.kickbacksUsd !== 'number') {
+          return {
+            error: 'not_exposed',
+            message:
+              'Gateway did not report a credit balance on /api/me (older gateway without a shared credit ledger).',
+          }
+        }
         return {
-          error: 'not_exposed_yet',
-          message:
-            'Credit balance is not exposed yet: the gateway has no balance endpoint. Top-up/balance arrive with the /v1/topup route (Workstream A).',
+          balanceUsd: out.kickbacksUsd,
+          wallet: out.account?.wallet ?? null,
         }
       }),
   )
