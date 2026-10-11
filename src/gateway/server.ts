@@ -29,6 +29,8 @@ import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
+import { createWalletKeyIssuer, MemoryNonceRegistry } from './keys-wallet.js'
+import type { CreditStore } from '../tender/credit-store.js'
 import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
 import {
   buildUptoChallenge,
@@ -568,6 +570,40 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
+
+  // Wallet-signed key issuance (agent self-funding). Unauthenticated by
+  // design — the Ed25519 signature over the challenge IS the auth. Mints a
+  // normal key through the shared key store, bound to the wallet.
+  const walletKeyIssuer =
+    config.keyStore
+      ? createWalletKeyIssuer(config.keyStore, { nonces: new MemoryNonceRegistry() })
+      : undefined
+  app.post('/v1/keys/wallet', async (c) => {
+    if (!walletKeyIssuer) {
+      return errorJson(c, 501, 'wallet key issuance is not available on this deployment', 'not_supported')
+    }
+    let body: { pubkey?: unknown; nonce?: unknown; signature?: unknown }
+    try {
+      body = (await c.req.json()) as typeof body
+    } catch {
+      return errorJson(c, 400, 'body must be JSON', 'invalid_request_error')
+    }
+    const { pubkey, nonce, signature } = body
+    if (typeof pubkey !== 'string' || typeof nonce !== 'string' || typeof signature !== 'string') {
+      return errorJson(c, 400, '`pubkey`, `nonce` and `signature` are required strings', 'invalid_request_error')
+    }
+    try {
+      const issued = await walletKeyIssuer.issue({ pubkey, nonce, signatureB58: signature })
+      return c.json({ key: issued.key, keyId: issued.account.keyId, wallet: issued.account.wallet })
+    } catch (err) {
+      return errorJson(
+        c,
+        401,
+        err instanceof Error ? err.message : 'wallet signature verification failed',
+        'authentication_error',
+      )
+    }
+  })
 
   app.get('/v1/models', async (c) => {
     if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
