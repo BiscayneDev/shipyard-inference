@@ -37,18 +37,12 @@ export interface TopupResult {
 }
 
 /**
- * Resolve the credit store backing top-up balances: the SAME `CreditStore`
- * the gateway's tender hook accrues kickbacks into (when one is wired),
+ * Resolve the credit store backing top-up balances: the first-class
+ * `config.creditStore` (the same instance the tender kickbacks accrue into),
  * else a fresh in-memory store.
  */
 export function creditsOf(config: GatewayConfig): CreditStore {
-  const tender = config.tender as (GatewayTenderWithCredits | undefined)
-  if (tender && typeof tender.credits?.accrue === 'function') return tender.credits
-  return new MemoryCreditStore()
-}
-
-interface GatewayTenderWithCredits {
-  credits?: CreditStore
+  return config.creditStore ?? new MemoryCreditStore()
 }
 
 /** x402 config priced for THIS top-up: the challenge amount is the request's `amountUsd`. */

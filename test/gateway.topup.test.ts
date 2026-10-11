@@ -63,6 +63,7 @@ const happyRpc = (deltaUsdc: number) =>
 
 interface Harness {
   app: ReturnType<typeof createGatewayApp>
+  config: GatewayConfig
   store: MemoryApiKeyStore
   credits: MemoryCreditStore
   issueKey: (wallet?: string) => Promise<{ key: string; userId: string }>
@@ -81,12 +82,14 @@ function harness(rpc: typeof fetch = happyRpc(0.5), credits?: CreditStore): Harn
       priceUsdc: 0.001,
       fetch: rpc,
     },
-    // The gateway wires the SAME credit store the tender kickbacks use.
-    tender: { credits: creditStore } as unknown as GatewayConfig['tender'],
+    // First-class: topup reads `config.creditStore` — the SAME store the
+    // tender kickbacks accrue to. No tender is wired at all here.
+    creditStore: creditStore,
   }
   const app = createGatewayApp(config)
   return {
     app,
+    config,
     store,
     credits: creditStore,
     issueKey: async (wallet?: string) => {
@@ -150,6 +153,17 @@ test('topup: balance accumulates across top-ups (skips payment while keyed)', as
   assert.equal(await h.credits.balance(userId), 0.5)
 })
 
+test('topup: works with a config that has creditStore and NO tender at all', async () => {
+  const h = await harness(happyRpc(0.5))
+  assert.equal(h.config.tender, undefined, 'harness wires no tender')
+  const { key, userId } = await h.issueKey('AgentWallet1111111111111111111111111111111')
+  const res = await post(h.app, key, { amountUsd: 0.5 }, paymentHeader())
+  assert.equal(res.status, 200)
+  const body = (await res.json()) as { balanceUsd: number }
+  assert.equal(body.balanceUsd, 0.5)
+  assert.equal(await h.credits.balance(userId), 0.5)
+})
+
 // ── limits ───────────────────────────────────────────────────────────────────
 
 test('topup: under/over-limit amounts are rejected before any payment', async () => {
@@ -173,6 +187,24 @@ test('topup: amountUsd 0.01 (min) and 1000 (max) are accepted shapes', async () 
   const max = await harness(happyRpc(1000))
   const k2 = await max.issueKey('AgentWallet1111111111111111111111111111111')
   assert.equal((await post(max.app, k2.key, { amountUsd: 1000 }, paymentHeader())).status, 200)
+})
+
+// ── replay protection ────────────────────────────────────────────────────────
+
+test('topup: the same signed payment cannot credit twice (replay gets 402)', async () => {
+  // Regression guard for the consumed-payment registry: a replayed X-PAYMENT
+  // must 402 with "already consumed", never credit the balance a second time.
+  const h = await harness(happyRpc(0.25))
+  const wallet = 'AgentWallet1111111111111111111111111111111'
+  const { key, userId } = await h.issueKey(wallet)
+  const header = paymentHeader()
+  const first = await post(h.app, key, { amountUsd: 0.25 }, header)
+  assert.equal(first.status, 200)
+  const replay = await post(h.app, key, { amountUsd: 0.25 }, header)
+  assert.equal(replay.status, 402)
+  const body = (await replay.json()) as { error?: string }
+  assert.match(String(body.error), /consumed/)
+  assert.equal(await h.credits.balance(userId), 0.25, 'credited exactly once')
 })
 
 // ── key eligibility ──────────────────────────────────────────────────────────

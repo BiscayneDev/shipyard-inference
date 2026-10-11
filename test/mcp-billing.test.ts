@@ -183,8 +183,26 @@ test('shipyard_usage forwards windowMs as a query param', async () => {
   }
 })
 
-test('shipyard_balance reports that credit balance is not exposed yet', async () => {
-  // Even when /api/me works, no gateway route exposes credit balance today.
+test('shipyard_balance returns the credit balance from GET /api/me (kickbacksUsd)', async () => {
+  // /api/me's `kickbacksUsd` IS the credit balance: the gateway credits top-ups
+  // into the SAME durable CreditStore the tender kickbacks accrue into.
+  const gw = await startMockGateway({
+    'GET /api/me': { body: { account: { userId: 'u1', wallet: 'W' }, kickbacksUsd: 4.5 } },
+  })
+  try {
+    const client = await connectClient({ gatewayUrl: gw.url, gatewayKey: 'sk-test' })
+    const res = await client.callTool({ name: 'shipyard_balance', arguments: {} })
+    assert.equal(res.isError, undefined)
+    const parsed = JSON.parse((res.content as ToolContent[])[0].text)
+    assert.equal(parsed.balanceUsd, 4.5)
+    assert.equal(parsed.wallet, 'W')
+  } finally {
+    await gw.close()
+  }
+})
+
+test('shipyard_balance without a balance-bearing /api/me reports not_exposed', async () => {
+  // Older gateways (pre creditStore) have no kickbacksUsd on /api/me.
   const gw = await startMockGateway({
     'GET /api/me': { body: { account: { userId: 'u1' }, spentUsd: 1 } },
   })
@@ -192,9 +210,8 @@ test('shipyard_balance reports that credit balance is not exposed yet', async ()
     const client = await connectClient({ gatewayUrl: gw.url, gatewayKey: 'sk-test' })
     const res = await client.callTool({ name: 'shipyard_balance', arguments: {} })
     const parsed = JSON.parse((res.content as ToolContent[])[0].text)
-    assert.equal(parsed.error, 'not_exposed_yet')
+    assert.equal(parsed.error, 'not_exposed')
     assert.match(parsed.message, /balance/i)
-    assert.match(parsed.message, /not exposed|topup/i)
   } finally {
     await gw.close()
   }
