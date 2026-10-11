@@ -12,6 +12,7 @@ import type { DecisionFeedbackRecorder } from '../router/decision-feedback.js'
 import type { SpendTracker } from './spend.js'
 import type { ProjectCapsConfig } from './project-caps.js'
 import type { ProviderHealthTracker } from '../router/health.js'
+import type { CreditStore } from '../tender/credit-store.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -169,6 +170,12 @@ export interface GatewayConfig {
    * billed impression and accrues the account's kickback. Streaming-only.
    */
   tender?: GatewayTenderHook
+  /**
+   * Credit ledger backing agent balances (top-up accruals and tender kickback
+   * payouts). The SAME instance the tender is constructed with, so both
+   * surfaces see one balance. Defaults to an in-memory store when omitted.
+   */
+  creditStore?: CreditStore
   /** Emit `x-shipyard-*` cost headers / trailer. Default true. */
   exposeCostHeaders?: boolean
   /**

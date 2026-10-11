@@ -63,6 +63,7 @@ const happyRpc = (deltaUsdc: number) =>
 
 interface Harness {
   app: ReturnType<typeof createGatewayApp>
+  config: GatewayConfig
   store: MemoryApiKeyStore
   credits: MemoryCreditStore
   issueKey: (wallet?: string) => Promise<{ key: string; userId: string }>
@@ -81,12 +82,14 @@ function harness(rpc: typeof fetch = happyRpc(0.5), credits?: CreditStore): Harn
       priceUsdc: 0.001,
       fetch: rpc,
     },
-    // The gateway wires the SAME credit store the tender kickbacks use.
-    tender: { credits: creditStore } as unknown as GatewayConfig['tender'],
+    // First-class: topup reads `config.creditStore` — the SAME store the
+    // tender kickbacks accrue to. No tender is wired at all here.
+    creditStore: creditStore,
   }
   const app = createGatewayApp(config)
   return {
     app,
+    config,
     store,
     credits: creditStore,
     issueKey: async (wallet?: string) => {
@@ -146,6 +149,17 @@ test('topup: balance accumulates across top-ups (skips payment while keyed)', as
   const res2 = await post(h.app, key, { amountUsd: 0.25 }, paymentHeader())
   assert.equal(res2.status, 200)
   const body = (await res2.json()) as { balanceUsd: number }
+  assert.equal(body.balanceUsd, 0.5)
+  assert.equal(await h.credits.balance(userId), 0.5)
+})
+
+test('topup: works with a config that has creditStore and NO tender at all', async () => {
+  const h = await harness(happyRpc(0.5))
+  assert.equal(h.config.tender, undefined, 'harness wires no tender')
+  const { key, userId } = await h.issueKey('AgentWallet1111111111111111111111111111111')
+  const res = await post(h.app, key, { amountUsd: 0.5 }, paymentHeader())
+  assert.equal(res.status, 200)
+  const body = (await res.json()) as { balanceUsd: number }
   assert.equal(body.balanceUsd, 0.5)
   assert.equal(await h.credits.balance(userId), 0.5)
 })

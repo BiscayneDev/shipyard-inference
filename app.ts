@@ -401,6 +401,8 @@ const gateway = createGatewayApp({
       }
     : undefined,
   tender: gatewayTender,
+  // Top-up balances accrue into the SAME ledger the tender kickbacks use.
+  creditStore: tenderCreditStore,
   telemetry: reporter,
   cors: { origins: '*' },
 
