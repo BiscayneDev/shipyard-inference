@@ -30,11 +30,14 @@ const USER_AGENT = 'shipyard-inference-mcp-billing/0.1'
 export class GatewayHttpError extends Error {
   status: number
   bodySnippet: string
-  constructor(status: number, bodySnippet: string) {
+  /** Parsed response body when it was JSON (e.g. a 402 x402 challenge). */
+  body?: unknown
+  constructor(status: number, bodySnippet: string, body?: unknown) {
     super(`gateway returned ${status}: ${bodySnippet}`)
     this.name = 'GatewayHttpError'
     this.status = status
     this.bodySnippet = bodySnippet
+    this.body = body
   }
 }
 
@@ -54,10 +57,10 @@ async function readErrBody(res: Response): Promise<string> {
   }
 }
 
-/** GET (or other method) a gateway URL with the bearer key; parse JSON. */
+/** GET/POST (or other method) a gateway URL with the bearer key; parse JSON. */
 export async function fetchGatewayJson(
   url: string,
-  opts: { key: string; method?: string },
+  opts: { key: string; method?: string; body?: unknown },
 ): Promise<unknown> {
   let res: Response
   try {
@@ -67,13 +70,30 @@ export async function fetchGatewayJson(
         authorization: `Bearer ${opts.key}`,
         'user-agent': USER_AGENT,
         accept: 'application/json',
+        ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}),
       },
+      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
     })
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     throw new Error(`cannot reach gateway: ${reason.slice(0, 160)}`)
   }
-  if (!res.ok) throw new GatewayHttpError(res.status, await readErrBody(res))
+  if (!res.ok) {
+    let parsed: unknown
+    let snippet: string
+    try {
+      const text = (await res.text()).trim()
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        // not JSON — snippet only
+      }
+      snippet = (text || res.statusText).slice(0, 200)
+    } catch {
+      snippet = res.statusText
+    }
+    throw new GatewayHttpError(res.status, snippet, parsed)
+  }
   return res.json()
 }
 
@@ -195,6 +215,73 @@ export function createBillingServer(opts: BillingServerOptions = {}): { server: 
         return {
           balanceUsd: out.kickbacksUsd,
           wallet: out.account?.wallet ?? null,
+        }
+      }),
+  )
+
+  server.registerTool(
+    'shipyard_topup',
+    {
+      description:
+        'Top up the Shipyard Inference credit balance (SHIPusd) for the configured gateway key: POST /v1/topup with amountUsd. On 402 returns the x402 payment challenge (payTo/amount/asset/nonce/expiresAt) plus the current balance — settle it with a USDC transfer via the wallet path (e.g. createPayingFetch); on 200 the payment already settled and the new balance is returned.',
+      inputSchema: z.object({
+        amountUsd: z
+          .number()
+          .min(0.01)
+          .max(1000)
+          .describe('Top-up amount in USDC/USD (gateway bounds: 0.01–1000)'),
+      }),
+    },
+    async (args: { amountUsd: number }) =>
+      safe(async () => {
+        // The MCP process never holds a wallet — it surfaces the challenge;
+        // the agent's own runtime (createPayingFetch) settles it.
+        let payload: Record<string, unknown>
+        try {
+          payload = (await fetchGatewayJson(`${gatewayUrl}/v1/topup`, {
+            key: gatewayKey,
+            method: 'POST',
+            body: { amountUsd: args.amountUsd },
+          })) as Record<string, unknown>
+        } catch (err) {
+          if (err instanceof GatewayHttpError && err.status === 402) {
+            const challenge = (err.body ?? {}) as {
+              accepts?: Array<Record<string, unknown>>
+              balanceAccount?: string
+            }
+            const c0 = challenge.accepts?.[0] ?? {}
+            // Current balance (best-effort — the shared credit ledger surface).
+            let balanceUsd: number | null = null
+            try {
+              const me = (await fetchGatewayJson(`${gatewayUrl}/api/me`, { key: gatewayKey })) as {
+                kickbacksUsd?: number
+              }
+              if (typeof me.kickbacksUsd === 'number') balanceUsd = me.kickbacksUsd
+            } catch {
+              // balance is advisory on a 402 — never mask the challenge
+            }
+            return {
+              requiresPayment: true,
+              status: 402,
+              payTo: c0.payTo ?? null,
+              amount: c0.amount ?? null,
+              asset: c0.asset ?? null,
+              network: c0.network ?? null,
+              nonce: c0.nonce ?? null,
+              expiresAt: c0.expiresAt ?? null,
+              resource: c0.resource ?? null,
+              balanceAccount: challenge.balanceAccount ?? null,
+              balanceUsd,
+            }
+          }
+          throw err
+        }
+        return {
+          requiresPayment: false,
+          status: 200,
+          balanceUsd: typeof payload.balanceUsd === 'number' ? payload.balanceUsd : null,
+          creditedUsd: typeof payload.creditedUsd === 'number' ? payload.creditedUsd : null,
+          wallet: payload.wallet ?? null,
         }
       }),
   )

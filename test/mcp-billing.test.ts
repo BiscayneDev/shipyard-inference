@@ -109,12 +109,12 @@ test('fetchGatewayJson turns non-2xx into GatewayHttpError with status + body me
   }
 })
 
-test('lists exactly the three billing tools', async () => {
+test('lists exactly the four billing tools', async () => {
   const client = await connectClient({ gatewayUrl: 'http://127.0.0.1:1', gatewayKey: 'sk-test' })
   const { tools } = await client.listTools()
   assert.deepEqual(
     tools.map((t) => t.name).sort(),
-    ['shipyard_balance', 'shipyard_models', 'shipyard_usage'],
+    ['shipyard_balance', 'shipyard_models', 'shipyard_topup', 'shipyard_usage'],
   )
 })
 
@@ -241,6 +241,99 @@ test('gateway HTTP errors become tool errors with the status code', async () => 
     assert.equal(parsed.error, 'gateway_error')
     assert.equal(parsed.status, 500)
     assert.match(parsed.message, /boom/)
+  } finally {
+    await gw.close()
+  }
+})
+
+// ── shipyard_topup ──────────────────────────────────────────────────────────
+
+const CHALLENGE_BODY = {
+  accepts: [
+    {
+      scheme: 'exact',
+      network: 'solana-devnet',
+      asset: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      amount: '5000000',
+      maxAmountRequired: '5000000',
+      payTo: 'TreasuryTest1111111111111111111111111111111',
+      resource: '/v1/topup',
+      nonce: 'abc123',
+      expiresAt: 1730000000000,
+    },
+  ],
+  amountUsd: 5,
+  balanceAccount: 'user_1',
+}
+
+test('shipyard_topup: 402 surfaces the x402 challenge payload + current balance', async () => {
+  const gw = await startMockGateway({
+    'POST /v1/topup': { status: 402, body: CHALLENGE_BODY },
+    'GET /api/me': { body: { kickbacksUsd: 0.25, account: { wallet: 'W1' } } },
+  })
+  try {
+    const client = await connectClient({ gatewayUrl: gw.url, gatewayKey: 'sk-test' })
+    const res = await client.callTool({ name: 'shipyard_topup', arguments: { amountUsd: 5 } })
+    assert.equal(res.isError, undefined, 'a 402 challenge is a RESULT, not a tool error')
+    const parsed = JSON.parse((res.content as ToolContent[])[0].text)
+    assert.equal(parsed.requiresPayment, true)
+    assert.equal(parsed.status, 402)
+    assert.equal(parsed.payTo, 'TreasuryTest1111111111111111111111111111111')
+    assert.equal(parsed.amount, '5000000')
+    assert.equal(parsed.asset, '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+    assert.equal(parsed.nonce, 'abc123')
+    assert.equal(parsed.expiresAt, 1730000000000)
+    assert.equal(parsed.balanceUsd, 0.25)
+    assert.equal(parsed.balanceAccount, 'user_1')
+    // The tool POSTed the key-authed top-up request.
+    assert.deepEqual(gw.requests.map((r) => `${r.method} ${r.url}`), [
+      'POST /v1/topup',
+      'GET /api/me',
+    ])
+    assert.equal(gw.requests[0].auth, 'Bearer sk-test')
+  } finally {
+    await gw.close()
+  }
+})
+
+test('shipyard_topup: 200 returns the settled balance', async () => {
+  const gw = await startMockGateway({
+    'POST /v1/topup': { body: { balanceUsd: 5.5, creditedUsd: 5, wallet: 'W1' } },
+  })
+  try {
+    const client = await connectClient({ gatewayUrl: gw.url, gatewayKey: 'sk-test' })
+    const res = await client.callTool({ name: 'shipyard_topup', arguments: { amountUsd: 5 } })
+    assert.equal(res.isError, undefined)
+    const parsed = JSON.parse((res.content as ToolContent[])[0].text)
+    assert.equal(parsed.requiresPayment, false)
+    assert.equal(parsed.status, 200)
+    assert.equal(parsed.balanceUsd, 5.5)
+    assert.equal(parsed.creditedUsd, 5)
+  } finally {
+    await gw.close()
+  }
+})
+
+test('shipyard_topup: network errors become tool errors', async () => {
+  const client = await connectClient({ gatewayUrl: 'http://127.0.0.1:1', gatewayKey: 'sk-test' })
+  const res = await client.callTool({ name: 'shipyard_topup', arguments: { amountUsd: 1 } })
+  assert.equal(res.isError, true)
+  const parsed = JSON.parse((res.content as ToolContent[])[0].text)
+  assert.equal(parsed.error, 'network_error')
+})
+
+test('shipyard_topup: other gateway errors become tool errors with the status', async () => {
+  const gw = await startMockGateway({
+    'POST /v1/topup': { status: 403, body: { error: 'top-up requires a wallet-issued key' } },
+  })
+  try {
+    const client = await connectClient({ gatewayUrl: gw.url, gatewayKey: 'sk-test' })
+    const res = await client.callTool({ name: 'shipyard_topup', arguments: { amountUsd: 1 } })
+    assert.equal(res.isError, true)
+    const parsed = JSON.parse((res.content as ToolContent[])[0].text)
+    assert.equal(parsed.error, 'gateway_error')
+    assert.equal(parsed.status, 403)
+    assert.match(parsed.message, /wallet-issued/)
   } finally {
     await gw.close()
   }
