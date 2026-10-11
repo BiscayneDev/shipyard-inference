@@ -630,6 +630,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   // key's balance through the shared credit store. Requires x402 charging.
   if (config.x402) {
     app.post('/v1/topup', topupRoute(config))
+    // x402 discovery surface: GET advertises the challenge (keyless → 402).
+    app.get('/v1/topup', topupRoute(config))
   }
 
   app.get('/v1/models', async (c) => {

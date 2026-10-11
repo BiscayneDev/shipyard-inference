@@ -219,10 +219,25 @@ test('topup: non-wallet key gets a clear error (403), nothing credited', async (
   assert.equal(await h.credits.balance('anyone'), 0)
 })
 
-test('topup: keyless request is 401 (auth is required; payment alone does not identify a balance)', async () => {
+test('topup: keyless request is 402 discovery challenge (x402 resources must advertise their challenge)', async () => {
   const h = await harness()
   const res = await post(h.app, undefined, { amountUsd: 1 })
-  assert.equal(res.status, 401)
+  assert.equal(res.status, 402)
+  const body = (await res.json()) as { accepts?: unknown[]; note?: string; amountUsd?: number }
+  assert.ok(Array.isArray(body.accepts) && body.accepts.length > 0)
+  assert.equal(body.amountUsd, 1)
+  assert.match(String(body.note), /keys\/wallet/)
+  // default amount when none requested
+  const bare = await post(h.app, undefined, {})
+  assert.equal(bare.status, 402)
+})
+
+test('topup: GET /v1/topup advertises the 402 challenge (discovery surface)', async () => {
+  const h = await harness()
+  const res = await h.app.request('/v1/topup')
+  assert.equal(res.status, 402)
+  const body = (await res.json()) as { accepts?: unknown[] }
+  assert.ok(Array.isArray(body.accepts) && body.accepts.length > 0)
 })
 
 test('topup: failed on-chain verification returns 402 with the error, no credit', async () => {

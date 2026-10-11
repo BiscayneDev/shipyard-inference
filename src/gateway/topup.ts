@@ -71,6 +71,25 @@ export async function handleTopup(
   requestId = `topup_${Date.now()}`,
 ): Promise<TopupResult> {
   if (!account) {
+    // x402 discovery: an unauthenticated request to a payment resource must
+    // still advertise the 402 challenge — wallets (PayBox, wallets-as-signers)
+    // preflight the resource and need a payable challenge to select from.
+    // Actual crediting requires a wallet-bound key: mint one first via
+    // POST /v1/keys/wallet, then pay this challenge with that key.
+    if (opts.x402) {
+      const body = (rawBody ?? {}) as { amountUsd?: unknown }
+      const amountUsd = parseAmount(body.amountUsd) ?? 1
+      const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
+      return {
+        status: 402,
+        body: {
+          ...challenge,
+          amountUsd,
+          note: 'keyless discovery challenge — bind a key via POST /v1/keys/wallet, then pay with that key to credit its balance',
+        },
+        headers: { 'x-402-challenge': 'solana-usdc' },
+      }
+    }
     return {
       status: 401,
       body: { error: 'Invalid API key', code: 'authentication_error' },
