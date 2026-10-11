@@ -45,6 +45,12 @@ export interface SpendTracker {
   projectSpent?(projectId: string, cap: { ceilingUsd: number; windowMs: number }): number
   /** Reset `projectId`'s aggregate (post-top-up / new budget period). */
   resetProject?(projectId: string): void
+  /**
+   * Set a per-key ceiling at issuance (e.g. wallet-issued keys get the
+   * operator's default wallet-key ceiling so a compromised key can't
+   * outspend its balance faster than the breaker allows).
+   */
+  setCeiling?(key: string, ceilingUsd: number): void
 }
 
 export class MemorySpendTracker implements SpendTracker {
@@ -52,7 +58,12 @@ export class MemorySpendTracker implements SpendTracker {
   private readonly spentByKey = new Map<string, number>()
 
   constructor(opts: SpendTrackerOptions) {
-    this.opts = opts
+    this.opts = { ...opts, ceilings: { ...(opts.ceilings ?? {}) } }
+  }
+
+  /** Issue-time per-key ceiling (wallet-key drawdown guardrail). */
+  setCeiling(key: string, ceilingUsd: number): void {
+    ;(this.opts.ceilings ??= {})[key] = ceilingUsd
   }
 
   private ceiling(key: string): number {

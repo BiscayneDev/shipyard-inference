@@ -117,6 +117,20 @@ export interface WalletKeyIssuer {
 }
 
 /**
+ * Optional operator ceiling for wallet-issued keys: a compromised key can't
+ * outspend its balance faster than the breaker allows. Set via
+ * SHIPYARD_WALLET_KEY_CEILING_USD (USD); unset/invalid → 0 (no ceiling).
+ */
+export const WALLET_KEY_CEILING_ENV = 'SHIPYARD_WALLET_KEY_CEILING_USD'
+
+export function walletKeyCeilingFromEnv(env: Record<string, string | undefined> = process.env): number {
+  const raw = env[WALLET_KEY_CEILING_ENV]?.trim()
+  if (!raw) return 0
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/**
  * Build a wallet-key issuer over the SAME `ApiKeyStore` the other issuers
  * (dev keys, operator keys, self-serve) use. The issued account carries
  * `wallet: pubkey` (plus `label: 'wallet'`) so billing and audit trails bind
@@ -124,7 +138,15 @@ export interface WalletKeyIssuer {
  */
 export function createWalletKeyIssuer(
   store: ApiKeyStore,
-  opts: { nonces?: NonceRegistry; domain?: string; now?: () => number } = {},
+  opts: {
+    nonces?: NonceRegistry
+    domain?: string
+    now?: () => number
+    /** Default per-key spend ceiling (USD) applied at issuance. */
+    defaultCeilingUsd?: number
+    /** Called with the issued key after a successful issue (e.g. to apply the ceiling to the spend tracker). */
+    onIssued?: (issued: IssuedKey) => void
+  } = {},
 ): WalletKeyIssuer {
   const nonces = opts.nonces ?? new MemoryNonceRegistry()
   const now = opts.now ?? Date.now
@@ -148,7 +170,13 @@ export function createWalletKeyIssuer(
       wallet: pubkey,
       label: 'wallet',
     }
-    return store.issue(issueInput, at)
+    const issued = await store.issue(issueInput, at)
+    // Default per-key ceiling at issuance: applied by the caller (the gateway
+    // wires it into its spend tracker) so a compromised key can't outspend
+    // its balance faster than the breaker allows.
+    const ceiling = opts.defaultCeilingUsd ?? walletKeyCeilingFromEnv()
+    if (ceiling > 0) opts.onIssued?.(issued)
+    return issued
   }
   return {
     issue,

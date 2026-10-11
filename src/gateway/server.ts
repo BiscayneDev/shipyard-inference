@@ -29,8 +29,15 @@ import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
-import { createWalletKeyIssuer, MemoryNonceRegistry } from './keys-wallet.js'
+import { createWalletKeyIssuer, MemoryNonceRegistry, walletKeyCeilingFromEnv } from './keys-wallet.js'
 import { topupRoute } from './topup.js'
+import {
+  ConsumedDrawdowns,
+  balanceAccountOf,
+  debitRequest,
+  insufficientBalanceBody,
+  knownPaidModel,
+} from './drawdown.js'
 import type { CreditStore } from '../tender/credit-store.js'
 import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
 import {
@@ -572,12 +579,24 @@ export function createGatewayApp(config: GatewayConfig): Hono {
 
   app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
+  // Replay-safe drawdown registry: one debit per request id, per process.
+  const drawdowns = new ConsumedDrawdowns()
+
   // Wallet-signed key issuance (agent self-funding). Unauthenticated by
   // design — the Ed25519 signature over the challenge IS the auth. Mints a
   // normal key through the shared key store, bound to the wallet.
   const walletKeyIssuer =
     config.keyStore
-      ? createWalletKeyIssuer(config.keyStore, { nonces: new MemoryNonceRegistry() })
+      ? createWalletKeyIssuer(config.keyStore, {
+          nonces: new MemoryNonceRegistry(),
+          // Operator ceiling for wallet-issued keys (SHIPYARD_WALLET_KEY_
+          // CEILING_USD): applied to the spend tracker at issuance so a
+          // compromised key can't outspend its balance unchecked.
+          onIssued: (issued) => {
+            const ceiling = walletKeyCeilingFromEnv()
+            if (ceiling > 0) config.spend?.tracker.setCeiling?.(issued.account.userId, ceiling)
+          },
+        })
       : undefined
   app.post('/v1/keys/wallet', async (c) => {
     if (!walletKeyIssuer) {
@@ -653,6 +672,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // recoverable 402 — never a dead session. Keyless x402 requests skip this;
     // their wallet balance is their own limit.
     const spendKey = auth.account?.userId ?? bearerToken(c.req.header('authorization'))
+    // Balance drawdown identity: wallet-bound keys debit the shared credit
+    // ledger under the SAME account topup credited (account.userId).
+    const drawdownAccount =
+      config.creditStore && auth.account?.wallet ? balanceAccountOf(auth.account) : undefined
     if (config.spend && spendKey) {
       // Estimate from the requested model's declared pricing when available;
       // an unknown/unpriced request is checked at zero cost (free traffic
@@ -702,8 +725,23 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       }
     }
     /** Record actual spend after the request completes (never blocks). */
-    const recordSpend = (costUsd: number | undefined): void => {
+    const recordSpend = async (costUsd: number | undefined): Promise<void> => {
       if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd)
+      // Balance drawdown: debit ACTUAL cost from the shared credit ledger
+      // (same identity topup credited). $0 cost never debits; BYO never
+      // debits; idempotent per request id. Independent of config.spend —
+      // drawdown works whenever a credit ledger is configured.
+      if (drawdownAccount && ctx.billed !== false) {
+        // ctx.id is always set for a routed chat request; fall back to a
+        // unique sentinel so idempotency never collapses distinct requests.
+        const requestId = ctx.id ?? `unattributed_${Date.now()}_${Math.random()}`
+        await debitRequest(
+          { credits: config.creditStore!, consumed: drawdowns },
+          drawdownAccount,
+          requestId,
+          costUsd,
+        )
+      }
       if (!config.spend || !spendKey || !costUsd || costUsd <= 0) return
       // BYO ("your key, your bill"): served on the caller's own upstream key —
       // never debited from the shared balance.
@@ -723,6 +761,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     if (!body || !Array.isArray(body.messages)) {
       return errorJson(c, 400, '`messages` is required', 'invalid_request_error')
+    }
+
+    // Balance drawdown pre-flight: a wallet-bound key must hold a positive
+    // balance before PAID traffic is served — exhausted → 402 with a top-up
+    // hint (the x402 challenge when charging is configured). Free ($0-priced)
+    // and unpriced traffic always passes; non-wallet keys are unchanged.
+    if (drawdownAccount && knownPaidModel(config, body.model)) {
+      const balanceUsd = await config.creditStore!.balance(drawdownAccount)
+      if (!(balanceUsd > 0)) {
+        return c.json(insufficientBalanceBody(config.x402, balanceUsd), 402)
+      }
     }
 
     const params = openAIRequestToChatParams(body)
@@ -859,7 +908,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             })
           }
           await stream.writeSSE({ data: '[DONE]' })
-          recordSpend(ctx.costUsd)
+          await recordSpend(ctx.costUsd)
         } catch (err) {
           await stream.writeSSE({ data: JSON.stringify(toOpenAIError(err).body) })
           await stream.writeSSE({ data: '[DONE]' })
@@ -893,7 +942,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
-      recordSpend(ctx.costUsd)
+      await recordSpend(ctx.costUsd)
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toOpenAIError(err)

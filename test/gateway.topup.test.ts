@@ -238,3 +238,31 @@ test('topup: failed on-chain verification returns 402 with the error, no credit'
   assert.ok(body.error)
   assert.equal(await h.credits.balance('nobody'), 0)
 })
+
+// ── one-ledger reconciliation (Round 2 drawdown) ────────────────────────────
+
+test('topup and drawdown reconcile to ONE ledger: same account identity', async () => {
+  const { balanceAccountOf, debitRequest, ConsumedDrawdowns } = await import('../src/gateway/drawdown.js')
+  const h = harness()
+  const { key, userId } = await h.issueKey('AgentWalletOneLedger1111111111111111111111')
+  const { account } = await h.store.resolve(key).then((a) => ({ account: a! }))
+  // Balance identity derivation must match topup's (account.userId).
+  assert.equal(balanceAccountOf(account), userId)
+  assert.equal(account.wallet, 'AgentWalletOneLedger1111111111111111111111')
+  // A top-up credit and a usage debit under that identity net out in one store.
+  await h.credits.accrue({
+    account: balanceAccountOf(account),
+    amountUsd: 1.0,
+    placementId: 'topup',
+    line: 'top-up 1 USDC (test)',
+    requestId: 'fund_1',
+    at: Date.now(),
+  })
+  await debitRequest(
+    { credits: h.credits, consumed: new ConsumedDrawdowns() },
+    balanceAccountOf(account),
+    'req_1',
+    0.4,
+  )
+  assert.ok(Math.abs((await h.credits.balance(userId)) - 0.6) < 1e-9)
+})
