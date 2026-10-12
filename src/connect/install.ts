@@ -164,6 +164,64 @@ export interface Earnings {
   sponsoredLine?: string | null
 }
 
+/** Encode bytes as base58 (used for Solana pubkey + Ed25519 signatures). */
+function b58(input: Uint8Array): string {
+  const CH = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  let n = 0n
+  for (const b of input) n = (n << 8n) | BigInt(b)
+  let s = ''
+  while (n > 0n) {
+    s = CH[Number(n % 58n)] + s
+    n /= 58n
+  }
+  for (const b of input) {
+    if (b === 0) s = '1' + s
+    else break
+  }
+  return s
+}
+
+/**
+ * Mint a wallet-bound key from the CLI — the SAME signature-is-auth path the
+ * /connect page uses, but with the caller supplying a Solana secret key (base58
+ * 32-byte seed). Fetches a fresh challenge, signs it Ed25519, POSTs to
+ * /v1/keys/wallet. No self-serve gate, no signup — proving the wallet is login.
+ */
+export async function mintWalletKey(
+  gatewayUrl: string,
+  secretKeyB58: string,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<{ key: string; wallet: string }> {
+  const f = opts.fetchImpl ?? fetch
+  const bs58 = (await import('bs58')).default
+  const seed = new Uint8Array(bs58.decode(secretKeyB58))
+  if (seed.length !== 32) throw new Error(`wallet secret must be a 32-byte base58 seed (got ${seed.length} bytes)`)
+  const { createPrivateKey, createPublicKey, sign } = await import('node:crypto')
+
+  // 1. Derive pubkey + fetch the deterministic message to sign.
+  const pkcs8 = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(seed)])
+  const priv = createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' })
+  const pubJwk = createPublicKey(priv).export({ format: 'jwk' })
+  const pubkey = b58(Buffer.from(pubJwk.x as string, 'base64url'))
+
+  const chRes = await f(`${trimSlashes(gatewayUrl)}/v1/keys/wallet/challenge?pubkey=${encodeURIComponent(pubkey)}`)
+  const ch = (await chRes.json()) as { nonce?: string; message?: string; error?: { message?: string } }
+  if (!chRes.ok || !ch.nonce || !ch.message) throw new Error(ch.error?.message ?? `challenge failed: ${chRes.status}`)
+
+  // 2. Sign the exact challenge message with Ed25519.
+  const signature = b58(sign(null, Buffer.from(ch.message, 'utf8'), priv))
+
+  // 3. Mint the key (signature IS the auth).
+  const mintRes = await f(`${trimSlashes(gatewayUrl)}/v1/keys/wallet`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pubkey, nonce: ch.nonce, signature }),
+  })
+  const body = (await mintRes.json()) as { key?: string; wallet?: string; error?: { message?: string } }
+  if (!mintRes.ok || !body.key) throw new Error(body.error?.message ?? `key mint failed: ${mintRes.status}`)
+  return { key: body.key, wallet: body.wallet ?? pubkey }
+}
+
 /** Fetch the developer's earnings for the status line (fast, with a timeout). */
 export async function fetchEarnings(
   gatewayUrl: string,

@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
+import bs58 from 'bs58'
 import {
   mergeClaudeSettings,
   applyShipyardSpinner,
@@ -8,6 +10,7 @@ import {
   issueKey,
   fetchEarnings,
   formatStatusLine,
+  mintWalletKey,
 } from '../src/connect/install.js'
 
 test('mergeClaudeSettings: --route sets the Anthropic env, preserves other settings', () => {
@@ -129,4 +132,37 @@ test('formatStatusLine: a sponsored line leads (the in-IDE ad), earnings trail',
     formatStatusLine({ requests: 1, spentUsd: 0.0001, savedUsd: 0.001, savedPct: 50, kickbacksUsd: 0.0025, sponsoredLine: '🚀 Acme Cloud' }),
     '🚀 Acme Cloud  ·  ⚓ +$0.0025',
   )
+})
+
+test('mintWalletKey: fetches a challenge, signs it, and mints a wallet-bound key', async () => {
+  // A real Solana-style Ed25519 keypair (32-byte seed).
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const seed = new Uint8Array(Buffer.from(privateKey.export({ format: 'jwk' }).d!, 'base64url'))
+  const seedB58 = bs58.encode(Buffer.from(seed))
+  const pubkey = bs58.encode(Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url'))
+
+  const calls: string[] = []
+  const fetchImpl = (async (url: string, init?: RequestInit) => {
+    calls.push(String(url))
+    if (String(url).includes('/challenge')) {
+      return new Response(JSON.stringify({ pubkey, nonce: 'n1', message: `shipyard-wallet-key-challenge:v1\nshipyard-inference\n${pubkey}\nn1` }), { status: 200 })
+    }
+    // The mint POST — the signature must be a 64-byte Ed25519 sig over the challenge.
+    const body = JSON.parse(String(init?.body)) as { pubkey: string; nonce: string; signature: string }
+    assert.equal(body.pubkey, pubkey)
+    assert.equal(body.nonce, 'n1')
+    assert.equal(Buffer.from(bs58.decode(body.signature)).length, 64, 'signature is 64 bytes')
+    return new Response(JSON.stringify({ key: '«redacted:sk-…»', wallet: pubkey }), { status: 200 })
+  }) as unknown as typeof fetch
+
+  const r = await mintWalletKey('https://gw/', seedB58, { fetchImpl })
+  assert.equal(r.key, '«redacted:sk-…»')
+  assert.equal(r.wallet, pubkey)
+  assert.equal(calls.length, 2)
+  assert.match(calls[0]!, /\/v1\/keys\/wallet\/challenge\?pubkey=/)
+  assert.match(calls[1]!, /\/v1\/keys\/wallet$/)
+})
+
+test('mintWalletKey: rejects a malformed secret', async () => {
+  await assert.rejects(() => mintWalletKey('https://gw/', 'tooshort'), /32-byte/)
 })

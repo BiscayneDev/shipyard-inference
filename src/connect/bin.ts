@@ -17,6 +17,7 @@ import {
 import { runDoctor } from './doctor.js'
 import { resolveConnectTargets, keyReuseWarning } from './agent-wiring.js'
 import { installService } from '../gateway/service.js'
+import { mintWalletKey } from './install.js'
 
 const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard-inference.vercel.app'
 const STATUSLINE_CMD = 'npx -y shipyard-inference statusline'
@@ -78,9 +79,18 @@ async function connect(): Promise<void> {
   // Reuse an existing key (--key) or issue a fresh one.
   let key = arg('--key')
   if (!key) {
-    process.stderr.write(`Issuing a Shipyard key from ${url}…\n`)
-    const issued = await issueKey(url, { wallet })
-    key = issued.key
+    // Wallet-native: mint a key bound to a provided Solana secret (base58 32-byte
+    // seed) via the signature-is-auth endpoint — no self-serve gate, no signup.
+    const walletKey = arg('--wallet-key')
+    if (walletKey) {
+      if (local) process.stderr.write(`Minting a wallet-bound key from ${url}…\n`)
+      const minted = await mintWalletKey(url, walletKey)
+      key = minted.key
+    } else {
+      process.stderr.write(`Issuing a Shipyard key from ${url}…\n`)
+      const issued = await issueKey(url, { wallet: arg('--wallet') })
+      key = issued.key
+    }
   }
 
   // Appliance mode: show the hardware/Ollama advisor before wiring.
@@ -245,12 +255,13 @@ async function main(): Promise<void> {
   process.stderr.write(
     'Shipyard Inference — earn on your agent idle-time; optionally route for cheaper inference.\n\n' +
       'Usage:\n' +
-      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--key <sk-…>] [--route] [--no-statusline] [--local] [--daemon] [--with-ollama]\n' +
-      '      Connect Claude Code to Shipyard. By default this adds a live-earnings\n' +
-      '      status line and does NOT change your model. Pass --route to also route\n' +
-      '      inference through Shipyard for cost savings (sets ANTHROPIC_BASE_URL).\n' +
-      '      --local targets the local gateway (127.0.0.1:8787); --daemon also installs\n' +
-      '      it as a launchd service (auto-restart); --with-ollama adds ollama serve.\n' +
+      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--wallet-key <b58-secret>] [--key <sk-…>] [--route] [--no-statusline] [--local] [--daemon] [--with-ollama]\n' +
+            '      Connect Claude Code to Shipyard. By default this adds a live-earnings\n' +
+            '      status line and does NOT change your model. Pass --route to also route\n' +
+            '      inference through Shipyard for cost savings (sets ANTHROPIC_BASE_URL).\n' +
+            '      --wallet-key <b58-secret> mints a wallet-bound key via signature-is-auth\n' +
+            '      (no self-serve gate); --local targets the local gateway (127.0.0.1:8787);\n' +
+            '      --daemon also installs it as a launchd service; --with-ollama adds ollama.\n' +
       '  npx shipyard-inference doctor\n' +
       '      Probe hardware + Ollama and print your local model ladder and agent env.\n' +
       '  npx shipyard-inference statusline\n' +
