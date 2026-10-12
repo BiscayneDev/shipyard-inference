@@ -71,13 +71,29 @@ function capableDecisions(ctx: RoutingContext): RoutingDecision[] {
  * estimated cost ascending; the full sorted list is returned so a failed
  * cheapest pick falls through to the next-cheapest. Models with no pricing
  * data sort last (cost `Infinity`) — picked only when uniquely capable.
+ *
+ * A soft `prefer` hint (e.g. from the conversation anchor) flips the ordering:
+ * any capable decision matching the preferred provider/model sorts ahead of
+ * the rest (still cost-ordered among themselves), but is NOT exclusive — the
+ * whole pool stays available, so an unavailable preferred candidate falls
+ * through to normal cost-optimized routing. `pin` (hard) still wins if set.
  */
 export function costOptimized(): RoutingStrategy {
   return {
     select(ctx) {
-      return capableDecisions(ctx).sort(
+      const decisions = capableDecisions(ctx).sort(
         (a, b) => (a.estimatedCostUsd ?? Infinity) - (b.estimatedCostUsd ?? Infinity),
       )
+      const prefer = ctx.params.routingHints?.prefer
+      if (!prefer || decisions.length < 2) return decisions
+      const matches = (d: RoutingDecision): boolean => {
+        if (prefer.provider && d.candidate.id !== prefer.provider) return false
+        if (prefer.model && d.model !== prefer.model) return false
+        return true
+      }
+      const preferred = (ms: RoutingDecision[]) => ms.filter(matches)
+      const rest = (ms: RoutingDecision[]) => ms.filter((m) => !matches(m))
+      return [...preferred(decisions), ...rest(decisions)]
     },
   }
 }

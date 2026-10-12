@@ -52,3 +52,13 @@ export {
 } from './self-serve.js'
 
 export { createOwnerKeyApp, INFERENCE_SCOPES, scopeForEndpoint } from './owner-keys.js'
+export {
+  MemoryConversationAnchorStore,
+  ANCHOR_TTL_MS,
+  anchorFromRoute,
+  anchorToHints,
+} from './anchor.js'
+export type {
+  ConversationAnchor,
+  ConversationAnchorStore,
+} from './anchor.js'

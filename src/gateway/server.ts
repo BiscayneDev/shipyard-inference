@@ -51,6 +51,11 @@ import type { UptoVerified, UptoSettlement } from './x402-upto.js'
 import { classifyOutcome } from '../router/outcome.js'
 import { isCapable } from '../router/capabilities.js'
 import type { RoutingHints } from '../types.js'
+import {
+  anchorFromRoute,
+  anchorToHints,
+  type ConversationAnchorStore,
+} from './anchor.js'
 
 /** The request's x402 payment credential: `PAYMENT-SIGNATURE` (x402 v2) or
  *  `X-PAYMENT` (v1, the `exact` scheme's createPayingFetch). */
@@ -123,6 +128,38 @@ export function taskHeaderHints(get: (name: string) => string | undefined | null
   const budget = Number.parseInt(get('x-dinghy-latency-budget-ms') ?? '', 10)
   if (Number.isFinite(budget) && budget > 0) hints.attemptTimeoutMs = Math.min(60000, Math.max(1000, Math.round(budget * 1.5)))
   return Object.keys(hints).length ? hints : undefined
+}
+
+/**
+ * Soft-preference hint from the conversation anchor: ask the router to prefer
+ * the candidate/model that served this account's last request. Returns
+ * undefined when there's no anchor store, no identified account, or no fresh
+ * anchor. Only applies to `auto` routing — an explicitly named model is a hard
+ * statement and is never overridden by continuity.
+ */
+async function anchorPreference(
+  store: ConversationAnchorStore | undefined,
+  account: { userId?: string; label?: string } | undefined,
+  configuredIds: string[],
+): Promise<RoutingHints | undefined> {
+  if (!store || !account?.userId) return undefined
+  const anchor = await store.get(account.userId).catch(() => undefined)
+  return anchorToHints(anchor, configuredIds)
+}
+
+/** Record a successful route into the anchor (model continuity + top-up resume). */
+async function recordAnchor(
+  store: ConversationAnchorStore | undefined,
+  account: { userId?: string } | undefined,
+  ctx: RequestContext,
+): Promise<void> {
+  if (!store || !account?.userId || !ctx.provider) return
+  const anchor = anchorFromRoute({
+    provider: ctx.provider,
+    model: ctx.model,
+    tier: ctx.routing?.tier as 'economy' | 'standard' | 'frontier' | undefined,
+  })
+  if (anchor) await store.set(account.userId, anchor).catch(() => {})
 }
 
 /** Auth outcome extended with a pending `upto` settlement (metered billing). */
@@ -786,6 +823,14 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       const task = taskHeaderHints((n) => c.req.header(n))
       // Body prefs win over header hints (explicit beats inferred).
       if (prefs || task) params.routingHints = { ...params.routingHints, ...task, ...prefs }
+      // Conversation anchor: prefer the candidate that served this account's
+      // last request (auto only — an explicit model is a hard statement).
+      const anchor = await anchorPreference(
+        config.conversationAnchor,
+        auth.account,
+        config.candidates.map((cd) => cd.id),
+      )
+      if (anchor) params.routingHints = { ...params.routingHints, ...anchor }
     }
     // A tenant/project-scoped key attributes the request to its account — so
     // the caller's traffic ties to the right tenant, project, and wallet.
@@ -911,6 +956,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           }
           await stream.writeSSE({ data: '[DONE]' })
           await recordSpend(ctx.costUsd)
+          await recordAnchor(config.conversationAnchor, auth.account, ctx)
         } catch (err) {
           await stream.writeSSE({ data: JSON.stringify(toOpenAIError(err).body) })
           await stream.writeSSE({ data: '[DONE]' })
@@ -945,6 +991,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
       await recordSpend(ctx.costUsd)
+      await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toOpenAIError(err)
@@ -1007,6 +1054,14 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // Honor an explicitly named catalog model (mirrors /v1/chat/completions).
     const explicitHints = explicitModelHints(config, body.model, params)
     if (explicitHints) params.routingHints = explicitHints
+    else {
+      const anchor = await anchorPreference(
+        config.conversationAnchor,
+        auth.account,
+        config.candidates.map((cd) => cd.id),
+      )
+      if (anchor) params.routingHints = { ...params.routingHints, ...anchor }
+    }
     if (auth.account?.userId) params.metadata = { ...(params.metadata ?? {}), userId: auth.account.userId }
     const id = `msg_${randomBytes(12).toString('hex')}`
     const ctx: RequestContext = { id }
@@ -1055,6 +1110,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             )
             await settleUptoSafe(config, upto, charge)
           }
+          await recordAnchor(config.conversationAnchor, auth.account, ctx)
         } catch (err) {
           await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
         }
@@ -1088,6 +1144,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
       if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
+      await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {
       const { status, body: errBody } = toAnthropicError(err)

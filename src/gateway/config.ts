@@ -13,6 +13,7 @@ import type { SpendTracker } from './spend.js'
 import type { ProjectCapsConfig } from './project-caps.js'
 import type { ProviderHealthTracker } from '../router/health.js'
 import type { CreditStore } from '../tender/credit-store.js'
+import type { ConversationAnchorStore } from './anchor.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -224,6 +225,17 @@ export interface GatewayConfig {
    * When the env var is unset, the candidate is skipped entirely.
    */
   byok?: { provider: string; apiKeyEnv: string }[]
+  /**
+   * Conversation anchor — model continuity keyed on the API key. When set,
+   * an `auto` request from an account is given a SOFT preference for the
+   * candidate/model that served that account's last request (TTL 24h), so a
+   * multi-turn conversation stays on the same model and a drained-and-refilled
+   * agent resumes on it after a top-up. Preference only — never a hard pin;
+   * an anchored candidate that's removed/offline falls through to normal
+   * routing. Use `MemoryConversationAnchorStore` (in `shipyard-inference/
+   * gateway`) or a durable store. Off when omitted.
+   */
+  conversationAnchor?: ConversationAnchorStore
 }
 
 export interface SpendConfig {

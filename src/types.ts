@@ -77,6 +77,14 @@ export interface RoutingHints {
   minTier?: 'economy' | 'standard' | 'frontier'
   /** Client cap on the auto-tier decision: the effective tier is never above this. */
   maxTier?: 'economy' | 'standard' | 'frontier'
+  /**
+   * Soft preference (e.g. set by the conversation anchor): prefer this
+   * provider/model for continuity, but ALWAYS fall through to the rest of the
+   * capable pool if it's unavailable or unproductive. Unlike `pin`, this never
+   * hard-forces a selection — it only breaks cost-optimization ties / flips the
+   * cheapest-capable ordering. `pin` still wins when both are present.
+   */
+  prefer?: { provider?: string; model?: string }
 }
 
 export interface LLMChatParams {
