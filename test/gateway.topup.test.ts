@@ -189,6 +189,59 @@ test('topup: amountUsd 0.01 (min) and 1000 (max) are accepted shapes', async () 
   assert.equal((await post(max.app, k2.key, { amountUsd: 1000 }, paymentHeader())).status, 200)
 })
 
+// ── upto-scheme topup (payment-channel funding) ─────────────────────────────
+
+test('topup: upto-scheme config serves a payment-channel (upto) challenge, not exact', async () => {
+  // Need an operator keypair for the upto engine. Construct a fresh one.
+  const { Keypair } = await import('@solana/web3.js')
+  const kp = Keypair.generate()
+  const store = new MemoryApiKeyStore()
+  const credits = new MemoryCreditStore()
+  const rpc = mockRpc({
+    getLatestBlockhash: () => ({
+      context: { slot: 100 },
+      value: { blockhash: 'CyVJ9wXu4QzCiHjooksJXKQw2qbH4JThbPKPcLS1Bf2u', lastValidBlockHeight: 123456 },
+    }),
+  })
+  const config: GatewayConfig = {
+    candidates: [candidate('c', mockProvider(async () => ({ content: 'ok', toolCalls: [], stopReason: 'end_turn' as const })), [model('m')])],
+    keyStore: store,
+    x402: {
+      treasury: TREASURY,
+      network: 'devnet',
+      scheme: 'upto',
+      priceUsdc: 0.001,
+      perTokenUsdc: 0.00002,
+      operatorSecret: kp.secretKey,
+      fetch: rpc,
+    },
+    creditStore: credits,
+  }
+  const app = createGatewayApp(config)
+  const { key } = await store.issue({ wallet: 'AgentWallet1111111111111111111111111111111', label: 'agent' }, Date.now())
+  // Keyed topup without a payment → an upto channel-open challenge.
+  const res = await app.request('/v1/topup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+    body: JSON.stringify({ amountUsd: 5 }),
+  })
+  assert.equal(res.status, 402)
+  const body = (await res.json()) as { accepts: Array<Record<string, unknown>> }
+  const accept = body.accepts[0]
+  assert.equal(accept.scheme, 'upto', 'funding must advertise a payment channel, not exact')
+  assert.equal(accept.amount, '5000000', 'ceiling = 5 USDC atomic')
+  assert.equal(accept.payTo, TREASURY)
+  assert.equal(accept.asset, USDC_DEVNET)
+  // upto requirements carry channel metadata in `extra` (not exact's maxAmountRequired).
+  assert.equal((accept as Record<string, unknown>).maxTimeoutSeconds, 300)
+  const extra = accept.extra as Record<string, unknown>
+  assert.ok(extra.feePayer, 'operator is the fee payer')
+  assert.ok(extra.receiverAuthorizer, 'operator authorizes vouchers')
+  assert.ok(extra.recentBlockhash, 'fresh blockhash bound to the channel open')
+  assert.equal(res.headers.get('x-402-challenge'), 'solana-usdc-upto')
+  assert.ok(res.headers.get('payment-required'), 'x402 v2 payment-required header present')
+})
+
 // ── replay protection ────────────────────────────────────────────────────────
 
 test('topup: the same signed payment cannot credit twice (replay gets 402)', async () => {
