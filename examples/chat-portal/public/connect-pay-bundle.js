@@ -18825,15 +18825,15 @@ Message: ${transactionMessage}.
         const cachedLatestBlockhash = this._blockhashInfo.latestBlockhash;
         const cachedBlockhash = cachedLatestBlockhash ? cachedLatestBlockhash.blockhash : null;
         for (let i2 = 0; i2 < 50; i2++) {
-          const latestBlockhash = await this.getLatestBlockhash("finalized");
-          if (cachedBlockhash !== latestBlockhash.blockhash) {
+          const latestBlockhash2 = await this.getLatestBlockhash("finalized");
+          if (cachedBlockhash !== latestBlockhash2.blockhash) {
             this._blockhashInfo = {
-              latestBlockhash,
+              latestBlockhash: latestBlockhash2,
               lastFetch: Date.now(),
               transactionSignatures: [],
               simulatedSignatures: []
             };
-            return latestBlockhash;
+            return latestBlockhash2;
           }
           await sleep(MS_PER_SLOT / 2);
         }
@@ -18917,9 +18917,9 @@ Message: ${transactionMessage}.
       } else {
         let disableCache = this._disableBlockhashCaching;
         for (; ; ) {
-          const latestBlockhash = await this._blockhashWithExpiryBlockHeight(disableCache);
-          transaction.lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
-          transaction.recentBlockhash = latestBlockhash.blockhash;
+          const latestBlockhash2 = await this._blockhashWithExpiryBlockHeight(disableCache);
+          transaction.lastValidBlockHeight = latestBlockhash2.lastValidBlockHeight;
+          transaction.recentBlockhash = latestBlockhash2.blockhash;
           if (!signers) break;
           transaction.sign(...signers);
           if (!transaction.signature) {
@@ -19008,9 +19008,9 @@ Message: ${transactionMessage}.
       } else {
         let disableCache = this._disableBlockhashCaching;
         for (; ; ) {
-          const latestBlockhash = await this._blockhashWithExpiryBlockHeight(disableCache);
-          transaction.lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
-          transaction.recentBlockhash = latestBlockhash.blockhash;
+          const latestBlockhash2 = await this._blockhashWithExpiryBlockHeight(disableCache);
+          transaction.lastValidBlockHeight = latestBlockhash2.lastValidBlockHeight;
+          transaction.recentBlockhash = latestBlockhash2.blockhash;
           transaction.sign(...signers);
           if (!transaction.signature) {
             throw new Error("!signature");
@@ -22597,20 +22597,39 @@ Message: ${transactionMessage}.
     for (let i2 = 0; i2 < u85.length; i2++) s += String.fromCharCode(u85[i2]);
     return btoa(s);
   };
-  function rpcFor(net) {
-    return net === "mainnet" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
+  var MAINNET_RPCS = [
+    "https://solana-rpc.publicnode.com",
+    "https://api.mainnet-beta.solana.com",
+    "https://rpc.ankr.com/solana",
+    "https://solana-mainnet.g.alchemy.com/v2/demo"
+  ];
+  var DEVNET_RPCS = ["https://api.devnet.solana.com"];
+  function rpcList(net) {
+    return net === "mainnet" ? MAINNET_RPCS : DEVNET_RPCS;
   }
-  async function buildTransfer(conn, pay, payer) {
+  async function latestBlockhash(net) {
+    let lastErr;
+    for (const url of rpcList(net)) {
+      try {
+        const conn = new Connection(url, "confirmed");
+        const bh = await conn.getLatestBlockhash();
+        if (bh && bh.blockhash) return { conn, blockhash: bh.blockhash };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error("all Solana RPCs failed to return a blockhash");
+  }
+  async function buildTransfer(conn, pay, payer, blockhash) {
     const mint = new PublicKey(pay.asset);
     const treasury = new PublicKey(pay.payTo);
     const payerAta = await getAssociatedTokenAddress(mint, payer);
     const destAta = await getAssociatedTokenAddress(mint, treasury);
     const atomic = BigInt(pay.amount);
     const transferIx = createTransferCheckedInstruction(payerAta, mint, destAta, payer, atomic, 6);
-    const bh = await conn.getLatestBlockhash();
     const msg = new TransactionMessage({
       payerKey: payer,
-      recentBlockhash: bh.blockhash,
+      recentBlockhash: blockhash,
       instructions: [
         createAssociatedTokenAccountIdempotentInstruction(payer, destAta, treasury, mint),
         transferIx
@@ -22639,7 +22658,8 @@ Message: ${transactionMessage}.
       amount: String(accept.maxAmountRequired ?? accept.amount),
       payTo: accept.payTo
     };
-    const conn = new Connection(rpcFor(pay.network === "solana-mainnet" ? "mainnet" : "devnet"), "confirmed");
+    const net = pay.network === "solana-mainnet" ? "mainnet" : "devnet";
+    const { conn, blockhash } = await latestBlockhash(net);
     const ws = await listWallets();
     const legacy = window.phantom && window.phantom.solana ? window.phantom.solana : window.solana;
     let payer, tx;
@@ -22647,15 +22667,15 @@ Message: ${transactionMessage}.
       const cr = await ws[0].features["standard:connect"].connect();
       const acct = cr && cr.accounts && cr.accounts[0] || ws[0].accounts[0];
       payer = new PublicKey(acct.publicKey);
-      tx = await buildTransfer(conn, pay, payer);
-      const chain = "solana:" + (pay.network === "solana-mainnet" ? "mainnet" : "devnet");
+      tx = await buildTransfer(conn, pay, payer, blockhash);
+      const chain = "solana:" + (net === "mainnet" ? "mainnet" : "devnet");
       const sg = await ws[0].features["solana:signTransaction"].signTransaction({ account: acct, chain, transaction: tx.serialize() });
       tx = sg[0].signedTransaction;
     } else if (legacy && legacy.signTransaction) {
       const res = await legacy.connect();
       const pk = res && res.publicKey ? res.publicKey : legacy.publicKey;
       payer = new PublicKey(pk.toString());
-      tx = await buildTransfer(conn, pay, payer);
+      tx = await buildTransfer(conn, pay, payer, blockhash);
       const out = await legacy.signTransaction(tx);
       tx = out && out.signedTransaction ? out.signedTransaction : out;
     } else {
