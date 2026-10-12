@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   claudeSettingsPath,
   shipyardConfigPath,
@@ -16,6 +16,7 @@ import {
 } from './install.js'
 import { runDoctor } from './doctor.js'
 import { resolveConnectTargets, keyReuseWarning } from './agent-wiring.js'
+import { installService } from '../gateway/service.js'
 
 const DEFAULT_URL = process.env.SHIPYARD_URL ?? 'https://shipyard-inference.vercel.app'
 const STATUSLINE_CMD = 'npx -y shipyard-inference statusline'
@@ -25,6 +26,36 @@ function arg(name: string): string | undefined {
   return i === -1 ? undefined : process.argv[i + 1]
 }
 const has = (name: string): boolean => process.argv.includes(name)
+
+/** Resolve the appliance repo root (where dist/ and local.gateway.config.mjs live). */
+function applianceRepoDir(): string {
+  const here = resolve(import.meta.dirname, '..', '..')
+  return existsSync(resolve(here, 'local.gateway.config.mjs')) ? here : process.cwd()
+}
+
+/** Best-effort: register the gateway (+ ollama) as a launchd service. */
+function installApplianceService(): void {
+  const repoDir = applianceRepoDir()
+  const programPath = resolve(repoDir, 'dist', 'gateway', 'bin.js')
+  const configPath = resolve(repoDir, 'local.gateway.config.mjs')
+  try {
+    const result = installService({
+      nodeBin: process.env.SHIPYARD_NODE_BIN ?? process.execPath,
+      programPath,
+      configPath,
+      port: 8787,
+      repoDir,
+      withOllama: has('--with-ollama'),
+    })
+    process.stdout.write(
+      `⚙  Installed launchd service (survives reboot + crash-restart):\n` +
+        `    ${result.gatewayPlist}\n`,
+    )
+    if (result.ollamaPlist) process.stdout.write(`    ${result.ollamaPlist}\n`)
+  } catch (err) {
+    process.stdout.write(`⚠  Could not install launchd service: ${err instanceof Error ? err.message : String(err)}\n`)
+  }
+}
 
 function readSettings(path: string): ClaudeSettings {
   try {
@@ -55,6 +86,9 @@ async function connect(): Promise<void> {
   // Appliance mode: show the hardware/Ollama advisor before wiring.
   if (local) {
     await runDoctor()
+    // --daemon registers the gateway as a launchd service (auto-restart on
+    // reboot/crash) so the appliance actually survives unattended.
+    if (has('--daemon')) installApplianceService()
   }
 
   // Per-agent wiring output (pure print — never writes agent files).
@@ -211,10 +245,12 @@ async function main(): Promise<void> {
   process.stderr.write(
     'Shipyard Inference — earn on your agent idle-time; optionally route for cheaper inference.\n\n' +
       'Usage:\n' +
-      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--key <sk-…>] [--route] [--no-statusline]\n' +
+      '  npx shipyard-inference connect [--url <gateway>] [--wallet <addr>] [--key <sk-…>] [--route] [--no-statusline] [--local] [--daemon] [--with-ollama]\n' +
       '      Connect Claude Code to Shipyard. By default this adds a live-earnings\n' +
       '      status line and does NOT change your model. Pass --route to also route\n' +
       '      inference through Shipyard for cost savings (sets ANTHROPIC_BASE_URL).\n' +
+      '      --local targets the local gateway (127.0.0.1:8787); --daemon also installs\n' +
+      '      it as a launchd service (auto-restart); --with-ollama adds ollama serve.\n' +
       '  npx shipyard-inference doctor\n' +
       '      Probe hardware + Ollama and print your local model ladder and agent env.\n' +
       '  npx shipyard-inference statusline\n' +
