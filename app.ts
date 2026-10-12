@@ -763,7 +763,14 @@ async function walletMint(wallet){
 async function renderWallets(){
   const box=$('#wallets');box.textContent='Detecting wallets…';
   const ws=await listWallets();box.textContent='';
-  if(!ws.length){box.innerHTML='<span class="muted">No browser wallet found. Install Phantom/Solflare/Backpack, or use the one-command path.</span>';return;}
+  if(!ws.length){
+    box.innerHTML='<span class="muted">No Solana browser wallet detected (Phantom, Solflare, Backpack).</span>'+
+      '<div class="muted" style="margin-top:10px">Two ways to connect without one —</div>'+
+      '<div class="muted" style="margin-top:6px">1. Install <a href="https://phantom.app" target="_blank" rel="noopener">Phantom</a> (or Solflare/Backpack), then refresh. Your USDC stays in your wallet.</div>'+
+      '<div class="muted" style="margin-top:6px">2. Already have a keypair? Mint a key from the CLI (no browser wallet needed):</div>'+
+      '<pre style="margin-top:8px"><span class="copy" data-copy="#wclikey">copy</span><span id="wclikey" class="key">npx shipyard-inference connect --wallet-key &lt;your-base58-secret&gt; --url '+location.origin+'</span></pre>';
+    return;
+  }
   for(const w of ws){
     const b=document.createElement('button');b.className='walletbtn';b.textContent=w.name;
     b.onclick=async()=>{b.disabled=true;const werr=$('#werr');werr.textContent='Opening '+w.name+' — approve the message to mint a key…';try{await walletMint(w);werr.innerHTML='<span class="green">✓ key minted — copy it below</span>';b.disabled=false;}catch(e){werr.textContent='✗ '+(e&&e.message||String(e));b.disabled=false;}};
