@@ -675,10 +675,11 @@ ${TERMINAL_FONTS}
 ${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
 <script src="/connect-pay-bundle.js"></script>
+<script src="/upto-bundle.js"></script>
 ${navHtml('connect')}
 <span class="pill"><span class="blip"></span> claude code · cursor · codex · any agent</span>
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">Same model quality, <strong>cheaper inference</strong> — route through Shipyard and pay per call in USDC from <strong>a wallet you already have</strong>. No subscription, no signup, no balance to load.</p>
+<p class="sub">Same model quality, <strong>cheaper inference</strong> — route through Shipyard and pay per call in USDC from <strong>a wallet you already have</strong>. No subscription, no signup, no balance to load — open a payment channel once and your agent draws down per request.</p>
 
 <!-- Door 1 (leads): one clean wallet-connect button — the whole login. -->
 <div class="card hero">
@@ -719,13 +720,13 @@ ${navHtml('connect')}
     <div class="wtl">
       <div class="wtl-ic">⚡</div>
       <div class="wtl-tx">
-        <strong>Step 2 — fund this key</strong>
-        <div class="muted">Your key is wallet-bound. Add USDC so your agent can serve paid traffic — one signature, no account, no subscription.</div>
+        <strong>Step 2 — open a payment channel</strong>
+        <div class="muted">Sign once to escrow USDC on-chain. Your agent draws down from it per request — no per-call signing, no account, no subscription.</div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
-      <button class="wcnt" id="fundBtn" type="button">Add $5</button>
-      <button class="wcnt" id="fundBtn10" type="button" style="background:transparent;color:var(--term2);border:1px solid var(--line2)">Add $10</button>
+      <button class="wcnt" id="fundBtn" type="button">Open $5 channel</button>
+      <button class="wcnt" id="fundBtn10" type="button" style="background:transparent;color:var(--term2);border:1px solid var(--line2)">Open $10 channel</button>
       <span class="note" id="fundstate" style="margin:0"></span>
     </div>
     <div class="e" id="funderr"></div>
@@ -855,21 +856,34 @@ async function connectFlow(){
   }finally{ btn.disabled=false; }
 }
 const wc=$('#walletConnect'); if(wc) wc.addEventListener('click',connectFlow);
-// ── Step 2: fund the key in-browser (exact-scheme USDC settlement) ──────────
+// ── Step 2: open a payment channel / fund the key in-browser ───────────────
+// Uses the proven `upto` channel payer (ShipyardUpto) when the gateway serves
+// an `upto` challenge — sign once, escrow on-chain, agent draws down per
+// request without re-signing. Falls back to the exact payer otherwise.
 let _key='';
 function setKey(k){_key=k;}
 async function fund(amountUsd){
   const fs=$('#fundstate'),fe=$('#funderr');fs.textContent='';fe.textContent='';
-  if(!window.ShipyardFund){fe.textContent='✗ funding not loaded — refresh';return}
-  if(!window.ShipyardFund.hasWallet()){fe.textContent='✗ No Solana wallet detected — install Phantom/Solflare/Backpack.';return}
-  fs.textContent='Opening wallet — approve the USDC transfer…';
+  const hasUpto = window.ShipyardUpto && window.ShipyardUpto.hasPhantom && window.ShipyardUpto.hasPhantom();
+  const hasExact = window.ShipyardFund && window.ShipyardFund.hasWallet && window.ShipyardFund.hasWallet();
+  if(!hasUpto && !hasExact){fe.textContent='✗ No Solana wallet detected — install Phantom/Solflare/Backpack.';return}
+  fs.textContent='Opening wallet — approve the channel…';
   try{
-    const r=await window.ShipyardFund.topup(base+'/topup',{
-      method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+_key},
-      body:JSON.stringify({amountUsd}),
-    });
+    const init={method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+_key},body:JSON.stringify({amountUsd})};
+    // Probe the challenge scheme first.
+    const probe=await fetch(base+'/topup',init);
+    let scheme='exact';
+    try{const pj=await probe.clone().json();scheme=(pj.accepts&&pj.accepts[0]&&pj.accepts[0].scheme)||'exact';}catch(e){}
+    let r;
+    if(scheme==='upto' && hasUpto){
+      fs.textContent='Opening wallet — approve the channel open…';
+      r=await window.ShipyardUpto.payAndRetry(base+'/topup',init);
+    } else {
+      fs.textContent='Opening wallet — approve the USDC transfer…';
+      r=await window.ShipyardFund.topup(base+'/topup',init);
+    }
     const d=await r.json().catch(()=>({}));
-    if(r.ok){fs.innerHTML='<span class="green">✓ Funded — balance $'+Number(d.balanceUsd||0).toFixed(2)+'</span>';}
+    if(r.ok){fs.innerHTML='<span class="green">✓ '+(d.channel?'Channel open':'Funded')+' — balance $'+Number(d.balanceUsd||0).toFixed(2)+'</span>';}
     else{fe.textContent='✗ '+(d.error||('funding failed ('+r.status+')'));}
   }catch(e){fe.textContent='✗ '+(e&&e.message||String(e));}
 }
@@ -1302,6 +1316,19 @@ app.get('/connect-pay-bundle.js', async (c) => {
   try {
     const here = dirname(fileURLToPath(import.meta.url))
     const buf = await readFile(join(here, 'examples/chat-portal/public/connect-pay-bundle.js'))
+    return c.body(buf, 200, { 'content-type': 'application/javascript' })
+  } catch {
+    return c.notFound()
+  }
+})
+// The proven `upto` channel payer bundle (opens a payment channel in-browser).
+app.get('/upto-bundle.js', async (c) => {
+  const { readFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const buf = await readFile(join(here, 'examples/chat-portal/public/upto-bundle.js'))
     return c.body(buf, 200, { 'content-type': 'application/javascript' })
   } catch {
     return c.notFound()

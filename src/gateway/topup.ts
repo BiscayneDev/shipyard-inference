@@ -21,6 +21,7 @@ import type { Context } from 'hono'
 import type { GatewayConfig } from './config.js'
 import type { Account } from './keys.js'
 import { buildChallenge, verifyX402Payment, type X402Config } from './x402.js'
+import { buildUptoChallenge, verifyUptoOpen, ceilingAtomic } from './x402-upto.js'
 import { MemoryCreditStore, type CreditStore } from '../tender/credit-store.js'
 
 export const MIN_TOPUP_USD = 0.01
@@ -121,46 +122,88 @@ export async function handleTopup(
   }
 
   // Balance identity: the key's stable userId (the same identity the tender
-  // kickback ledger credits), wallet recorded for the audit trail.
-  const balanceAccount = account.userId
+    // kickback ledger credits), wallet recorded for the audit trail.
+    const balanceAccount = account.userId
 
-  if (!paymentHeader) {
-    const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
+    // `upto` scheme: the top-up opens a payment channel (escrow the ceiling
+    // on-chain, one signature) instead of a one-shot exact transfer. The
+    // verified channel credits the key's balance; the agent then draws down
+    // from it per request without re-signing.
+    if (opts.x402.scheme === 'upto') {
+      const ceiling = ceilingAtomic(amountUsd)
+      const url = '/v1/topup'
+      if (!paymentHeader) {
+        const ch = await buildUptoChallenge(opts.x402, url, ceiling)
+        return {
+          status: 402,
+          body: { ...ch.body, amountUsd, balanceAccount },
+          headers: { 'payment-required': ch.paymentRequiredHeader, 'x-402-challenge': 'solana-usdc-upto' },
+        }
+      }
+      try {
+        const verified = await verifyUptoOpen(opts.x402, paymentHeader, ceiling)
+        // Channel escrowed on-chain: credit the key's balance the full ceiling.
+        await opts.credits.accrue({
+          account: balanceAccount,
+          amountUsd,
+          placementId: 'topup',
+          line: `channel open ${amountUsd} USDC (payer ${verified.payer ?? 'unknown'})`,
+          requestId,
+          at: Date.now(),
+        })
+        const balanceUsd = await opts.credits.balance(balanceAccount)
+        return {
+          status: 200,
+          body: { balanceUsd, creditedUsd: amountUsd, wallet: account.wallet, channel: true },
+        }
+      } catch (err) {
+        const message = err instanceof Error && err.message ? err.message : String(err)
+        const ch = await buildUptoChallenge(opts.x402, url, ceiling)
+        return {
+          status: 402,
+          body: { ...ch.body, error: message },
+          headers: { 'payment-required': ch.paymentRequiredHeader, 'x-402-error': message },
+        }
+      }
+    }
+
+    if (!paymentHeader) {
+      const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
+      return {
+        status: 402,
+        body: { ...challenge, amountUsd, balanceAccount },
+        headers: { 'x-402-challenge': 'solana-usdc' },
+      }
+    }
+
+    const verified = await verifyX402Payment(priced(opts.x402, amountUsd), paymentHeader)
+    if (!verified.ok) {
+      const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
+      return {
+        status: 402,
+        body: { ...challenge, error: verified.error },
+        headers: { 'x-402-error': String(verified.error) },
+      }
+    }
+
+    // Verified + settled: credit the balance through the shared credit store.
+    // A failed accrue after a settled payment surfaces as a 500 — the payment
+    // is real, the caller should retry (the consumed-payment guard will reject
+    // the replay and the operator can reconcile from the payment hook).
+    await opts.credits.accrue({
+      account: balanceAccount,
+      amountUsd: amountUsd,
+      placementId: 'topup',
+      line: `top-up ${amountUsd} USDC (tx ${verified.signature ?? 'unknown'}, payer ${verified.payer ?? 'unknown'})`,
+      requestId,
+      at: Date.now(),
+    })
+    const balanceUsd = await opts.credits.balance(balanceAccount)
     return {
-      status: 402,
-      body: { ...challenge, amountUsd, balanceAccount },
-      headers: { 'x-402-challenge': 'solana-usdc' },
+      status: 200,
+      body: { balanceUsd, creditedUsd: amountUsd, wallet: account.wallet },
     }
   }
-
-  const verified = await verifyX402Payment(priced(opts.x402, amountUsd), paymentHeader)
-  if (!verified.ok) {
-    const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
-    return {
-      status: 402,
-      body: { ...challenge, error: verified.error },
-      headers: { 'x-402-error': String(verified.error) },
-    }
-  }
-
-  // Verified + settled: credit the balance through the shared credit store.
-  // A failed accrue after a settled payment surfaces as a 500 — the payment
-  // is real, the caller should retry (the consumed-payment guard will reject
-  // the replay and the operator can reconcile from the payment hook).
-  await opts.credits.accrue({
-    account: balanceAccount,
-    amountUsd: amountUsd,
-    placementId: 'topup',
-    line: `top-up ${amountUsd} USDC (tx ${verified.signature ?? 'unknown'}, payer ${verified.payer ?? 'unknown'})`,
-    requestId,
-    at: Date.now(),
-  })
-  const balanceUsd = await opts.credits.balance(balanceAccount)
-  return {
-    status: 200,
-    body: { balanceUsd, creditedUsd: amountUsd, wallet: account.wallet },
-  }
-}
 
 /** Hono handler for `POST /v1/topup` (route wiring in server.ts). */
 export function topupRoute(config: GatewayConfig) {
