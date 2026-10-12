@@ -663,9 +663,13 @@ ${TERMINAL_FONTS}
 .card.hero{border-color:#22345a;background:rgba(15,26,48,.6)}
 .divider{text-align:center;margin:20px 0 6px;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.03em}
 .wallet{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
-.walletbtn{appearance:none;border:1px solid var(--line2);background:rgba(15,26,48,.6);color:var(--fg);border-radius:999px;font:500 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;cursor:pointer}
-.walletbtn:hover{border-color:var(--term);color:var(--term)}
-.walletbtn:disabled{opacity:.45;cursor:default}
+.wtl{display:flex;gap:16px;align-items:flex-start}
+.wtl-ic{width:44px;height:44px;flex:0 0 44px;border:1px solid var(--line2);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--term2);font-size:18px;background:rgba(15,26,48,.5)}
+.wtl-tx strong{font-size:16px}
+.wtl-tx .muted{margin-top:4px;font-size:13.5px;line-height:1.5}
+.wcnt{appearance:none;border:none;background:#cfe0f2;color:#071222;border-radius:999px;font:600 12.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:14px 26px;cursor:pointer}
+.wcnt:hover{background:#fff;transform:translateY(-1px)}
+.wcnt:disabled{opacity:.5;cursor:default;transform:none}
 .e{color:#ff9a9a;font-size:13px;margin-top:10px;min-height:1em}
 ${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
@@ -674,11 +678,19 @@ ${navHtml('connect')}
 <h1>Connect Shipyard to your IDE</h1>
 <p class="sub">Same model quality, <strong>cheaper inference</strong> — route through Shipyard and pay per call in USDC from <strong>a wallet you already have</strong>. No subscription, no signup, no balance to load.</p>
 
-<!-- Door 1 (leads): connect an existing wallet — the crypto-native path. -->
+<!-- Door 1 (leads): one clean wallet-connect button — the whole login. -->
 <div class="card hero">
-  <strong>Connect a wallet you have</strong> <span class="muted">— Phantom, MetaMask, Solflare, Backpack, …</span>
-  <p class="note">Sign one message. It mints an API key bound to your wallet — that's the whole login. Pay per request in USDC from that wallet.</p>
-  <div class="wallet" id="wallets"><span class="muted">Detecting wallets…</span></div>
+  <div class="wtl">
+    <div class="wtl-ic">◈</div>
+    <div class="wtl-tx">
+      <strong>Connect your wallet</strong>
+      <div class="muted">Phantom · Solflare · Backpack · PayBox. Sign one message — that mints your key. Pay per request in USDC.</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap">
+    <button class="wcnt" id="walletConnect" type="button">Connect wallet</button>
+    <span class="note" id="wstate" style="margin:0"></span>
+  </div>
   <div class="e" id="werr"></div>
 </div>
 
@@ -731,53 +743,82 @@ function showOut(d){
   $('#meline').href='/me?key='+encodeURIComponent(d.key);
   $('#out').classList.remove('hidden');
 }
-// ── Wallet-native: enumerate Wallet Standard wallets, sign a message = auth ──
+// ── Wallet connect: ONE button. Uses the trusted bs58 lib + Wallet Standard,
+// with a Phantom legacy fallback. Signs the exact challenge message the server
+// issued, so the signature always verifies. ──────────────────────────────────
+let bs58mod = null
+async function b58enc(bytes){
+  if(!bs58mod){ try{ bs58mod = (await import('https://esm.sh/bs58@5')).default }catch(e){} }
+  if(bs58mod) return bs58mod.encode(bytes)
+  // last-resort inline (never used if esm.sh loads)
+  const CH='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=0n;
+  for(const b of bytes)n=n<<8n|BigInt(b);let s='';while(n>0n){s=CH[Number(n%58n)]+s;n/=58n;}
+  for(const b of bytes){if(b===0)s='1'+s;else break;} return s;
+}
 async function listWallets(){
   try{const mod=await import('https://esm.sh/@wallet-standard/app@1.1.0');const ws=mod.getWallets().get();
-    return ws.filter(function(w){return w.chains&&w.chains.some(function(c){return c.indexOf('solana:')===0;})&&w.features['standard:connect']&&w.features['solana:signMessage'];});}catch(e){return [];}
+    return ws.filter(function(w){return w.chains&&w.chains.some(function(c){return c.indexOf('solana:')===0;})&&w.features['standard:connect'];});}catch(e){return [];}
 }
-function base58(bytes){
-  const CH='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=0n;
-  for(const b of bytes)n=n<<8n|BigInt(b);
-  let s='';while(n>0n){s=CH[Number(n%58n)]+s;n/=58n;}
-  for(const b of bytes){if(b===0)s='1'+s;else break;}
-  return s;
-}
+function state(t){const el=$('#wstate');if(el)el.textContent=t||'';}
 async function walletMint(wallet){
   const werr=$('#werr');werr.textContent='';
-  const cr=await wallet.features['standard:connect'].connect();
-  const acct=(cr&&cr.accounts&&cr.accounts[0])||wallet.accounts[0];
-  const pubkey=base58(new Uint8Array(acct.publicKey));
+  let sm = wallet.features && wallet.features['solana:signMessage'];
+  // Prefer Wallet Standard; fall back to the legacy injected provider.
+  let acct = null, pubkey = null
+  if(sm && wallet.features['standard:connect']){
+    const cr=await wallet.features['standard:connect'].connect();
+    acct=(cr&&cr.accounts&&cr.accounts[0])||null;
+  }
+  const legacy = window.phantom && window.phantom.solana;
+  if(legacy && legacy.connect && legacy.isPhantom){
+    if(!acct){ const cr=await legacy.connect(); acct={ publicKey: typeof cr.publicKey==='object'?new Uint8Array(cr.publicKey.toBytes?cr.publicKey.toBytes():Object.values(cr.publicKey)) : cr.publicKey, legacy:true }; }
+  }
+  if(!acct) throw new Error('No wallet account — approve connection in your wallet');
+  pubkey = acct.publicKey instanceof Uint8Array ? await b58enc(acct.publicKey) : await b58enc(new Uint8Array(acct.publicKey));
   // Fresh challenge for THIS pubkey — the exact message to sign.
   const ch=await fetch(base+'/keys/wallet/challenge?pubkey='+encodeURIComponent(pubkey));
   const j=await ch.json();
   if(!ch.ok) throw new Error(j.error?.message||('challenge failed ('+ch.status+')'));
-  const enc=new TextEncoder();
-  const signed=await wallet.features['solana:signMessage'].signMessage({account:acct,message:enc.encode(j.message)});
-  const signature=base58(new Uint8Array(signed.signature));
-  const r=await fetch(base+'/keys/wallet',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pubkey,nonce:j.nonce,signature})});
+  let signature;
+  if(sm){
+    try{
+      const enc=new TextEncoder();
+      const signed=await sm.signMessage({account:{ publicKey: new Uint8Array(acct.publicKey), address: pubkey, chains:['solana:mainnet'], features:[] }, message:enc.encode(j.message), mode:'utf8'});
+      signature = new Uint8Array(signed.signature);
+    }catch(smErr){
+      if(!legacy) throw smErr;
+      const lSig=await legacy.signMessage(Uint8Array.from([...new TextEncoder().encode(j.message)]));
+      signature = typeof lSig.signature==='object'&&lSig.signature!==null ? new Uint8Array(lSig.signature) : new Uint8Array(lSig);
+    }
+  } else if(legacy && legacy.signMessage){
+    const lSig=await legacy.signMessage(new Uint8Array([...new TextEncoder().encode(j.message)]));
+    signature = typeof lSig.signature==='object'&&lSig.signature!==null ? new Uint8Array(lSig.signature) : new Uint8Array(lSig);
+  } else { throw new Error('Wallet does not support message signing'); }
+  const sig58 = await b58enc(signature);
+  const r=await fetch(base+'/keys/wallet',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pubkey,nonce:j.nonce,signature:sig58})});
   const d=await r.json();
   if(!r.ok) throw new Error(d.error?.message||('key mint failed ('+r.status+')'));
-  showOut(d);
+  return d;
 }
-async function renderWallets(){
-  const box=$('#wallets');box.textContent='Detecting wallets…';
-  const ws=await listWallets();box.textContent='';
-  if(!ws.length){
-    box.innerHTML='<span class="muted">No Solana browser wallet detected (Phantom, Solflare, Backpack).</span>'+
-      '<div class="muted" style="margin-top:10px">Two ways to connect without one —</div>'+
-      '<div class="muted" style="margin-top:6px">1. Install <a href="https://phantom.app" target="_blank" rel="noopener">Phantom</a> (or Solflare/Backpack), then refresh. Your USDC stays in your wallet.</div>'+
-      '<div class="muted" style="margin-top:6px">2. Already have a keypair? Mint a key from the CLI (no browser wallet needed):</div>'+
-      '<pre style="margin-top:8px"><span class="copy" data-copy="#wclikey">copy</span><span id="wclikey" class="key">npx shipyard-inference connect --wallet-key &lt;your-base58-secret&gt; --url '+location.origin+'</span></pre>';
-    return;
-  }
-  for(const w of ws){
-    const b=document.createElement('button');b.className='walletbtn';b.textContent=w.name;
-    b.onclick=async()=>{b.disabled=true;const werr=$('#werr');werr.textContent='Opening '+w.name+' — approve the message to mint a key…';try{await walletMint(w);werr.innerHTML='<span class="green">✓ key minted — copy it below</span>';b.disabled=false;}catch(e){werr.textContent='✗ '+(e&&e.message||String(e));b.disabled=false;}};
-    box.appendChild(b);
-  }
+async function connectFlow(){
+  const btn=$('#walletConnect'); if(!btn) return;
+  btn.disabled=true; state('Detecting wallet…'); const werr=$('#werr'); werr.textContent='';
+  try{
+    const ws=await listWallets();
+    const legacy = window.phantom && window.phantom.solana;
+    const wallet = ws[0] || (legacy ? { name:'Phantom', legacy:true } : null);
+    if(!wallet){ throw new Error('No Solana wallet found. Install Phantom/Solflare/Backpack, or use the CLI: npx shipyard-inference connect --wallet-key <secret>'); }
+    state('Opening '+wallet.name+' — approve the signature');
+    const d=await walletMint(wallet);
+    state(''); showOut(d);
+    werr.innerHTML='<span class="green">✓ key minted — copy it below</span>';
+    const b=$('#walletConnectq'); if(b) b.textContent='✓ Connected';
+    btn.textContent='✓ Connected';
+  }catch(e){
+    werr.textContent='✗ '+(e&&e.message||String(e));
+  }finally{ btn.disabled=false; }
 }
-renderWallets();
+const wc=$('#walletConnect'); if(wc) wc.addEventListener('click',connectFlow);
 document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)return;navigator.clipboard.writeText($(b.dataset.copy).textContent);b.textContent='copied';setTimeout(()=>b.textContent='copy',1200)});
 </script></div></body></html>`
 
