@@ -859,6 +859,92 @@ if($('#key').value)load();
 </script></div></body></html>`
 
 // ---------------------------------------------------------------------------
+// "Dashboard" — A REAL per-user live view (key-authed). Shows the developer
+// their own requests/spend/savings/kickbacks from /api/me, plus the live
+// routed-model catalog. Replaces the old operator-token gate for this route.
+// ---------------------------------------------------------------------------
+const DASHBOARD_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dashboard · Shipyard Inference</title>
+${TERMINAL_FONTS}
+<style>${TERMINAL_CSS}
+.wrap{max-width:900px}
+.k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
+@media(max-width:680px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpis .card{margin:0}
+.v{font:600 25px/1 var(--mono);color:var(--fg)}.v.good{color:var(--green)}.v.accent{color:var(--term2)}
+.sub2{color:var(--dim);font-size:12px;margin-top:6px;font-family:var(--mono)}
+.loadrow{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.loadrow input{flex:1;min-width:240px}.loadrow button{margin-top:0}
+.tier{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line2);border-radius:999px;padding:2px 9px;color:var(--term2)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:680px){.grid2{grid-template-columns:1fr}}
+</style></head><body><div class="wrap">
+${navHtml('dashboard')}
+<span class="pill"><span class="blip"></span> live · per-key</span>
+<h1>Your <em class="grad">Shipyard</em> dashboard.</h1>
+<p class="sub">Every request through your key — what it cost, what it saved vs baseline, and your live balance. Pay per call in USDC; no subscription anywhere in the loop.</p>
+<div class="loadrow">
+  <input id="key" placeholder="sk-shipyard-… (your API key)"/>
+  <button id="load">Load dashboard</button>
+</div>
+<div id="out" class="hidden">
+  <section class="kpis">
+    <div class="card"><div class="k">Routing saved</div><div class="v good" id="saved">$0</div><div class="sub2"><span id="savedpct">0</span>% vs baseline</div></div>
+    <div class="card"><div class="k">Spent</div><div class="v" id="spent">$0</div><div class="sub2">actual routed cost</div></div>
+    <div class="card"><div class="k">Requests</div><div class="v" id="reqs">0</div><div class="sub2" id="win">last 24h</div></div>
+    <div class="card"><div class="k">Kickbacks <span class="muted">· beta</span></div><div class="v accent" id="kick">$0</div><div class="sub2" id="kicknote"></div></div>
+  </section>
+  <div class="grid2">
+    <div class="panel">
+      <div class="num">Account</div>
+      <div class="muted" id="acct"></div>
+      <div class="k" style="margin-top:14px">Net inference cost</div>
+      <div class="v" id="net" style="font-size:20px">$0</div>
+      <div class="sub2">spent − kickbacks. Negative means your wait-time more than paid for your inference.</div>
+    </div>
+    <div class="panel">
+      <div class="num">What you're routing through</div>
+      <div class="note" id="models">—</div>
+      <p class="note"><a href="/pricing">See model rates →</a></p>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="num">Next steps</div>
+    <p class="note"><a href="/connect">Connect your IDE</a> · <a href="/me">full usage ledger</a> · <a href="/pricing">pricing</a></p>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);const f=(n)=>'$'+(Number(n)||0).toFixed(6);
+const url=new URL(location.href);if(url.searchParams.get('key'))$('#key').value=url.searchParams.get('key');
+async function load(){
+  const key=$('#key').value.trim();if(!key)return;
+  $('#load').disabled=true;
+  try{
+    const r=await fetch('/api/me',{headers:{authorization:'Bearer '+key}});
+    if(!r.ok){alert('Could not load — is the key valid?');return}
+    const d=await r.json();
+    $('#saved').textContent=f(d.savedUsd);$('#savedpct').textContent=d.savedPct;
+    $('#spent').textContent=f(d.spentUsd);
+    $('#kick').textContent=f(d.kickbacksUsd);
+    $('#reqs').textContent=d.requests;
+    $('#net').textContent=f((d.spentUsd||0)-(d.kickbacksUsd||0));
+    $('#acct').textContent=(d.account.label||d.account.userId)+(d.account.wallet?(' · '+d.account.wallet):' · no payout wallet');
+    $('#kicknote').textContent=d.kickbacksUsd?'accrued on routed traffic':'accrues on routed traffic';
+    $('#out').classList.remove('hidden');
+    // Live routed-model catalog (public — no key needed for the list).
+    try{
+      const c=await fetch('/api/catalog');const cj=await c.json();
+      const rows=(cj.models||[]).concat().sort((a,b)=>a.provider.localeCompare(b.provider)).slice(0,6)
+        .map((m)=>'<div class="muted">'+m.slug+' · <span class="tier">'+(m.inputPerMTok>0?'$'+Number(m.inputPerMTok).toFixed(3)+'/1M in':'$0 local')+'</span></div>').join('');
+      $('#models').innerHTML=rows||'No cached catalog';
+    }catch(e){$('#models').textContent='catalog unavailable';}
+  }finally{$('#load').disabled=false}
+}
+$('#load').addEventListener('click',load);
+if($('#key').value)load();
+</script></div></body></html>`
+
+// ---------------------------------------------------------------------------
 // The combined app.
 // Advertiser onboarding page — symmetric to /connect. Set a line + x402
 // destination + a per-block bid, and the campaign enters the live first-price
@@ -990,10 +1076,45 @@ refresh();
 </script></div></body></html>`
 
 // ---------------------------------------------------------------------------
-// "Pricing" — pay per call, nothing else. Real rates straight from the
-// gateway's candidate configs (they ARE the source of truth for routing).
+// "Pricing" — pay per call, nothing else. Real rates rendered LIVE from the
+// gateway's actual candidate configs (they ARE the source of truth for
+// routing), so the page can never drift from what routing decides on.
 // ---------------------------------------------------------------------------
-const PRICING_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+const TIER_RANK: Record<string, number> = { economy: 0, standard: 1, frontier: 2 }
+
+/** Build the routed-model rows from the live candidates, cheapest first per tier. */
+function pricingRows(): string {
+  const seen = new Set<string>()
+  const all: Array<{ model: string; tier: string; in: number; out: number; ctx: number }> = []
+  for (const cand of candidates) {
+    for (const m of cand.models ?? []) {
+      if (seen.has(m.model)) continue
+      seen.add(m.model)
+      all.push({
+        model: m.model,
+        tier: m.tier ?? 'standard',
+        in: Number(m.inputCostPerMTok) || 0,
+        out: Number(m.outputCostPerMTok) || 0,
+        ctx: m.contextWindow ?? 0,
+      })
+    }
+  }
+  all.sort(
+    (a, b) =>
+      (TIER_RANK[a.tier] ?? 1) - (TIER_RANK[b.tier] ?? 1) ||
+      a.in + a.out - (b.in + b.out),
+  )
+  return all
+    .map(
+      (r) =>
+        `<tr><td class="mono">${r.model}</td><td><span class="tier">${r.tier}</span></td>` +
+        `<td class="mono">$${r.in.toFixed(2)}</td><td class="mono">$${r.out.toFixed(2)}</td>` +
+        `<td class="mono muted">${r.ctx >= 1_000_000 ? r.ctx / 1_000_000 + 'M' : r.ctx >= 1000 ? Math.round(r.ctx / 1000) + 'k' : r.ctx}</td></tr>`,
+    )
+    .join('\n')
+}
+
+const PRICING_HTML = (rows: string, hasLocal: boolean): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Pricing · Shipyard Inference</title>
 ${TERMINAL_FONTS}
@@ -1022,12 +1143,7 @@ ${navHtml('pricing')}
   <table>
     <thead><tr><th>Model</th><th>Tier</th><th>Input /1M</th><th>Output /1M</th><th>Context</th></tr></thead>
     <tbody>
-      <tr><td class="mono">gpt-4.1-nano</td><td><span class="tier">economy</span></td><td class="mono">$0.10</td><td class="mono">$0.40</td><td class="mono muted">1M</td></tr>
-      <tr><td class="mono">claude-haiku-4-5</td><td><span class="tier">economy</span></td><td class="mono">$0.80</td><td class="mono">$4.00</td><td class="mono muted">200k</td></tr>
-      <tr><td class="mono">gpt-4.1-mini</td><td><span class="tier">standard</span></td><td class="mono">$0.40</td><td class="mono">$1.60</td><td class="mono muted">1M</td></tr>
-      <tr><td class="mono">gpt-4.1</td><td><span class="tier">frontier</span></td><td class="mono">$2.00</td><td class="mono">$8.00</td><td class="mono muted">1M</td></tr>
-      <tr><td class="mono">claude-sonnet-4-5</td><td><span class="tier">standard</span></td><td class="mono">$3.00</td><td class="mono">$15.00</td><td class="mono muted">200k</td></tr>
-      <tr><td class="mono">local / ollama</td><td><span class="tier">free</span></td><td class="mono">$0.00</td><td class="mono">$0.00</td><td class="mono muted">your hardware</td></tr>
+${rows}${hasLocal ? '\n      <tr><td class="mono">local / ollama</td><td><span class="tier">free</span></td><td class="mono">$0.00</td><td class="mono">$0.00</td><td class="mono muted">your hardware</td></tr>' : ''}
     </tbody>
   </table>
   <p class="note">The <strong>baseline</strong> for savings is a direct call to <code>claude-sonnet-4-5</code> — what the same request would cost at provider list price, called direct. Request <code>model: auto</code> and the gateway tiers down when a cheaper model can handle the work; pin a model and it stays pinned.</p>
@@ -1038,7 +1154,7 @@ ${navHtml('pricing')}
 </div>
 <div class="card">
   <strong>Settlement</strong> <span class="muted">— USDC on Solana, over x402</span>
-  <p class="note">Each request settles independently — no float, no invoice, no "Stripe, coming soon." Watch every cent land in real time on the <a href="/dashboard/">operator command center</a>, or track your own key on the <a href="/me">usage &amp; ledger</a> page.</p>
+  <p class="note">Each request settles independently — no float, no invoice, no "Stripe, coming soon." Watch every cent land in real time on the <a href="/dashboard/">live dashboard</a>, or track your own key on the <a href="/me">usage &amp; ledger</a> page.</p>
 </div>
 <p class="note" style="opacity:.75">Coming later: earn on the wait — sponsored placements on agent idle time. <a href="/advertise">Advertiser? Get in early →</a></p>
 </div></body></html>`
@@ -1060,7 +1176,18 @@ app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
 app.get('/connect', (c) => c.html(closedPage(CONNECT_HTML, SELF_SERVE_KEYS)))
-app.get('/pricing', (c) => c.html(PRICING_HTML))
+// The live per-user dashboard — registered BEFORE the operator mount so it wins
+// over the operator SPA's `*` catch-all (which served the token-gate here).
+app.get('/dashboard', (c) => c.html(DASHBOARD_HTML))
+app.get('/dashboard/', (c) => c.html(DASHBOARD_HTML))
+app.get('/pricing', (c) =>
+  c.html(
+    PRICING_HTML(
+      pricingRows(),
+      candidates.some((cd) => cd.id === 'local-ollama' || cd.id === 'ollama' || cd.id === 'local'),
+    ),
+  ),
+)
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.route('/', createOwnerKeyApp({ operatorTokens: OPERATOR_TOKENS, keyStore, caps: PROJECT_CAPS }))
