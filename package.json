@@ -34,6 +34,7 @@
     "copy-assets": "rm -rf dist/operator/public && cp -R src/operator/public dist/operator/public",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx test/*.test.ts",
+    "sync:nous": "node --import tsx scripts/sync-nous-catalog.mts --task coding",
     "clean": "rm -rf dist",
     "mcp:billing": "node --import tsx mcp/server.ts",
     "build:web": "node scripts/build-web.mjs",
