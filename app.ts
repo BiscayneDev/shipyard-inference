@@ -1297,9 +1297,11 @@ app.get('/connect', (c) => c.html(closedPage(CONNECT_HTML, SELF_SERVE_KEYS)))
 // function, same as the portal's own bundles).
 app.get('/connect-pay-bundle.js', async (c) => {
   const { readFile } = await import('node:fs/promises')
-  const { join } = await import('node:path')
+  const { dirname, join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
   try {
-    const buf = await readFile(join(process.cwd(), 'examples/chat-portal/public/connect-pay-bundle.js'))
+    const here = dirname(fileURLToPath(import.meta.url))
+    const buf = await readFile(join(here, 'examples/chat-portal/public/connect-pay-bundle.js'))
     return c.body(buf, 200, { 'content-type': 'application/javascript' })
   } catch {
     return c.notFound()
