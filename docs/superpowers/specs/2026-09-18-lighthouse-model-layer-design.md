@@ -54,7 +54,7 @@ Receipt surfaces owned by Shipyard: statusline, portal, connect output. Telegram
 
 1. **`connect` v2 interactive flow:** hardware probe → ladder → offer `ollama pull` → PayBox-wallet-or-key → write agent env. Each agent gets its own key = its own spend ceiling (anchor/breaker identity is the API key — Hermes and Claude Code can't send custom headers).
 2. **Conversation anchor** (model continuity keyed on API key; SQLite, TTL 24h). Honest scope: model continuity + top-up resume only — it does not resurrect crashed agents (they resend their own history).
-3. **Appliance ops:** launchd plists for gateway + Ollama auto-restart (Survive applied to the box itself).
+3. **Appliance ops** — `shipyard-gateway service install|uninstall|status` writes launchd LaunchAgents (gateway `com.shipyard-inference.gateway`, optional `ollama serve`) with `RunAtLoad` + `KeepAlive`, so the box survives reboots and crash-restarts. **SHIPPED** (`src/gateway/service.ts`, `bin.ts`; live-verified on the M2 — both agents load, gateway 401/ollama 200).
 4. **Venice x402 burst-billing** in appliance mode (user wallet pays Venice directly — no gateway float, no treasury monitoring).
 5. **Hosted-mode rollout** (Vercel): request-scoped only.
 
@@ -69,7 +69,7 @@ Receipt surfaces owned by Shipyard: statusline, portal, connect output. Telegram
 | Key spend ≥ ceiling | 402 + top-up link; resume after reset/top-up | ✅ shipped |
 | Wallet empty (x402 keyless) | 402 challenge (pre-existing); MoonPay deep-link with wallet prefill TBD | partial |
 | Client crash/restart | Client resends history; anchor (Phase 2) preserves model continuity | Phase 2 |
-| Gateway box reboot | launchd auto-restart | Phase 2 |
+| Gateway box reboot | launchd auto-restart | ✅ shipped (`service install`)
 
 Out of scope (explicitly): agent-side breakage (e.g., Hermes' own session state). The gateway keeps the model layer alive; it cannot resurrect the agent process.
 
