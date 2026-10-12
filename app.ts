@@ -857,8 +857,8 @@ async function connectFlow(){
 }
 const wc=$('#walletConnect'); if(wc) wc.addEventListener('click',connectFlow);
 // ── Step 2: open a payment channel / fund the key in-browser ───────────────
-// Uses the proven `upto` channel payer (ShipyardUpto) when the gateway serves
-// an `upto` challenge — sign once, escrow on-chain, agent draws down per
+// Uses the proven upto channel payer (ShipyardUpto) when the gateway serves
+// an upto challenge — sign once, escrow on-chain, agent draws down per
 // request without re-signing. Falls back to the exact payer otherwise.
 let _key='';
 function setKey(k){_key=k;}
