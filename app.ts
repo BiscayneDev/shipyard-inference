@@ -671,8 +671,10 @@ ${TERMINAL_FONTS}
 .wcnt:hover{background:#fff;transform:translateY(-1px)}
 .wcnt:disabled{opacity:.5;cursor:default;transform:none}
 .e{color:#ff9a9a;font-size:13px;margin-top:10px;min-height:1em}
+.hidden{display:none}
 ${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
+<script src="/connect-pay-bundle.js"></script>
 ${navHtml('connect')}
 <span class="pill"><span class="blip"></span> claude code · cursor · codex · any agent</span>
 <h1>Connect Shipyard to your IDE</h1>
@@ -708,12 +710,45 @@ ${navHtml('connect')}
 </div>
 
 <div id="out" class="hidden">
-  <div class="k">Your API key (shown once)</div>
+  <div class="k">✓ Step 1 — your API key <span class="muted">(shown once)</span></div>
   <pre><span class="copy" data-copy="#keyval">copy</span><span id="keyval" class="key"></span></pre>
   <div class="k">Base URL</div>
   <pre><span class="copy" data-copy="#baseurl">copy</span><span id="baseurl"></span></pre>
+
+  <div class="card" id="fundcard">
+    <div class="wtl">
+      <div class="wtl-ic">⚡</div>
+      <div class="wtl-tx">
+        <strong>Step 2 — fund this key</strong>
+        <div class="muted">Your key is wallet-bound. Add USDC so your agent can serve paid traffic — one signature, no account, no subscription.</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <button class="wcnt" id="fundBtn" type="button">Add $5</button>
+      <button class="wcnt" id="fundBtn10" type="button" style="background:transparent;color:var(--term2);border:1px solid var(--line2)">Add $10</button>
+      <span class="note" id="fundstate" style="margin:0"></span>
+    </div>
+    <div class="e" id="funderr"></div>
+  </div>
+
+  <div class="card" id="trycard">
+    <div class="wtl">
+      <div class="wtl-ic">▶</div>
+      <div class="wtl-tx">
+        <strong>Step 3 — run your first prompt</strong>
+        <div class="muted">A real request through your key. See what it costs and what you saved.</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <input id="prompt" placeholder="Ask anything — e.g. write a retry-with-backoff helper in TypeScript" style="flex:1;min-width:220px"/>
+      <button class="wcnt" id="runBtn" type="button">Run</button>
+    </div>
+    <div class="note" id="runstate" style="margin-top:10px"></div>
+    <pre id="runout" class="hidden" style="white-space:pre-wrap;word-break:break-word"></pre>
+  </div>
+
   <div class="card">
-    <strong>Claude Code</strong> <span class="muted">— optional · routes your model through Shipyard (Anthropic Messages API)</span>
+    <strong>Wire it into your IDE</strong> <span class="muted">— optional · routes your model through Shipyard</span>
     <pre><span class="copy" data-copy="#claude">copy</span><span id="claude"></span></pre>
   </div>
   <div class="card">
@@ -736,6 +771,7 @@ const $=s=>document.querySelector(s);
 $('#oneliner').textContent='npx shipyard-inference connect --url '+location.origin;
 function showOut(d){
   $('#keyval').textContent=d.key;$('#baseurl').textContent=base;
+  setKey(d.key);
   $('#claude').textContent='export ANTHROPIC_BASE_URL="'+location.origin+'"\\nexport ANTHROPIC_AUTH_TOKEN="'+d.key+'"\\nclaude';
   $('#cursor').textContent='Base URL: '+base+'\\nAPI Key:  '+d.key;
   $('#cont').textContent=JSON.stringify({models:[{title:'Shipyard',provider:'openai',model:'auto',apiBase:base,apiKey:d.key}]});
@@ -819,6 +855,45 @@ async function connectFlow(){
   }finally{ btn.disabled=false; }
 }
 const wc=$('#walletConnect'); if(wc) wc.addEventListener('click',connectFlow);
+// ── Step 2: fund the key in-browser (exact-scheme USDC settlement) ──────────
+let _key='';
+function setKey(k){_key=k;}
+async function fund(amountUsd){
+  const fs=$('#fundstate'),fe=$('#funderr');fs.textContent='';fe.textContent='';
+  if(!window.ShipyardFund){fe.textContent='✗ funding not loaded — refresh';return}
+  if(!window.ShipyardFund.hasWallet()){fe.textContent='✗ No Solana wallet detected — install Phantom/Solflare/Backpack.';return}
+  fs.textContent='Opening wallet — approve the USDC transfer…';
+  try{
+    const r=await window.ShipyardFund.topup(base+'/topup',{
+      method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+_key},
+      body:JSON.stringify({amountUsd}),
+    });
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){fs.innerHTML='<span class="green">✓ Funded — balance $'+Number(d.balanceUsd||0).toFixed(2)+'</span>';}
+    else{fe.textContent='✗ '+(d.error||('funding failed ('+r.status+')'));}
+  }catch(e){fe.textContent='✗ '+(e&&e.message||String(e));}
+}
+$('#fundBtn').addEventListener('click',()=>fund(5));
+$('#fundBtn10').addEventListener('click',()=>fund(10));
+// ── Step 3: run a real first prompt through the key ──────────────────────────
+async function runPrompt(){
+  const rs=$('#runstate'),ro=$('#runout');rs.textContent='';ro.classList.add('hidden');
+  const prompt=$('#prompt').value.trim()||'Write a one-line haiku about paying for AI inference per request.';
+  rs.textContent='Routing…';
+  try{
+    const r=await fetch(base+'/chat/completions',{method:'POST',
+      headers:{'content-type':'application/json',authorization:'Bearer '+_key},
+      body:JSON.stringify({model:'auto',messages:[{role:'user',content:prompt}]})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){rs.textContent='✗ '+(d.error?.message||('request failed ('+r.status+')'));return}
+    const text=(d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||'(no content)';
+    ro.textContent=text;ro.classList.remove('hidden');
+    const cost=d.usage?(' · '+d.usage.total_tokens+' tokens'):'';
+    rs.innerHTML='<span class="green">✓ Reply below'+cost+'</span>';
+  }catch(e){rs.textContent='✗ '+(e&&e.message||String(e));}
+}
+$('#runBtn').addEventListener('click',runPrompt);
+$('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter')runPrompt();});
 document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)return;navigator.clipboard.writeText($(b.dataset.copy).textContent);b.textContent='copied';setTimeout(()=>b.textContent='copy',1200)});
 </script></div></body></html>`
 
@@ -1217,6 +1292,19 @@ app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 // Registered before the operator's /api/* mount so it wins, and before the
 // hub.boot middleware so issuing a key doesn't replay telemetry.
 app.get('/connect', (c) => c.html(closedPage(CONNECT_HTML, SELF_SERVE_KEYS)))
+// The in-browser topup payer bundle (exact-scheme USDC settlement) used by the
+// /connect funding step. Served from the portal's public tree (ships in the
+// function, same as the portal's own bundles).
+app.get('/connect-pay-bundle.js', async (c) => {
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  try {
+    const buf = await readFile(join(process.cwd(), 'examples/chat-portal/public/connect-pay-bundle.js'))
+    return c.body(buf, 200, { 'content-type': 'application/javascript' })
+  } catch {
+    return c.notFound()
+  }
+})
 // The live per-user dashboard — registered BEFORE the operator mount so it wins
 // over the operator SPA's `*` catch-all (which served the token-gate here).
 app.get('/dashboard', (c) => c.html(DASHBOARD_HTML))
