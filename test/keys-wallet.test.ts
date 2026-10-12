@@ -185,3 +185,48 @@ test('POST /v1/keys/wallet issues a key; replays and bad signatures 401', async 
   })
   assert.equal(unsupported.status, 501)
 })
+
+test('GET /v1/keys/wallet/challenge hands a browser wallet a signable message', async () => {
+  const { createGatewayApp } = await import('../src/gateway/server.js')
+  const { candidate, mockProvider, model } = await import('./helpers.js')
+  const store = new MemoryApiKeyStore()
+  const app = createGatewayApp({
+    candidates: [candidate('c', mockProvider(async () => ({ content: 'ok', toolCalls: [], stopReason: 'end_turn' as const })), [model('m')])],
+    keyStore: store,
+  })
+  const { pubkey, seed } = generateWallet()
+
+  // Fetch the deterministic signable message for this pubkey (browser-wallet flow).
+  const ch = await app.request('/v1/keys/wallet/challenge?pubkey=' + encodeURIComponent(pubkey))
+  assert.equal(ch.status, 200)
+  const { nonce, message } = (await ch.json()) as { nonce: string; message: string }
+  assert.ok(nonce.length > 0)
+  assert.ok(message.includes(pubkey))
+  assert.ok(message.includes(nonce))
+
+  // Sign that exact message and POST it — full browser-wallet mint loop.
+  const signature = signWallet(seed, message)
+  const minted = await app.request('/v1/keys/wallet', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pubkey, nonce, signature }),
+  })
+  assert.equal(minted.status, 200)
+  const body = (await minted.json()) as { key: string; wallet: string }
+  assert.ok(body.key.startsWith('sk-shipyard-'))
+  assert.equal(body.wallet, pubkey)
+
+  // The issued key resolves and is wallet-bound.
+  const resolved = await store.resolve(body.key)
+  assert.ok(resolved)
+  assert.equal(resolved.wallet, pubkey)
+
+  // Missing pubkey → 400; no key store → 501.
+  const missing = await app.request('/v1/keys/wallet/challenge')
+  assert.equal(missing.status, 400)
+  const bare = createGatewayApp({
+    candidates: [candidate('c', mockProvider(async () => ({ content: 'ok', toolCalls: [], stopReason: 'end_turn' as const })), [model('m')])],
+  })
+  const unsupported = await bare.request('/v1/keys/wallet/challenge?pubkey=' + encodeURIComponent(pubkey))
+  assert.equal(unsupported.status, 501)
+})

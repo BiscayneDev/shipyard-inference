@@ -649,6 +649,8 @@ if(session) load();
 // ---------------------------------------------------------------------------
 // "Connect your IDE" — self-serve key + copy-paste config for any OpenAI-
 // compatible IDE. Client-rendered so the baseURL tracks the actual deploy host.
+// Two doors: connect a wallet you already have (Phantom/MetaMask/etc via Wallet
+// Standard — the signature IS the auth, no signup) or the BYO one-command floor.
 // ---------------------------------------------------------------------------
 const CONNECT_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -660,29 +662,39 @@ ${TERMINAL_FONTS}
 .key{color:var(--green);word-break:break-all}
 .card.hero{border-color:#22345a;background:rgba(15,26,48,.6)}
 .divider{text-align:center;margin:20px 0 6px;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.03em}
+.wallet{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.walletbtn{appearance:none;border:1px solid var(--line2);background:rgba(15,26,48,.6);color:var(--fg);border-radius:999px;font:500 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;cursor:pointer}
+.walletbtn:hover{border-color:var(--term);color:var(--term)}
+.walletbtn:disabled{opacity:.45;cursor:default}
+.e{color:#ff9a9a;font-size:13px;margin-top:10px;min-height:1em}
 ${SELF_SERVE_CSS}
 </style></head><body><div class="wrap">
 ${navHtml('connect')}
 <span class="pill"><span class="blip"></span> claude code · cursor · codex · any agent</span>
 <h1>Connect Shipyard to your IDE</h1>
-<p class="sub">Issue a key, keep your model — and route through Shipyard for <strong>cheaper, more reliable inference</strong> with per-call USDC billing. No subscription.</p>
+<p class="sub">Same model quality, <strong>cheaper inference</strong> — route through Shipyard and pay per call in USDC from <strong>a wallet you already have</strong>. No subscription, no signup, no balance to load.</p>
+
+<!-- Door 1 (leads): connect an existing wallet — the crypto-native path. -->
+<div class="card hero">
+  <strong>Connect a wallet you have</strong> <span class="muted">— Phantom, MetaMask, Solflare, Backpack, …</span>
+  <p class="note">Sign one message. It mints an API key bound to your wallet — that's the whole login. Pay per request in USDC from that wallet.</p>
+  <div class="wallet" id="wallets"><span class="muted">Detecting wallets…</span></div>
+  <div class="e" id="werr"></div>
+</div>
+
+<div class="divider ss">— or, the one-command / no-wallet path —</div>
+
+<!-- Door 2 (floor): one-command BYO; hidden when self-serve is closed. -->
 <div class="card hero cl">
   <strong>Not open yet</strong>
-  <div class="note">Self-serve keys aren't open yet. We're opening Shipyard to developers soon. Already have a key? Manage it on the <a href="/keys">keys page</a>.</div>
+  <div class="note">Self-serve keys aren't open yet. Already have a key? Manage it on the <a href="/keys">keys page</a>.</div>
 </div>
 <div class="card hero ss">
   <strong>Fastest — one command</strong> <span class="muted">— adds the status line, keeps your model</span>
   <pre><span class="copy" data-copy="#oneliner">copy</span><span id="oneliner" class="key"></span></pre>
-  <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--wallet &lt;addr&gt;</code> for payouts, or <code>--route</code> to also route through Shipyard for savings.</div>
+  <div class="note">Issues a key and adds a live-earnings status line — <strong>your model and inference are untouched</strong>. Then run <code>claude</code>. Add <code>--route</code> to route through Shipyard for savings.</div>
 </div>
-<div class="divider ss">— optional · route through Shipyard for cheaper inference —</div>
-<div class="card ss">
-  <div class="row">
-    <div><label for="wallet">Payout wallet (optional)</label><input id="wallet" placeholder="Solana address — where rebates + kickbacks settle"/></div>
-    <div style="flex:0"><button id="gen">Generate key</button></div>
-  </div>
-  <div class="note">No signup. The key is shown once — copy it now. It ties your IDE traffic to your wallet.</div>
-</div>
+
 <div id="out" class="hidden">
   <div class="k">Your API key (shown once)</div>
   <pre><span class="copy" data-copy="#keyval">copy</span><span id="keyval" class="key"></span></pre>
@@ -710,22 +722,55 @@ ${navHtml('connect')}
 const base = location.origin + '/v1';
 const $=s=>document.querySelector(s);
 $('#oneliner').textContent='npx shipyard-inference connect --url '+location.origin;
-$('#gen').addEventListener('click', async ()=>{
-  $('#gen').disabled=true; $('#gen').textContent='Generating…';
-  try{
-    const r=await fetch('/api/keys',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({wallet:$('#wallet').value.trim()||undefined})});
-    const d=await r.json();
-    $('#keyval').textContent=d.key;
-    $('#baseurl').textContent=base;
-    $('#claude').textContent='export ANTHROPIC_BASE_URL="'+location.origin+'"\\nexport ANTHROPIC_AUTH_TOKEN="'+d.key+'"\\nclaude';
-    $('#cursor').textContent='Base URL: '+base+'\\nAPI Key:  '+d.key;
-    $('#cont').textContent=JSON.stringify({models:[{title:'Shipyard',provider:'openai',model:'auto',apiBase:base,apiKey:d.key}]},null,2);
-    $('#env').textContent='export OPENAI_BASE_URL="'+base+'\\nexport OPENAI_API_KEY="'+d.key+'"';
-    $('#meline').href='/me?key='+encodeURIComponent(d.key);
-    $('#out').classList.remove('hidden');
-  }catch(e){alert('Could not generate a key: '+e.message)}
-  $('#gen').disabled=false; $('#gen').textContent='Generate key';
-});
+function showOut(d){
+  $('#keyval').textContent=d.key;$('#baseurl').textContent=base;
+  $('#claude').textContent='export ANTHROPIC_BASE_URL="'+location.origin+'"\\nexport ANTHROPIC_AUTH_TOKEN="'+d.key+'"\\nclaude';
+  $('#cursor').textContent='Base URL: '+base+'\\nAPI Key:  '+d.key;
+  $('#cont').textContent=JSON.stringify({models:[{title:'Shipyard',provider:'openai',model:'auto',apiBase:base,apiKey:d.key}]});
+  $('#env').textContent='export OPENAI_BASE_URL="'+base+'\\nexport OPENAI_API_KEY="'+d.key+'"';
+  $('#meline').href='/me?key='+encodeURIComponent(d.key);
+  $('#out').classList.remove('hidden');
+}
+// ── Wallet-native: enumerate Wallet Standard wallets, sign a message = auth ──
+async function listWallets(){
+  try{const mod=await import('https://esm.sh/@wallet-standard/app@1.1.0');const ws=mod.getWallets().get();
+    return ws.filter(function(w){return w.chains&&w.chains.some(function(c){return c.indexOf('solana:')===0;})&&w.features['standard:connect']&&w.features['solana:signMessage'];});}catch(e){return [];}
+}
+function base58(bytes){
+  const CH='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=0n;
+  for(const b of bytes)n=n<<8n|BigInt(b);
+  let s='';while(n>0n){s=CH[Number(n%58n)]+s;n/=58n;}
+  for(const b of bytes){if(b===0)s='1'+s;else break;}
+  return s;
+}
+async function walletMint(wallet){
+  const werr=$('#werr');werr.textContent='';
+  const cr=await wallet.features['standard:connect'].connect();
+  const acct=(cr&&cr.accounts&&cr.accounts[0])||wallet.accounts[0];
+  const pubkey=base58(new Uint8Array(acct.publicKey));
+  // Fresh challenge for THIS pubkey — the exact message to sign.
+  const ch=await fetch(base+'/keys/wallet/challenge?pubkey='+encodeURIComponent(pubkey));
+  const j=await ch.json();
+  if(!ch.ok) throw new Error(j.error?.message||('challenge failed ('+ch.status+')'));
+  const enc=new TextEncoder();
+  const signed=await wallet.features['solana:signMessage'].signMessage({account:acct,message:enc.encode(j.message)});
+  const signature=base58(new Uint8Array(signed.signature));
+  const r=await fetch(base+'/keys/wallet',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pubkey,nonce:j.nonce,signature})});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error?.message||('key mint failed ('+r.status+')'));
+  showOut(d);
+}
+async function renderWallets(){
+  const box=$('#wallets');box.textContent='Detecting wallets…';
+  const ws=await listWallets();box.textContent='';
+  if(!ws.length){box.innerHTML='<span class="muted">No browser wallet found. Install Phantom/Solflare/Backpack, or use the one-command path.</span>';return;}
+  for(const w of ws){
+    const b=document.createElement('button');b.className='walletbtn';b.textContent=w.name;
+    b.onclick=async()=>{b.disabled=true;const werr=$('#werr');werr.textContent='Opening '+w.name+' — approve the message to mint a key…';try{await walletMint(w);werr.innerHTML='<span class="green">✓ key minted — copy it below</span>';b.disabled=false;}catch(e){werr.textContent='✗ '+(e&&e.message||String(e));b.disabled=false;}};
+    box.appendChild(b);
+  }
+}
+renderWallets();
 document.addEventListener('click',e=>{const b=e.target.closest('.copy');if(!b)return;navigator.clipboard.writeText($(b.dataset.copy).textContent);b.textContent='copied';setTimeout(()=>b.textContent='copy',1200)});
 </script></div></body></html>`
 

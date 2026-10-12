@@ -662,6 +662,22 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
   })
 
+  // Challenge discovery for a browser wallet (Phantom/MetaMask/etc via Wallet
+  // Standard). The CLI builds the challenge client-side, but a page can't — it
+  // needs the exact message to sign. This route hands back a fresh nonce + the
+  // deterministic message for a pubkey, so a connected wallet can sign it,
+  // then POST /v1/keys/wallet to mint a key (signature IS the auth).
+  app.get('/v1/keys/wallet/challenge', async (c) => {
+    if (!walletKeyIssuer) {
+      return errorJson(c, 501, 'wallet key issuance is not available on this deployment', 'not_supported')
+    }
+    const pubkey = (c.req.query('pubkey') ?? '').trim()
+    if (!pubkey) return errorJson(c, 400, '`pubkey` query param is required', 'invalid_request_error')
+    const nonce = randomBytes(24).toString('hex')
+    const message = walletKeyIssuer.challenge(pubkey, nonce)
+    return c.json({ pubkey, nonce, message })
+  })
+
   // One-call x402 top-up (agent self-funding): a wallet-bound key pays USDC
   // against a challenge priced at its requested amount; settlement credits the
   // key's balance through the shared credit store. Requires x402 charging.
