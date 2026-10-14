@@ -68,6 +68,7 @@ import {
   SELF_SERVE_CSS,
   SELF_SERVE_CLOSED_BODY,
   x402Config,
+  MemoryChannelStore,
   type GatewayConfig,
   type ProjectSpendStore,
   type ApiKeyStore,
@@ -359,6 +360,10 @@ const decisionFeedback =
       })
     : new MemoryDecisionFeedback()
 
+// Primary-channel registry: an upto-scheme top-up records the on-chain channel
+// opened for the key here, binding its balance to real escrow. Hoisted so
+// /api/me can surface the active channel alongside balance + kickbacks.
+const channelStore = new MemoryChannelStore()
 const gateway = createGatewayApp({
   candidates,
   strategy: costOptimized(),
@@ -403,6 +408,9 @@ const gateway = createGatewayApp({
   tender: gatewayTender,
   // Top-up balances accrue into the SAME ledger the tender kickbacks use.
   creditStore: tenderCreditStore,
+  // Primary-channel registry: an upto-scheme top-up records the on-chain
+  // channel opened for the key here, binding its balance to real escrow.
+  channelStore,
   telemetry: reporter,
   cors: { origins: '*' },
 
@@ -1541,6 +1549,18 @@ app.get('/api/me', async (c) => {
     // sponsored line currently served to it — rendered in the status line. Durable.
     kickbacksUsd: r6(await gatewayTender.balance(auth.account.userId)),
     sponsoredLine: (await gatewayTender.currentLine(auth.account.userId)) ?? null,
+    // Active on-chain payment channel, when one was opened for this key.
+    channel: await channelStore.active(auth.account.userId).then(
+      (ch) =>
+        ch
+          ? {
+              channelId: ch.channelId,
+              payer: ch.payer,
+              ceilingUsd: ch.ceilingUsd,
+              openedAt: ch.openedAt,
+            }
+          : null,
+    ),
   })
 })
 

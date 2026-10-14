@@ -22,6 +22,7 @@ import type { GatewayConfig } from './config.js'
 import type { Account } from './keys.js'
 import { buildChallenge, verifyX402Payment, type X402Config } from './x402.js'
 import { buildUptoChallenge, verifyUptoOpen, ceilingAtomic } from './x402-upto.js'
+import type { ChannelStore } from './channels.js'
 import { MemoryCreditStore, type CreditStore } from '../tender/credit-store.js'
 
 export const MIN_TOPUP_USD = 0.01
@@ -65,7 +66,7 @@ function parseAmount(raw: unknown): number | undefined {
  * the client settled the challenge.
  */
 export async function handleTopup(
-  opts: { x402: X402Config; credits: CreditStore },
+  opts: { x402: X402Config; credits: CreditStore; channels?: ChannelStore },
   account: Account | undefined,
   rawBody: unknown,
   paymentHeader: string | undefined,
@@ -142,19 +143,41 @@ export async function handleTopup(
       }
       try {
         const verified = await verifyUptoOpen(opts.x402, paymentHeader, ceiling)
-        // Channel escrowed on-chain: credit the key's balance the full ceiling.
+        // Channel escrowed on-chain: credit the key's balance the full ceiling
+        // and (when a channel store is wired) bind the on-chain channel to the
+        // key so the balance is provably backed by the escrow.
+        const raw = verified.payload.payload as { channelId?: unknown } | undefined
+        const channelId =
+          typeof raw?.channelId === 'string' && raw.channelId ? raw.channelId : undefined
+        if (opts.channels && channelId) {
+          await opts.channels.record({
+            account: balanceAccount,
+            channelId,
+            payer: verified.payer ?? account.wallet ?? '',
+            ceilingUsd: amountUsd,
+            ceilingBaseUnits: ceiling.toString(),
+            openedAt: Date.now(),
+            openSignature: undefined,
+          })
+        }
         await opts.credits.accrue({
           account: balanceAccount,
           amountUsd,
           placementId: 'topup',
-          line: `channel open ${amountUsd} USDC (payer ${verified.payer ?? 'unknown'})`,
+          line: `channel open ${amountUsd} USDC (ch ${channelId ?? '?'}, payer ${verified.payer ?? 'unknown'})`,
           requestId,
           at: Date.now(),
         })
         const balanceUsd = await opts.credits.balance(balanceAccount)
         return {
           status: 200,
-          body: { balanceUsd, creditedUsd: amountUsd, wallet: account.wallet, channel: true },
+          body: {
+            balanceUsd,
+            creditedUsd: amountUsd,
+            wallet: account.wallet,
+            channel: true,
+            ...(channelId ? { channelId } : {}),
+          },
         }
       } catch (err) {
         const message = err instanceof Error && err.message ? err.message : String(err)
@@ -218,7 +241,7 @@ export function topupRoute(config: GatewayConfig) {
       rawBody = {}
     }
     const result = await handleTopup(
-      { x402: config.x402!, credits },
+      { x402: config.x402!, credits, channels: config.channelStore },
       auth,
       rawBody,
       payment,

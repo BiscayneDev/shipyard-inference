@@ -14,6 +14,7 @@ import type { ProjectCapsConfig } from './project-caps.js'
 import type { ProviderHealthTracker } from '../router/health.js'
 import type { CreditStore } from '../tender/credit-store.js'
 import type { ConversationAnchorStore } from './anchor.js'
+import type { ChannelStore } from './channels.js'
 
 /** A verified x402 payment collected for one request. */
 export interface X402PaymentInfo {
@@ -236,6 +237,14 @@ export interface GatewayConfig {
    * gateway`) or a durable store. Off when omitted.
    */
   conversationAnchor?: ConversationAnchorStore
+  /**
+   * Payment-channel registry (x402 `upto`). When set, an upto-scheme top-up
+   * records the on-chain channel opened for the key here, so the key's balance
+   * is provably backed by on-chain escrow (not a server float) and the channel
+   * can be settled/refunded on close. Off when omitted (channels not recorded;
+   * balances still draw down via the credit ledger).
+   */
+  channelStore?: ChannelStore
 }
 
 export interface SpendConfig {

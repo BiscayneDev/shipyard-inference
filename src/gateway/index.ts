@@ -62,3 +62,5 @@ export type {
   ConversationAnchor,
   ConversationAnchorStore,
 } from './anchor.js'
+export { MemoryChannelStore, NoOpChannelStore } from './channels.js'
+export type { ChannelStore, OpenChannel } from './channels.js'
