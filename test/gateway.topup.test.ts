@@ -240,6 +240,19 @@ test('topup: upto-scheme config serves a payment-channel (upto) challenge, not e
   assert.ok(extra.recentBlockhash, 'fresh blockhash bound to the channel open')
   assert.equal(res.headers.get('x-402-challenge'), 'solana-usdc-upto')
   assert.ok(res.headers.get('payment-required'), 'x402 v2 payment-required header present')
+
+  // Keyless discovery on the same config must ALSO advertise the upto channel
+  // (not fall back to an exact one-shot) — a preflighting wallet sees the
+  // scheme it will actually pay with.
+  const keyless = await app.request('/v1/topup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ amountUsd: 5 }),
+  })
+  assert.equal(keyless.status, 402)
+  const kbody = (await keyless.json()) as { accepts: Array<Record<string, unknown>> }
+  assert.equal(kbody.accepts[0].scheme, 'upto', 'keyless discovery must also advertise upto')
+  assert.equal(keyless.headers.get('x-402-challenge'), 'solana-usdc-upto')
 })
 
 // ── replay protection ────────────────────────────────────────────────────────

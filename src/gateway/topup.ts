@@ -81,6 +81,17 @@ export async function handleTopup(
     if (opts.x402) {
       const body = (rawBody ?? {}) as { amountUsd?: unknown }
       const amountUsd = parseAmount(body.amountUsd) ?? 1
+      // Serve the configured scheme in discovery too: when the gateway runs
+      // `upto`, a keyless actor preflighting the resource should see the same
+      // channel-open challenge it will pay with, not an exact one-shot.
+      if (opts.x402.scheme === 'upto') {
+        const ch = await buildUptoChallenge(priced(opts.x402, amountUsd), '/v1/topup', ceilingAtomic(amountUsd))
+        return {
+          status: 402,
+          body: { ...ch.body, amountUsd, note: 'keyless discovery — open a payment channel via POST /v1/keys/wallet, then pay with that key to credit its balance' },
+          headers: { 'payment-required': ch.paymentRequiredHeader, 'x-402-challenge': 'solana-usdc-upto' },
+        }
+      }
       const challenge = buildChallenge(priced(opts.x402, amountUsd), '/v1/topup')
       return {
         status: 402,
