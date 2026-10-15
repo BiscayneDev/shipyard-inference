@@ -9,6 +9,7 @@
  * refunded on close (withdraw path).
  */
 import type { CreditStore } from '../tender/credit-store.js'
+import type { PaymentPayload, PaymentRequirements } from '@x402/core/types'
 
 /** A channel opened by a key, as recorded by the gateway after verification. */
 export interface OpenChannel {
@@ -26,6 +27,17 @@ export interface OpenChannel {
   openedAt: number
   /** On-chain open transaction signature, when available. */
   openSignature?: string
+  /**
+   * The verified upto payload + requirements from the open — retained so a
+   * later close can sign ONE voucher for the accumulated draw and settle
+   * on-chain. Off-chain metadata only (never key material): the payload is the
+   * {channelId, from, expiresAt, openTransaction} the facilitator needs to
+   * settle, the requirements the open was verified against.
+   */
+  settle?: {
+    payload: PaymentPayload
+    requirements: PaymentRequirements
+  }
 }
 
 /**

@@ -157,9 +157,11 @@ export async function handleTopup(
         // Channel escrowed on-chain: credit the key's balance the full ceiling
         // and (when a channel store is wired) bind the on-chain channel to the
         // key so the balance is provably backed by the escrow.
-        const raw = verified.payload.payload as { channelId?: unknown } | undefined
+        const raw = verified.payload.payload as { channelId?: unknown; from?: unknown; expiresAt?: unknown } | undefined
         const channelId =
           typeof raw?.channelId === 'string' && raw.channelId ? raw.channelId : undefined
+        const from = typeof raw?.from === 'string' ? raw.from : undefined
+        const expiresAt = typeof raw?.expiresAt === 'number' ? raw.expiresAt : undefined
         if (opts.channels && channelId) {
           await opts.channels.record({
             account: balanceAccount,
@@ -169,6 +171,10 @@ export async function handleTopup(
             ceilingBaseUnits: ceiling.toString(),
             openedAt: Date.now(),
             openSignature: undefined,
+            // Retain the open payload so a later channel-close can sign ONE
+            // voucher for the accumulated draw and settle on-chain (batch, not
+            // per-request — micro-payments stay off-chain, one settle per channel).
+            settle: { payload: verified.payload as unknown as import('@x402/core/types').PaymentPayload, requirements: verified.requirements },
           })
         }
         await opts.credits.accrue({

@@ -342,3 +342,38 @@ export function perTokenAtomic(perTokenUsdc: number): bigint {
 export function ceilingAtomic(ceilingUsdc: number): bigint {
   return BigInt(Math.round(ceilingUsdc * 1_000_000))
 }
+
+/** The minimal retained open data needed to settle a channel close. */
+export interface ChannelCloseInput {
+  channelId: string
+  from: string
+  expiresAt: number
+  payload: PaymentPayload
+  requirements: PaymentRequirements
+  /** Ceiling the channel was opened with, atomic USDC (clamps the close). */
+  maxBaseUnits: bigint
+  /** Accumulated draw to settle on-chain (atomic USDC), clamped to the ceiling. */
+  drawBaseUnits: bigint
+}
+
+/**
+ * Settle a channel close: sign ONE voucher for the accumulated draw and settle
+ * on-chain (settle_and_seal + distribute) — the payee is paid the draw, the
+ * payer is refunded the remainder. This is the "one settle per channel" batch
+ * that keeps every request's micro-payment off-chain while making the balance
+ * cryptographically verifiable. Best-effort per caller (a refund path exists
+ * via the channel's withdraw delay if the settle is interrupted).
+ *
+ * Reconstructs the full `UptoVerified` (retaining the original open payload, so
+ * the facilitator's settle sees the openTransaction) and reuses `settleUpto`
+ * exactly as the per-request path does.
+ */
+export async function settleChannelClose(cfg: X402Config, input: ChannelCloseInput): Promise<UptoSettlement> {
+  const verified: UptoVerified = {
+    maxBaseUnits: input.maxBaseUnits,
+    payer: input.from,
+    payload: input.payload,
+    requirements: input.requirements,
+  }
+  return settleUpto(cfg, verified, input.drawBaseUnits)
+}

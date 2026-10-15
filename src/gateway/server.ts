@@ -48,6 +48,7 @@ import {
   perTokenAtomic,
 } from './x402-upto.js'
 import type { UptoVerified, UptoSettlement } from './x402-upto.js'
+import { handleChannelClose } from './channel-close.js'
 import { classifyOutcome } from '../router/outcome.js'
 import { isCapable } from '../router/capabilities.js'
 import type { RoutingHints } from '../types.js'
@@ -685,6 +686,24 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     app.post('/v1/topup', topupRoute(config))
     // x402 discovery surface: GET advertises the challenge (keyless → 402).
     app.get('/v1/topup', topupRoute(config))
+    // Close the key's open payment channel: ONE on-chain settle for the
+    // accumulated draw (batch, not per-request). Key-authed.
+    app.post('/v1/channels/close', async (c) => {
+      const auth = await resolveAuth(config, c.req.header('authorization'))
+      let rawBody: unknown
+      try {
+        rawBody = await c.req.json()
+      } catch {
+        rawBody = {}
+      }
+      const result = await handleChannelClose(
+        config,
+        auth.ok ? auth.account : undefined,
+        config.channelStore,
+        rawBody,
+      )
+      return Response.json(result.body, { status: result.status })
+    })
   }
 
   app.get('/v1/models', async (c) => {
