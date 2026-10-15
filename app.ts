@@ -738,6 +738,18 @@ ${navHtml('connect')}
       <span class="note" id="fundstate" style="margin:0"></span>
     </div>
     <div class="e" id="funderr"></div>
+    <!-- Active channel status + close (settle on-chain once). -->
+    <div id="chanrow" class="hidden" style="margin-top:14px;border-top:1px solid var(--line2);padding-top:12px">
+      <div class="muted" style="font-size:13px;line-height:1.6">
+        <strong style="color:var(--fg)">Channel open</strong> · escrow <span class="mono" id="chanCeiling"></span> ·
+        balance <span class="mono" id="chanBalance"></span> ·
+        <span class="mono" id="chanId"></span>
+      </div>
+      <div style="margin-top:8px">
+        <button class="wcnt" id="closeBtn" type="button" style="background:transparent;color:#ff9a9a;border:1px solid var(--line2)">Close &amp; settle on-chain</button>
+        <span class="note" id="closestate" style="margin:0"></span>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="trycard">
@@ -787,6 +799,7 @@ function showOut(d){
   $('#env').textContent='export OPENAI_BASE_URL="'+base+'\\nexport OPENAI_API_KEY="'+d.key+'"';
   $('#meline').href='/me?key='+encodeURIComponent(d.key);
   $('#out').classList.remove('hidden');
+  refreshChannel();
 }
 // ── Wallet connect: ONE button. Uses the trusted bs58 lib + Wallet Standard,
 // with a Phantom legacy fallback. Signs the exact challenge message the server
@@ -891,12 +904,40 @@ async function fund(amountUsd){
       r=await window.ShipyardFund.topup(base+'/topup',init);
     }
     const d=await r.json().catch(()=>({}));
-    if(r.ok){fs.innerHTML='<span class="green">✓ '+(d.channel?'Channel open':'Funded')+' — balance $'+Number(d.balanceUsd||0).toFixed(2)+'</span>';}
-    else{fe.textContent='✗ '+(d.error||('funding failed ('+r.status+')'));}
-  }catch(e){fe.textContent='✗ '+(e&&e.message||String(e));}
-}
-$('#fundBtn').addEventListener('click',()=>fund(5));
+        if(r.ok){fs.innerHTML='<span class="green">✓ '+(d.channel?'Channel open':'Funded')+' — balance $'+Number(d.balanceUsd||0).toFixed(2)+'</span>';refreshChannel();}
+        else{fe.textContent='✗ '+(d.error||('funding failed ('+r.status+')'));}
+      }catch(e){fe.textContent='✗ '+(e&&e.message||String(e));}
+    }
+    $('#fundBtn').addEventListener('click',()=>fund(5));
 $('#fundBtn10').addEventListener('click',()=>fund(10));
+// ── Active channel: show + close (settle on-chain once) ─────────────────────
+async function refreshChannel(){
+  const row=$('#chanrow');if(!row||!_key)return;
+  try{
+    const r=await fetch('/api/me',{headers:{authorization:'Bearer '+_key}});
+    const d=await r.json();
+    const ch=d&&d.channel;
+    if(ch&&ch.channelId){
+      $('#chanCeiling').textContent='$'+Number(ch.ceilingUsd||0).toFixed(2);
+      $('#chanBalance').textContent='$'+Number(d.balanceUsd||0).toFixed(2);
+      $('#chanId').textContent=ch.channelId.slice(0,10)+'…';
+      row.classList.remove('hidden');
+    }else{
+      row.classList.add('hidden');
+    }
+  }catch(e){}
+}
+async function closeChannel(){
+  const cs=$('#closestate');cs.textContent='';if(!_key)return;
+  cs.textContent='Settling on-chain… (one tx for the session)';
+  try{
+    const r=await fetch(base+'/channels/close',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+_key},body:'{}'});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){cs.innerHTML='<span class="green">✓ Settled $'+Number(d.settledUsd||0).toFixed(2)+' · refunded $'+Number(d.refundedUsd||0).toFixed(2)+' · <a target="_blank" href="https://explorer.solana.com/tx/'+d.transaction+'">view tx ↗</a></span>';refreshChannel();}
+    else{cs.textContent='✗ '+(d.error||('close failed ('+r.status+')'));}
+  }catch(e){cs.textContent='✗ '+(e&&e.message||String(e));}
+}
+$('#closeBtn').addEventListener('click',closeChannel);
 // ── Step 3: run a real first prompt through the key ──────────────────────────
 async function runPrompt(){
   const rs=$('#runstate'),ro=$('#runout');rs.textContent='';ro.classList.add('hidden');
