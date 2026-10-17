@@ -47,7 +47,7 @@
   nav .links a:hover { color: #fff; }
   @media (max-width: 720px) { nav .links { display: none; } }
 
-  /* ============ HERO: the clip IS the hero — copy tight above it ============ */
+  /* ============ HERO: the clip first, copy beneath ============ */
   .hero { position: relative; overflow: hidden; padding: 84px 0 64px; }
   .hero-copy { position: relative; z-index: 2; max-width: 820px; }
   .kicker {
@@ -76,7 +76,7 @@
 
   /* ---- the framed clip: the media IS the design, UI only frames it ---- */
   .media-frame {
-    position: relative; z-index: 2; margin: 32px 0 0;
+    position: relative; z-index: 2; margin: 0;
     border: 1px solid rgba(110,130,156,0.28); border-radius: 15px; overflow: hidden;
     background: #060b1a; box-shadow: 0 50px 90px -40px rgba(0,0,0,0.85);
   }
@@ -100,6 +100,7 @@
   }
   .media-caption span, .media-caption figcaption { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fade); }
   .media-caption b { color: #d3dfec; font-weight: 500; }
+  .hero-copy { margin-top: 56px; }
 
   /* scroll cue */
   .scroll-cue { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 3;
@@ -131,6 +132,19 @@
   .code .c { color: #5e7391; } .code .k { color: #8fb3e0; } .code .s { color: #b9d4f0; }
 
   footer { padding: 44px 0 70px; border-top: 1px solid rgba(110,130,156,0.14); color: var(--fade); font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; }
+
+  /* ---- the ship, atmospheric in the dark: closing band background ---- */
+  .ship-band { position: relative; overflow: hidden; }
+  .ship-band::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: url("ship.png") no-repeat 86% 48% / min(46vw, 560px) auto;
+    image-rendering: pixelated; opacity: 0.42;
+    -webkit-mask-image: radial-gradient(55% 75% at 80% 52%, #000 0%, transparent 72%);
+    mask-image: radial-gradient(55% 75% at 80% 52%, #000 0%, transparent 72%);
+  }
+  @media (max-width: 720px) {
+    .ship-band::before { background-position: 50% 100%; background-size: min(70vw, 340px) auto; opacity: 0.28; }
+  }
   footer .cols { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
   footer a { color: var(--mist); border-bottom: 1px solid rgba(110,130,156,0.3); }
   footer a:hover { color: #fff; }
@@ -148,6 +162,19 @@
 <!-- ============ HERO ============ -->
 <div class="hero">
   <div class="wrap">
+    <figure class="media-frame">
+      <div class="media-chrome">
+        <i></i><i></i><i></i>
+        <span class="label">the open sea — routed</span>
+        <span class="status"><i></i> routing live</span>
+      </div>
+      <video autoplay muted loop playsinline preload="metadata" src="ocean.mp4" aria-label="ASCII glyph ocean — every token is cargo"></video>
+      <figcaption class="media-caption">
+        <span>every token is cargo. <b>we run the manifests.</b></span>
+        <span>fig. 01 — the crossing</span>
+      </figcaption>
+    </figure>
+
     <div class="hero-copy">
       <div class="kicker">openai-compatible · one endpoint · x402 settlement</div>
       <h1>The inference layer that <em>pays for itself.</em></h1>
@@ -161,19 +188,6 @@
         <a class="quiet" href="/portal/">try the chat portal →</a>
       </div>
     </div>
-
-    <figure class="media-frame">
-      <div class="media-chrome">
-        <i></i><i></i><i></i>
-        <span class="label">the open sea — routed</span>
-        <span class="status"><i></i> routing live</span>
-      </div>
-      <video autoplay muted loop playsinline preload="metadata" src="ocean.mp4" aria-label="ASCII glyph ocean — every token is cargo"></video>
-      <figcaption class="media-caption">
-        <span>every token is cargo. <b>we run the manifests.</b></span>
-        <span>fig. 01 — the crossing</span>
-      </figcaption>
-    </figure>
   </div>
   <div class="scroll-cue">↓</div>
 </div>
@@ -290,7 +304,7 @@ curl <span class="s" id="b2">https://shipyard-inference.vercel.app/v1/chat/compl
       </div>
     </section>
 
-    <section id="try">
+    <section id="try" class="ship-band" style="padding-bottom: 140px;">
       <div class="sec-k">05 — connect</div>
       <h2>Change one URL. <em>Keep your model.</em></h2>
       <div class="code"><span class="c"># issues an sk-shipyard key + a status line — model untouched</span>
