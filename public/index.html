@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Shipyard Inference — the inference layer your agents pay for themselves</title>
-<meta name="description" content="One endpoint in front of every model. Routed to the cheapest capable model, failed over automatically, settled per request in USDC over x402 — and pays your agent to think."/>
+<meta name="description" content="One endpoint in front of every model. Routed to the cheapest capable model, failed over automatically, metered per call against a funded payment channel — settled on-chain when you close it."/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"/>
@@ -176,12 +176,13 @@
     </figure>
 
     <div class="hero-copy">
-      <div class="kicker">openai-compatible · one endpoint · x402 settlement</div>
+      <div class="kicker">openai-compatible · one endpoint · payment channels</div>
       <h1>The inference layer that <em>pays for itself.</em></h1>
       <p class="hero-sub">
         One endpoint in front of every model — routed to the cheapest capable
-        provider, failed over when one blinks, billed per call in <b>USDC</b>.
-        No subscription, no markup — just <b>cheaper, more reliable inference</b>.
+        provider, failed over when one blinks, metered per call against a
+        funded <b>payment channel</b>. No subscription, no markup — just
+        <b>cheaper, more reliable inference</b>.
       </p>
       <div class="cta">
         <a class="primary" href="/connect">connect a wallet →</a>
@@ -208,10 +209,10 @@
           </p>
         </div>
         <div class="ledger">
-          <div class="ledger-head"><span>three steps</span><span>from wallet to answer</span></div>
+          <div class="ledger-head"><span>four steps</span><span>from wallet to answer</span></div>
           <div class="ledger-row"><span class="who"><b>1 · connect</b></span><span>a wallet you already have</span><span class="num">Phantom · Solflare · PayBox</span></div>
           <div class="ledger-row"><span class="who"><b>2 · talk</b></span><span>routed to the cheapest capable model</span><span class="num blue">auto</span></div>
-          <div class="ledger-row"><span class="who"><b>3 · settle</b></span><span>meters to the token, per request</span><span class="num">USDC</span></div>
+          <div class="ledger-row"><span class="who"><b>3 · draw</b></span><span>every call meters off-chain, to the token</span><span class="num">per call</span></div>
           <div class="ledger-row"><span class="who"><b>4 · your box</b></span><span>local models run free first</span><span class="num blue">$0.00</span></div>
         </div>
       </div>
@@ -287,19 +288,21 @@ curl <span class="s" id="b2">https://shipyard-inference.vercel.app/v1/chat/compl
       <div class="split">
         <div>
           <div class="sec-k">04 — pricing</div>
-          <h2>Pay per call. <em>Nothing else.</em></h2>
+          <h2>Fund a channel. <em>Settle once.</em></h2>
           <p>
-            No subscription, no seat fees, no markup. Every call settles in
-            USDC over x402 at the provider's own rate, with spend ceilings
-            per key so a runaway agent can't drain you. What you see in the
-            ledger is what you paid.
+            No subscription, no seat fees, no markup. Fund a payment channel
+            once in <b>USDC</b> — every call then draws it down off-chain at
+            the provider's own rate, and closing the channel settles the whole
+            session in <b>one on-chain transaction</b>. Spend ceilings per key
+            so a runaway agent can't drain you.
           </p>
         </div>
         <div class="ledger">
           <div class="ledger-head"><span>runs where you want</span><span>no middleman</span></div>
           <div class="ledger-row"><span class="who"><b>your box</b> / ollama</span><span>local models</span><span class="num">$0.00</span><span class="tag">free</span></div>
           <div class="ledger-row"><span class="who"><b>cloud burst</b></span><span>when local isn't enough</span><span class="num">auto</span><span class="tag">routed</span></div>
-          <div class="ledger-row"><span class="who"><b>settlement</b></span><span>your wallet → provider, USDC</span><span class="num">x402</span><span class="tag">direct</span></div>
+          <div class="ledger-row"><span class="who"><b>open channel</b></span><span>fund once, USDC escrowed</span><span class="num">x402</span><span class="tag">upto</span></div>
+          <div class="ledger-row"><span class="who"><b>close &amp; settle</b></span><span>one on-chain settle for the draw</span><span class="num">1 tx</span><span class="tag">settle</span></div>
         </div>
       </div>
     </section>
