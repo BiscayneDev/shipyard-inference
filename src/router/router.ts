@@ -742,6 +742,9 @@ export function taskClassMaxTier(taskClass: string | undefined, confidence: numb
   switch (taskClass) {
     case 'background': return 'economy'
     case 'synthesize': return 'standard'
+    // Generative-UI / build-something-new turns are code generation: no
+    // existing comp to reuse, the model authors the page/component itself.
+    case 'create': return 'frontier'
     case 'chat':
     case 'lookup':
       return confidence !== undefined && confidence < CASCADE_CONFIDENCE ? 'standard' : undefined

@@ -114,7 +114,7 @@ export function clientRoutingHints(prefs: unknown): RoutingHints | undefined {
   return Object.keys(hints).length ? hints : undefined
 }
 
-const TASK_CLASS_BUDGET_MS: Record<string, number> = { chat: 4000, lookup: 12000, synthesize: 12000, research: 40000 }
+const TASK_CLASS_BUDGET_MS: Record<string, number> = { chat: 4000, lookup: 12000, synthesize: 12000, research: 40000, create: 60000 }
 
 /**
  * Task hints a client sends as headers (Dinghy: `x-dinghy-task-class`,

@@ -26,6 +26,10 @@ test('research is never capped; synthesize caps at standard; background at econo
   assert.equal(taskClassMaxTier('background', 0.99), 'economy')
   assert.equal(clampTier('frontier', undefined, taskClassMaxTier('chat', 0.58)), 'standard')
 })
+test('create: generative-UI / build-something-new turns get a frontier ceiling', () => {
+  assert.equal(taskClassMaxTier('create', 0.99), 'frontier')
+  assert.equal(taskHeaderHints(h({ 'x-dinghy-task-class': 'create' }))?.taskClass, 'create')
+})
 
 import { createGatewayApp } from '../src/gateway/index.js'
 import { candidate, mockProvider, model } from './helpers.js'
