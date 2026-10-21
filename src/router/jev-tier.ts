@@ -58,6 +58,17 @@ export interface JevTierInferrerOptions {
    * (accept any well-formed answer).
    */
   minConfidence?: number
+  /**
+   * What to do when Jev's confidence is below {@link minConfidence}:
+   *  - `'fallback'` (default): use the structural heuristics — the historical
+   *    behavior. Note this routes DOWN, which can put a hard query on a cheap
+   *    model exactly when Jev was unsure.
+   *  - `'escalate'`: fail UP — route one tier above Jev's choice (capped by
+   *    {@link maxTier} and floored by the structural floor). An unsure
+   *    judgment buys quality, never bets against the task. The decision is
+   *    marked `escalated: true` for telemetry.
+   */
+  onLowConfidence?: 'fallback' | 'escalate'
   /** Observability: what tier was applied and where it came from. */
   onResult?: (result: JevTierResult) => void
 }
@@ -77,6 +88,8 @@ export interface JevTierResult {
   confidence?: number
   /** Jev's `needs_reasoning` score (0–1), when answered. */
   needsReasoning?: number
+  /** True when a low-confidence judgment was escalated one tier (onLowConfidence 'escalate'). */
+  escalated?: boolean
   /** Decision-call latency in ms. */
   latencyMs?: number
   /** Backend model that judged (e.g. `jev-1.13.0`). */
@@ -112,6 +125,8 @@ export interface TierDecision {
   usage?: { inputTokens: number; outputTokens: number }
   /** True when the decision was served from the cache (no backend call). */
   cached?: boolean
+  /** True when a low-confidence judgment was escalated one tier (onLowConfidence 'escalate'). */
+  escalated?: boolean
 }
 
 /** What `autoTier` may return: a tier, or a tier with evidence. */
@@ -167,6 +182,9 @@ export function createJevTierInferrer(
   const timeoutMs = opts.timeoutMs ?? 2000
   const stateCharBudget = opts.stateCharBudget ?? 6000
   const minConfidence = opts.minConfidence ?? 0
+  const onLowConfidence = opts.onLowConfidence ?? 'fallback'
+  const nextTierOf = (t: ModelTier): ModelTier =>
+    (Object.keys(TIER_RANK) as ModelTier[]).find((k) => TIER_RANK[k] === TIER_RANK[t] + 1) ?? t
   const cacheTtlMs = opts.cacheTtlMs ?? 0
   const cacheMaxEntries = opts.cacheMaxEntries ?? 512
   const cache = cacheTtlMs > 0 ? new Map<string, { at: number; decision: TierDecision }>() : undefined
@@ -262,34 +280,44 @@ export function createJevTierInferrer(
       if (tierAnswer?.type !== 'choice' || !(tierAnswer.choice in TIER_QUESTIONS.tier.criteria)) {
         throw new Error(`jev tier answer malformed: ${JSON.stringify(tierAnswer)?.slice(0, 200)}`)
       }
-      if (tierAnswer.confidence < minConfidence) {
+      if (tierAnswer.confidence < minConfidence && onLowConfidence === 'fallback') {
         throw new Error(`jev tier confidence ${tierAnswer.confidence} below minimum ${minConfidence}`)
       }
-      let jevTier = tierAnswer.choice as ModelTier
+      // Fail up: an unconfident judgment escalates one tier rather than
+      // routing down — being unsure must never bet a hard query on a cheap
+      // model. Still subject to the structural floor and maxTier below.
+      // `jevTier` stays Jev's RAW choice (telemetry); escalation only moves
+      // the effective tier.
+      const escalated = tierAnswer.confidence < minConfidence && onLowConfidence === 'escalate'
+      const rawTier = tierAnswer.choice as ModelTier
+      let effective = escalated ? nextTierOf(rawTier) : rawTier
       // A strong "needs reasoning" signal floors the answer at standard —
       // even when the tier choice was economy — since reasoning-heavy tasks
-      // are exactly what economy models fumble.
-      if (jevTier === 'economy' && reasoningAnswer?.type === 'noul' && reasoningAnswer.noul > 0.75) {
-        jevTier = 'standard'
-      }
+      // are exactly what economy models fumble. A very strong signal (> 0.9)
+      // floors at frontier: deep multi-step reasoning is what frontier rungs
+      // exist for, whatever the tier choice said.
+      const noul = reasoningAnswer?.type === 'noul' ? reasoningAnswer.noul : undefined
+      if (noul !== undefined && noul > 0.9) effective = 'frontier'
+      else if (effective === 'economy' && noul !== undefined && noul > 0.75) effective = 'standard'
       const floorTier = floorOf(params)
-      const tier0 = combine === 'max' && TIER_RANK[floorTier] > TIER_RANK[jevTier] ? floorTier : jevTier
+      const tier0 = combine === 'max' && TIER_RANK[floorTier] > TIER_RANK[effective] ? floorTier : effective
       // Cap the effective tier (appliance with no frontier rung); the raw
       // judgment is preserved on the decision for telemetry.
       const tier = opts.maxTier && TIER_RANK[tier0] > TIER_RANK[opts.maxTier] ? opts.maxTier : tier0
       const decision: TierDecision = {
         tier,
         source: 'jev',
-        jevTier,
+        jevTier: rawTier,
         structuralTier,
         confidence: tierAnswer.confidence,
-        ...(reasoningAnswer?.type === 'noul' ? { needsReasoning: reasoningAnswer.noul } : {}),
+        ...(noul !== undefined ? { needsReasoning: noul } : {}),
+        ...(escalated ? { escalated: true } : {}),
         latencyMs,
         decidedBy: res.model,
         ...(res.usage ? { usage: res.usage } : {}),
       }
       cache?.set(cacheKey, { at: Date.now(), decision })
-      opts.onResult?.({ tier, jevTier, structuralTier, fallback: false, confidence: tierAnswer.confidence, ...(reasoningAnswer?.type === 'noul' ? { needsReasoning: reasoningAnswer.noul } : {}), latencyMs, decidedBy: res.model, ...(res.usage ? { usage: res.usage } : {}) })
+      opts.onResult?.({ tier, jevTier: rawTier, structuralTier, fallback: false, confidence: tierAnswer.confidence, escalated, ...(noul !== undefined ? { needsReasoning: noul } : {}), latencyMs, decidedBy: res.model, ...(res.usage ? { usage: res.usage } : {}) })
       return decision
     } catch (error) {
       const latencyMs = Date.now() - t0

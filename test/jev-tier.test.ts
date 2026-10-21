@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createJevTierInferrer, inferTier } from '../src/router/index.js'
+import type { TierDecision } from '../src/router/index.js'
 import { Router } from '../src/router/index.js'
 import { createStubDecisionProvider } from '../src/decisions/index.js'
 import type { DecisionProvider, DecisionRequest, DecisionResponse } from '../src/decisions/types.js'
@@ -88,6 +89,39 @@ test('timeout falls back to the structural tier', async () => {
 test('low-confidence Jev answer falls back to the structural tier', async () => {
   const inferrer = createJevTierInferrer({ provider: answering('frontier', { confidence: 0.1 }), minConfidence: 0.5 })
   assert.equal((await inferrer(simple)).tier, 'economy')
+})
+
+// Fail-up escalation: an unconfident judgment must never risk a hard query on
+// a cheap model. One rank above Jev's choice is the safe floor.
+test("onLowConfidence 'escalate' routes one tier ABOVE Jev's choice instead of falling down", async () => {
+  const inferrer = createJevTierInferrer({
+    provider: answering('standard', { confidence: 0.2 }),
+    minConfidence: 0.6,
+    onLowConfidence: 'escalate',
+  })
+  const d = (await inferrer(simple)) as TierDecision
+  assert.equal(d.tier, 'frontier')
+  assert.equal(d.source, 'jev')
+  assert.equal(d.escalated, true)
+  assert.equal(d.jevTier, 'standard')
+})
+
+test("onLowConfidence 'escalate' respects maxTier and the structural floor", async () => {
+  const inferrer = createJevTierInferrer({
+    provider: answering('economy', { confidence: 0.2 }),
+    minConfidence: 0.6,
+    onLowConfidence: 'escalate',
+    maxTier: 'standard',
+  })
+  const d = (await inferrer(simple)) as TierDecision
+  assert.equal(d.tier, 'standard')
+  assert.equal(d.escalated, true)
+})
+
+test('a very strong needs_reasoning signal (>= 0.9) floors the tier at frontier', async () => {
+  const inferrer = createJevTierInferrer({ provider: answering('economy', { noul: 0.95 }) })
+  const d = (await inferrer(simple)) as TierDecision
+  assert.equal(d.tier, 'frontier')
 })
 
 test('async autoTier works through the Router: Jev judgment picks the frontier model', async () => {

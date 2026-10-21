@@ -57,6 +57,8 @@ export type RouterEvent =
       decidedTier?: ModelTier
       /** True when a client min/max tier changed the judgment. */
       clamped?: boolean
+      /** True when a low-confidence judgment was escalated one tier (fail-up). */
+      escalated?: boolean
     }
   | {
       type: 'retry'
@@ -578,6 +580,7 @@ export class Router implements LLMProvider {
         ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
         ...(d.usage ? { usage: d.usage } : {}),
         ...(d.cached !== undefined ? { cached: d.cached } : {}),
+        ...(d.escalated ? { escalated: true } : {}),
       })
     }
     if (finalTier === undefined && !ceiling) return params

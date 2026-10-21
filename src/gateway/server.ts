@@ -317,6 +317,8 @@ interface RequestContext {
     structuralTier?: string
     confidence?: number
     needsReasoning?: number
+    /** True when a low-confidence judgment was escalated one tier (fail-up). */
+    escalated?: boolean
     latencyMs?: number
     decidedBy?: string
     usage?: { inputTokens: number; outputTokens: number }
@@ -353,6 +355,7 @@ function capture(ctx: RequestContext, event: RouterEvent): void {
       ...(event.structuralTier !== undefined ? { structuralTier: event.structuralTier } : {}),
       ...(event.confidence !== undefined ? { confidence: event.confidence } : {}),
       ...(event.needsReasoning !== undefined ? { needsReasoning: event.needsReasoning } : {}),
+      ...(event.escalated ? { escalated: true } : {}),
       ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
       ...(event.decidedBy !== undefined ? { decidedBy: event.decidedBy } : {}),
       ...(event.usage ? { usage: event.usage } : {}),

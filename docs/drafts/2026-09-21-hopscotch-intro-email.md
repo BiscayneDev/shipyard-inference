@@ -30,5 +30,5 @@ Shipyard — shipyardOS / Inference
 - [ ] Live gateway: `node dist/gateway/bin.js --config local.gateway.config.mjs` (port 8787)
 - [ ] Cloudflared tunnel for the public URL
 - [ ] Surfnet-funded wallet for the x402 demo (`scripts/surfnet-fund.mts`)
-- [ ] Hopscotch rung live in the ladder — needs `HOPSCOTCH_KEY` from them (ask for one in the email)
+- [ ] Hopscotch rung live in the ladder — needs `HOPSCOTCH_API_KEY` from them (ask for one in the email; the code reads `HOPSCOTCH_API_KEY`, see `src/providers/hopscotch.ts`)
 - [ ] `/catalog` page as the "this is what an operator sees" moment (hardware-fit column is the differentiator)

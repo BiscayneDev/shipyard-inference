@@ -376,6 +376,12 @@ const gateway = createGatewayApp({
     ? createJevTierInferrer({
         provider: jevDecisionProvider,
         combine: 'max',
+        // Confidence gate + fail-up: below 0.6 the judgment isn't trusted, and
+        // an unsure Jev escalates one tier instead of falling back to the
+        // (often cheaper) structural tier. An unconfident guess must never
+        // bet a hard query on a cheap model.
+        minConfidence: 0.6,
+        onLowConfidence: 'escalate',
         // Reuse identical judgments for 5 min — no decision call, latency, or
         // Jev input cost for repeated/continued request states.
         cacheTtlMs: 300_000,
