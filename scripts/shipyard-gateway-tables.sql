@@ -48,3 +48,21 @@ alter table shipyard_campaigns add column if not exists status            text n
 alter table shipyard_campaigns add column if not exists payment_reference text;
 alter table shipyard_campaigns add column if not exists paid_signature    text;
 alter table shipyard_campaigns add column if not exists created_at        bigint;
+
+-- OAuth connect flow (src/gateway/oauth.ts SupabaseOAuthStore).
+-- Service-role only: RLS on, no public policies.
+create table if not exists shipyard_oauth_codes (
+  code_hash  text    primary key,
+  consumed   boolean not null default false,
+  expires_at bigint  not null,
+  rec        jsonb   not null
+);
+create index if not exists shipyard_oauth_codes_expires_idx on shipyard_oauth_codes (expires_at);
+alter table shipyard_oauth_codes enable row level security;
+
+create table if not exists shipyard_oauth_once (
+  k          text    primary key,
+  expires_at bigint  not null
+);
+create index if not exists shipyard_oauth_once_expires_idx on shipyard_oauth_once (expires_at);
+alter table shipyard_oauth_once enable row level security;
