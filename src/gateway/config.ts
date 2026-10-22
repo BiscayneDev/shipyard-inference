@@ -220,6 +220,12 @@ export interface GatewayConfig {
    */
   projectCaps?: ProjectCapsConfig
   /**
+   * Lifetime USD budget per Dock/Shipyard connection (OAuth-issued keys). A
+   * connection's projectId starts with `prefix`; once its lifetime spend reaches
+   * `budgetUsd`, every call is refused with 402 budget_exhausted. Off when omitted.
+   */
+  connectionBudget?: import('./connection-budget.js').ConnectionBudget
+  /**
    * BYO upstream keys ("your key, your bill"). Each entry names a candidate id
    * (`provider`) and the env var holding the caller's own upstream API key.
    * When `process.env[apiKeyEnv]` is set, that candidate's decisions are tried

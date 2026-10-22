@@ -49,6 +49,7 @@ import {
 } from './drawdown.js'
 import type { CreditStore } from '../tender/credit-store.js'
 import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
+import { connectionGate, connectionSpend } from './connection-budget.js'
 import {
   buildUptoChallenge,
   verifyUptoOpen,
@@ -795,6 +796,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
 
     // Per-project daily cap (keyed requests whose project has a cap).
     const capProjectId = auth.account?.projectId
+    const connGate = await connectionGate(config.connectionBudget, capProjectId)
+    if (connGate) return c.json(connGate, 402)
     const overCap = await overProjectCap(config.projectCaps, capProjectId)
     if (overCap && config.projectCaps) {
       return c.json({ error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
@@ -858,7 +861,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     /** Record actual spend after the request completes (never blocks). */
     const recordSpend = async (costUsd: number | undefined): Promise<void> => {
-      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd)
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd); void connectionSpend(config.connectionBudget, capProjectId, costUsd, ctx.billed)
       // Balance drawdown: debit ACTUAL cost from the shared credit ledger
       // (same identity topup credited). $0 cost never debits; BYO never
       // debits; idempotent per request id. Independent of config.spend —
@@ -1149,6 +1152,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (!auth.ok) return c.json(anthropicAuthError, 401)
     const upto = auth.upto
     const capProjectId = auth.account?.projectId
+    const connGate = await connectionGate(config.connectionBudget, capProjectId)
+    if (connGate) return c.json(connGate, 402)
     const overCap = await overProjectCap(config.projectCaps, capProjectId)
     if (overCap && config.projectCaps) {
       return c.json({ type: 'error' as const, error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
@@ -1210,7 +1215,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             }
           })
           await finish(ctx)
-          if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
+          if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd); void connectionSpend(config.connectionBudget, capProjectId, ctx.costUsd, ctx.billed)
           if (config.guardrails && guardText) {
             evaluateGuardrails(config, id, params, guardText, ctx.model)
           }
@@ -1257,7 +1262,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
-      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd); void connectionSpend(config.connectionBudget, capProjectId, ctx.costUsd, ctx.billed)
       await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {

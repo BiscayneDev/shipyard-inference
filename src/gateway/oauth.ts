@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import type { Account, ApiKeyStore } from './keys.js'
+import { verifyHandoff, readConsent, readCookie, consentCookieHeader, signConsent } from './handoff.js'
 
 // OAuth 2.0 authorization code + PKCE (S256) for third-party apps (Dock).
 // The user signs in once to their Shipyard account, approves on the consent
@@ -14,6 +15,8 @@ export interface OAuthClient {
   redirectUris: string[]
   /** Hard ceiling. Requested scopes outside this list are refused. */
   scopes: string[]
+  /** SHA-256 hex of the client secret. Unset = client cannot exchange codes (fail closed). */
+  secretSha256?: string
 }
 
 export const OAUTH_CLIENTS: Record<string, OAuthClient> = {
@@ -24,6 +27,7 @@ export const OAUTH_CLIENTS: Record<string, OAuthClient> = {
       'http://localhost:3000/api/connect/shipyard/callback',
     ],
     scopes: ['chat:write', 'route:preview'],
+    secretSha256: process.env.SHIPYARD_DOCK_CLIENT_SECRET_SHA256 || undefined,
   },
 }
 
@@ -58,6 +62,10 @@ export interface OAuthStore {
   putCode(rec: AuthCodeRecord): Promise<void>
   getCode(codeHash: string): Promise<AuthCodeRecord | undefined>
   updateCode(codeHash: string, patch: Partial<AuthCodeRecord>): Promise<void>
+  /** Atomically mark a code consumed. Returns false if it was already consumed (replay). */
+  markCodeConsumed(codeHash: string): Promise<boolean>
+  /** Atomically record a one-time key (handoff jti). Returns false if already seen. */
+  consumeOnce(key: string, expiresAtMs: number): Promise<boolean>
 }
 
 export class MemoryOAuthStore implements OAuthStore {
@@ -67,6 +75,20 @@ export class MemoryOAuthStore implements OAuthStore {
   async updateCode(h: string, patch: Partial<AuthCodeRecord>) {
     const r = this.codes.get(h)
     if (r) this.codes.set(h, { ...r, ...patch })
+  }
+  async markCodeConsumed(h: string) {
+    const r = this.codes.get(h)
+    if (!r || r.consumed) return false
+    this.codes.set(h, { ...r, consumed: true })
+    return true
+  }
+  private readonly once = new Map<string, number>()
+  async consumeOnce(key: string, expiresAtMs: number) {
+    const t = Date.now()
+    for (const [k, e] of this.once) if (e <= t) this.once.delete(k)
+    if (this.once.has(key)) return false
+    this.once.set(key, expiresAtMs)
+    return true
   }
 }
 
@@ -93,8 +115,14 @@ export interface OAuthAppOptions {
   audit?: (e: AuditEvent) => void
   /** Per-client token endpoint limit (requests per minute). Default 30. */
   tokenRatePerMinute?: number
-  /** Secret for the consent CSRF token. Required. */
+  /** Secret for the consent CSRF token and consent cookie. Required. */
   csrfSecret: string
+  /** Override the client registry (tests). Defaults to OAUTH_CLIENTS. */
+  clients?: Record<string, OAuthClient>
+  /** HMAC secret shared with the Shipyard web app for handoff tokens (>= 32 chars). Unset = /oauth/handoff refuses. */
+  handoffSecret?: string
+  /** Expected `iss` of handoff tokens: the Shipyard web app origin. */
+  handoffIssuer?: string
   now?: () => number
 }
 
@@ -176,12 +204,27 @@ export function validateAuthorizeParams(q: Record<string, string | undefined>, c
   return { ok: true, client, redirectUri, scopes: [...new Set(requested)], codeChallenge: q.code_challenge, state: q.state, workspace: q.workspace }
 }
 
+function safeEqHex(a: string, b: string): boolean {
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
+/** Session resolver for the consent cookie set by /oauth/handoff. Fail closed. */
+export function consentSessionResolver(csrfSecret: string, now: () => number = Date.now) {
+  return async (c: Context): Promise<ShipyardSession | undefined> => {
+    const userId = readConsent(readCookie(c.req.header('cookie'), 'shipyard_consent'), csrfSecret, now())
+    return userId ? { userId } : undefined
+  }
+}
+
 export function createOAuthApp(opts: OAuthAppOptions): Hono {
   const app = new Hono()
   const store = opts.store ?? new MemoryOAuthStore()
   const now = opts.now ?? Date.now
   const audit = (e: Omit<AuditEvent, 'at'>) => opts.audit?.({ ...e, at: now() })
   const budgetUsd = opts.budgetUsd ?? DEFAULT_CONNECTION_BUDGET_USD
+  const clients = opts.clients ?? OAUTH_CLIENTS
   const csrf = (userId: string, p: { clientId: string; state: string; codeChallenge: string; workspace: string; redirectUri: string; scope: string }) =>
     createHash('sha256').update([opts.csrfSecret, userId, p.clientId, p.state, p.codeChallenge, p.workspace, p.redirectUri, p.scope].join('\u0000')).digest('base64url')
 
@@ -196,9 +239,35 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
     return h.n > limit
   }
 
+  // Token handoff from the Shipyard web app. Verifies the signed token, consumes its jti once,
+  // and sets the short consent-session cookie. Only same-origin /oauth/authorize targets are allowed.
+  app.get('/oauth/handoff', async (c) => {
+    c.header('Cache-Control', 'no-store')
+    const token = c.req.query('token') ?? ''
+    const ret = c.req.query('return') ?? ''
+    const me = new URL(c.req.url)
+    let target: URL
+    try { target = new URL(ret) } catch { return c.text('Handoff refused: bad return', 400) }
+    if (target.origin !== me.origin || target.pathname !== '/oauth/authorize') return c.text('Handoff refused: bad return', 400)
+    if (!opts.handoffSecret || !opts.handoffIssuer) return c.text('Shipyard sign-in is not configured', 503)
+    const nowMs = now()
+    const v = verifyHandoff(token, { secret: opts.handoffSecret, expectedIss: opts.handoffIssuer, nowMs })
+    if (!v.ok) {
+      audit({ event: 'authorize.denied', reason: `handoff_${v.reason}` })
+      return c.text('Sign-in handoff failed. Start the connection again from Dock.', 401)
+    }
+    const fresh = await store.consumeOnce(`jti:${v.payload.jti}`, v.payload.exp * 1000)
+    if (!fresh) {
+      audit({ event: 'authorize.denied', userId: v.payload.sub, reason: 'handoff_replay' })
+      return c.text('Sign-in handoff already used. Start the connection again from Dock.', 401)
+    }
+    c.header('Set-Cookie', consentCookieHeader(signConsent(v.payload.sub, opts.csrfSecret, nowMs)))
+    return c.redirect(target.toString())
+  })
+
   app.get('/oauth/authorize', async (c) => {
     const q = Object.fromEntries(Object.entries(c.req.query()).map(([k, v]) => [k, String(v)]))
-    const v = validateAuthorizeParams(q)
+    const v = validateAuthorizeParams(q, clients)
     if ('fatal' in v) return c.text(`Authorization request refused: ${v.fatal}`, 400)
     if ('redirect' in v) {
       // redirect_uri is valid; errors go back to the client.
@@ -207,9 +276,10 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
     if (!opts.loginUrl) return c.text('Shipyard sign-in is not configured', 503)
     const session = await opts.resolveSession(c)
     if (!session) {
+      // The login URL is the web app's handoff route; it returns here after minting a token.
       const back = new URL(c.req.url)
       const login = new URL(opts.loginUrl)
-      login.searchParams.set('next', back.pathname + back.search)
+      login.searchParams.set('return', back.toString())
       c.header('Cache-Control', 'no-store')
       return c.redirect(login.toString())
     }
@@ -221,7 +291,7 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
 
   app.post('/oauth/authorize', async (c) => {
     const b = await readBody(c)
-    const v = validateAuthorizeParams(b)
+    const v = validateAuthorizeParams(b, clients)
     if ('fatal' in v) return c.text(`Authorization request refused: ${v.fatal}`, 400)
     if ('redirect' in v) return c.redirect(redirectWithParams(v.redirect.redirectUri, { error: v.redirect.error, state: b.state ?? '' }))
     const session = await opts.resolveSession(c)
@@ -250,7 +320,13 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
     if (b.grant_type !== 'authorization_code') return oauthError(c, 400, 'unsupported_grant_type')
     const clientId = b.client_id ?? ''
     if (limited(`token:${clientId || 'anon'}`)) return oauthError(c, 429, 'rate_limited', 'Too many token requests')
-    if (!OAUTH_CLIENTS[clientId]) return oauthError(c, 401, 'invalid_client')
+    const client = clients[clientId]
+    if (!client) return oauthError(c, 401, 'invalid_client')
+    // Client authentication: hashed secret, constant-time compare. Checked before the code is touched.
+    if (!client.secretSha256 || !b.client_secret || !safeEqHex(sha256hex(b.client_secret), client.secretSha256)) {
+      audit({ event: 'token.refused', clientId, reason: 'client_auth' })
+      return oauthError(c, 401, 'invalid_client')
+    }
     if (!b.code || !b.code_verifier || !b.redirect_uri) return oauthError(c, 400, 'invalid_request')
     const rec = await store.getCode(sha256hex(b.code))
     if (!rec) {
@@ -267,7 +343,11 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
       return oauthError(c, 400, 'invalid_grant')
     }
     // Any attempt with the live code consumes it, whether or not it succeeds.
-    await store.updateCode(rec.codeHash, { consumed: true })
+    // Atomic: two concurrent exchanges cannot both win.
+    if (!(await store.markCodeConsumed(rec.codeHash))) {
+      audit({ event: 'token.replay', clientId, userId: rec.userId, workspace: rec.workspace, keyId: rec.issuedKeyId, reason: 'code_replay' })
+      return oauthError(c, 400, 'invalid_grant')
+    }
     const refuse = (reason: string) => {
       audit({ event: 'token.refused', clientId, userId: rec.userId, workspace: rec.workspace, reason })
       return oauthError(c, 400, 'invalid_grant')
@@ -334,4 +414,48 @@ export function createOAuthApp(opts: OAuthAppOptions): Hono {
   })
 
   return app
+}
+
+/**
+ * Durable OAuth state for serverless (codes, handoff jtis). Tables in the gateway's
+ * Supabase project: shipyard_oauth_codes and shipyard_oauth_once (see scripts/shipyard-gateway-tables.sql).
+ */
+export class SupabaseOAuthStore implements OAuthStore {
+  private readonly base: string
+  private readonly headers: Record<string, string>
+  constructor(opts: { url: string; key: string; fetch?: typeof fetch }) {
+    this.base = opts.url.replace(/\/+$/, '') + '/rest/v1'
+    this.f = opts.fetch ?? fetch
+    this.headers = { apikey: opts.key, authorization: `Bearer ${opts.key}`, 'content-type': 'application/json' }
+  }
+  private readonly f: typeof fetch
+  private async call(path: string, init: RequestInit & { prefer?: string } = {}): Promise<unknown[]> {
+    const { prefer, ...rest } = init
+    const res = await this.f(`${this.base}/${path}`, { ...rest, headers: { ...this.headers, ...(prefer ? { Prefer: prefer } : {}) } })
+    if (!res.ok) throw new Error(`oauth store ${res.status}`)
+    const text = await res.text()
+    return text ? (JSON.parse(text) as unknown[]) : []
+  }
+  async putCode(rec: AuthCodeRecord) {
+    await this.call('shipyard_oauth_codes', { method: 'POST', body: JSON.stringify({ code_hash: rec.codeHash, consumed: rec.consumed, expires_at: rec.expiresAt, rec }), prefer: 'return=minimal' })
+  }
+  async getCode(h: string) {
+    const rows = (await this.call(`shipyard_oauth_codes?select=rec,consumed&code_hash=eq.${encodeURIComponent(h)}&limit=1`)) as Array<{ rec: AuthCodeRecord; consumed: boolean }>
+    const r = rows[0]
+    return r ? { ...r.rec, consumed: r.consumed } : undefined
+  }
+  async updateCode(h: string, patch: Partial<AuthCodeRecord>) {
+    const cur = await this.getCode(h)
+    if (!cur) return
+    const next = { ...cur, ...patch }
+    await this.call(`shipyard_oauth_codes?code_hash=eq.${encodeURIComponent(h)}`, { method: 'PATCH', body: JSON.stringify({ rec: next, consumed: next.consumed }), prefer: 'return=minimal' })
+  }
+  async markCodeConsumed(h: string) {
+    const rows = await this.call(`shipyard_oauth_codes?code_hash=eq.${encodeURIComponent(h)}&consumed=is.false`, { method: 'PATCH', body: JSON.stringify({ consumed: true }), prefer: 'return=representation' })
+    return rows.length > 0
+  }
+  async consumeOnce(key: string, expiresAtMs: number) {
+    const rows = await this.call('shipyard_oauth_once', { method: 'POST', body: JSON.stringify({ k: key, expires_at: expiresAtMs }), prefer: 'resolution=ignore-duplicates,return=representation' })
+    return rows.length > 0
+  }
 }

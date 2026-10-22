@@ -53,6 +53,8 @@ import {
   createGatewayApp,
   createOwnerKeyApp,
   createOAuthApp,
+  consentSessionResolver,
+  SupabaseOAuthStore,
   resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
@@ -404,6 +406,9 @@ const gateway = createGatewayApp({
   apiKeys: API_KEYS,
   keyStore,
   bootstrapAuth,
+  connectionBudget: process.env.SHIPYARD_OAUTH_CSRF_SECRET
+    ? { prefix: 'dock_', budgetUsd: Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) > 0 ? Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) : 10, store: projectSpendStore }
+    : undefined,
   projectCaps: Object.keys(PROJECT_CAPS).length
     ? {
         caps: PROJECT_CAPS,
@@ -1405,17 +1410,22 @@ app.get('/pricing', (c) =>
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.route('/', createOwnerKeyApp({ operatorTokens: OPERATOR_TOKENS, keyStore, caps: PROJECT_CAPS }))
-// Connect Shipyard (OAuth code + PKCE for Dock). Fail-closed: mounted only when
-// the CSRF secret and login URL are configured, and the session resolver returns
-// no user until the Shipyard identity bridge is wired (see docs/plans). With no
-// resolver, /oauth/authorize can never approve; /oauth/token and /oauth/revoke
-// only act on codes this server issued.
+// Connect Shipyard (OAuth code + PKCE + client secret for Dock). Fail-closed: mounted only when
+// the CSRF secret and login URL are configured. Sign-in arrives via the web app's token handoff
+// (/oauth/handoff); the consent cookie it sets is the only session /oauth/authorize accepts.
 if (process.env.SHIPYARD_OAUTH_CSRF_SECRET && process.env.SHIPYARD_LOGIN_URL) {
+  const csrfSecret = process.env.SHIPYARD_OAUTH_CSRF_SECRET
+  const durable = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  const budgetEnv = Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD)
   app.route('/', createOAuthApp({
     keyStore,
+    store: durable ? new SupabaseOAuthStore({ url: process.env.SUPABASE_URL!, key: process.env.SUPABASE_SERVICE_KEY! }) : undefined,
     loginUrl: process.env.SHIPYARD_LOGIN_URL,
-    csrfSecret: process.env.SHIPYARD_OAUTH_CSRF_SECRET,
-    resolveSession: async () => undefined,
+    csrfSecret,
+    handoffSecret: process.env.SHIPYARD_HANDOFF_SECRET,
+    handoffIssuer: process.env.SHIPYARD_HANDOFF_ISSUER,
+    budgetUsd: budgetEnv > 0 ? budgetEnv : undefined,
+    resolveSession: consentSessionResolver(csrfSecret),
     audit: (e) => console.log(JSON.stringify({ tag: 'oauth', ...e })),
   }))
 }

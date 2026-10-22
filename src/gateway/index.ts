@@ -55,6 +55,8 @@ export {
 export { createOwnerKeyApp, INFERENCE_SCOPES, scopeForEndpoint } from './owner-keys.js'
 export {
   createOAuthApp,
+  consentSessionResolver,
+  SupabaseOAuthStore,
   MemoryOAuthStore,
   OAUTH_CLIENTS,
   verifyPkce,

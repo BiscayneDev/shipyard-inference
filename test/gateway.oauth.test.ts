@@ -7,6 +7,7 @@ import {
   createOAuthApp, sha256b64url, connectionBudgetStatus, validateAuthorizeParams,
   type AuditEvent, type ShipyardSession,
 } from '../src/gateway/oauth.js'
+import { TEST_CLIENT_SECRET, TEST_CLIENTS } from './oauth-fixtures.js'
 
 const REDIRECT = 'https://dock-harness.vercel.app/api/connect/shipyard/callback'
 const LOGIN = 'https://shipyard.example/login'
@@ -19,7 +20,7 @@ function setup(opts: { session?: ShipyardSession | undefined; now?: () => number
   const session = 'session' in opts ? opts.session : { userId: 'acct_1' }
   const app = new Hono()
   app.route('/', createOAuthApp({
-    keyStore, loginUrl: LOGIN, csrfSecret: 'test-csrf-secret-value', now,
+    keyStore, loginUrl: LOGIN, csrfSecret: 'test-csrf-secret-value', now, clients: TEST_CLIENTS,
     resolveSession: async () => session, audit: (e) => events.push(e),
   }))
   const advance = (ms: number) => { t += ms }
@@ -54,7 +55,7 @@ async function codeFrom(res: Response): Promise<string> {
 }
 
 function tokenBody(code: string, over: Record<string, string> = {}) {
-  return new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: 'dock', redirect_uri: REDIRECT, ...over })
+  return new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: 'dock', client_secret: TEST_CLIENT_SECRET, redirect_uri: REDIRECT, ...over })
 }
 
 const postToken = (app: Hono, body: URLSearchParams) =>
@@ -194,7 +195,7 @@ test('revoke kills the key immediately (RFC 7009 style, token is the credential)
 
 test('token endpoint rate limit returns 429 after the window quota', async () => {
   const keyStore = new MemoryApiKeyStore()
-  const app = createOAuthApp({ keyStore, loginUrl: LOGIN, csrfSecret: 'x'.repeat(16), tokenRatePerMinute: 3, resolveSession: async () => undefined })
+  const app = createOAuthApp({ keyStore, loginUrl: LOGIN, csrfSecret: 'x'.repeat(16), tokenRatePerMinute: 3, clients: TEST_CLIENTS, resolveSession: async () => undefined })
   const statuses: number[] = []
   for (let i = 0; i < 4; i++) statuses.push((await postToken(app as unknown as Hono, tokenBody('nope'))).status)
   assert.deepEqual(statuses, [400, 400, 400, 429])
