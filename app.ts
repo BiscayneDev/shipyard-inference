@@ -52,6 +52,7 @@ import {
 import {
   createGatewayApp,
   createOwnerKeyApp,
+  createOAuthApp,
   resolveAuth,
   MemoryApiKeyStore,
   SupabaseApiKeyStore,
@@ -1404,6 +1405,20 @@ app.get('/pricing', (c) =>
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
 app.get('/me', (c) => c.html(ME_HTML))
 app.route('/', createOwnerKeyApp({ operatorTokens: OPERATOR_TOKENS, keyStore, caps: PROJECT_CAPS }))
+// Connect Shipyard (OAuth code + PKCE for Dock). Fail-closed: mounted only when
+// the CSRF secret and login URL are configured, and the session resolver returns
+// no user until the Shipyard identity bridge is wired (see docs/plans). With no
+// resolver, /oauth/authorize can never approve; /oauth/token and /oauth/revoke
+// only act on codes this server issued.
+if (process.env.SHIPYARD_OAUTH_CSRF_SECRET && process.env.SHIPYARD_LOGIN_URL) {
+  app.route('/', createOAuthApp({
+    keyStore,
+    loginUrl: process.env.SHIPYARD_LOGIN_URL,
+    csrfSecret: process.env.SHIPYARD_OAUTH_CSRF_SECRET,
+    resolveSession: async () => undefined,
+    audit: (e) => console.log(JSON.stringify({ tag: 'oauth', ...e })),
+  }))
+}
 app.post('/api/keys', async (c) => {
   if (!canMintKey({ open: SELF_SERVE_KEYS, operatorTokens: OPERATOR_TOKENS, authHeader: c.req.header('authorization') })) {
     return c.json(SELF_SERVE_CLOSED_BODY, 403)

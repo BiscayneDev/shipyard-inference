@@ -54,6 +54,19 @@ export {
 
 export { createOwnerKeyApp, INFERENCE_SCOPES, scopeForEndpoint } from './owner-keys.js'
 export {
+  createOAuthApp,
+  MemoryOAuthStore,
+  OAUTH_CLIENTS,
+  verifyPkce,
+  connectionBudgetStatus,
+  connectionProjectId,
+  DEFAULT_CONNECTION_BUDGET_USD,
+  type OAuthAppOptions,
+  type OAuthStore,
+  type AuditEvent,
+  type ShipyardSession,
+} from './oauth.js'
+export {
   MemoryConversationAnchorStore,
   ANCHOR_TTL_MS,
   anchorFromRoute,
