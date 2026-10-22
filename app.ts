@@ -64,6 +64,10 @@ import {
   relabelDevKey,
   MemoryProjectSpendStore,
   SupabaseProjectSpendStore,
+  MemoryConnectionLedgerStore,
+  SupabaseConnectionLedgerStore,
+  DEFAULT_CONNECTION_HOLD_USD,
+  type ConnectionLedgerStore,
   parseProjectCaps,
   selfServeKeysOpen,
   canMintKey,
@@ -249,6 +253,12 @@ const bootstrapAuth = !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE
 // Supabase (survives cold starts); over-cap requests get a 402 that points the
 // developer at adding USDC in PayBox. No caps configured = no behavior change.
 const PROJECT_CAPS = parseProjectCaps(process.env.SHIPYARD_PROJECT_CAPS)
+// Connection budgets (dock_ keys): atomic reserve/settle in Postgres
+// (shipyard_connection_debit / _settle). Memory store is local dev only.
+const connectionLedgerStore: ConnectionLedgerStore =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? new SupabaseConnectionLedgerStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY })
+    : new MemoryConnectionLedgerStore()
 const projectSpendStore: ProjectSpendStore =
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
     ? new SupabaseProjectSpendStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY })
@@ -410,7 +420,12 @@ const gateway = createGatewayApp({
   keyStore,
   bootstrapAuth,
   connectionBudget: process.env.SHIPYARD_OAUTH_CSRF_SECRET
-    ? { prefix: 'dock_', budgetUsd: Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) > 0 ? Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) : 10, store: projectSpendStore }
+    ? {
+        prefix: 'dock_',
+        budgetUsd: Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) > 0 ? Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD) : 10,
+        holdUsd: Number(process.env.SHIPYARD_CONNECTION_HOLD_USD) > 0 ? Number(process.env.SHIPYARD_CONNECTION_HOLD_USD) : DEFAULT_CONNECTION_HOLD_USD,
+        store: connectionLedgerStore,
+      }
     : undefined,
   projectCaps: Object.keys(PROJECT_CAPS).length
     ? {

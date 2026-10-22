@@ -49,7 +49,7 @@ import {
 } from './drawdown.js'
 import type { CreditStore } from '../tender/credit-store.js'
 import { overProjectCap, projectCapErrorBody, recordProjectSpend } from './project-caps.js'
-import { connectionGate, connectionSpend } from './connection-budget.js'
+import { connectionReserve, connectionSettle, connectionRelease, type ConnectionHold } from './connection-budget.js'
 import {
   buildUptoChallenge,
   verifyUptoOpen,
@@ -796,8 +796,6 @@ export function createGatewayApp(config: GatewayConfig): Hono {
 
     // Per-project daily cap (keyed requests whose project has a cap).
     const capProjectId = auth.account?.projectId
-    const connGate = await connectionGate(config.connectionBudget, capProjectId)
-    if (connGate) return c.json(connGate, 402)
     const overCap = await overProjectCap(config.projectCaps, capProjectId)
     if (overCap && config.projectCaps) {
       return c.json({ error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
@@ -861,7 +859,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     /** Record actual spend after the request completes (never blocks). */
     const recordSpend = async (costUsd: number | undefined): Promise<void> => {
-      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd); void connectionSpend(config.connectionBudget, capProjectId, costUsd, ctx.billed)
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, costUsd)
       // Balance drawdown: debit ACTUAL cost from the shared credit ledger
       // (same identity topup credited). $0 cost never debits; BYO never
       // debits; idempotent per request id. Independent of config.spend —
@@ -913,6 +911,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     const id = requestId()
     const ctx: RequestContext = { id }
 
+    // Connection budget (dock_ keys): atomic reserve BEFORE serving. Refused → 402;
+    // store failure → 503 with nothing served or charged.
+    let connHold: ConnectionHold | undefined
+    try {
+      const r = await connectionReserve(config.connectionBudget, capProjectId, id)
+      if (r.refused) return c.json(r.refused, 402)
+      connHold = r.hold
+    } catch {
+      return c.json({ error: { message: 'Connection ledger unavailable; request not served.', type: 'service_unavailable', code: 'connection_ledger_unavailable', param: null } }, 503)
+    }
     if (body.stream) {
       return streamSSE(c, async (stream) => {
         const encoder = createChunkEncoder(
@@ -1021,9 +1029,12 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             })
           }
           await stream.writeSSE({ data: '[DONE]' })
+          // Awaited settle: spend + one ledger row before the stream terminates. Failure throws into the stream catch.
+          await connectionSettle(config.connectionBudget, connHold, id, ctx.costUsd, ctx.billed, { model: ctx.model, provider: ctx.provider })
           await recordSpend(ctx.costUsd)
           await recordAnchor(config.conversationAnchor, auth.account, ctx)
         } catch (err) {
+          await connectionRelease(config.connectionBudget, connHold)
           await stream.writeSSE({ data: JSON.stringify(toOpenAIError(err).body) })
           await stream.writeSSE({ data: '[DONE]' })
         }
@@ -1056,10 +1067,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
+      // Awaited settle: spend + one ledger row before the response. Failure → 503, no response.
+      try {
+        await connectionSettle(config.connectionBudget, connHold, id, ctx.costUsd, ctx.billed, { model: ctx.model, provider: ctx.provider })
+      } catch {
+        return c.json({ error: { message: 'Connection ledger write failed; response withheld.', type: 'service_unavailable', code: 'connection_ledger_unavailable', param: null } }, 503)
+      }
       await recordSpend(ctx.costUsd)
       await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
+      await connectionRelease(config.connectionBudget, connHold)
       const { status, body: errBody } = toOpenAIError(err)
       return c.json(errBody, status as 400)
     }
@@ -1152,8 +1170,6 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (!auth.ok) return c.json(anthropicAuthError, 401)
     const upto = auth.upto
     const capProjectId = auth.account?.projectId
-    const connGate = await connectionGate(config.connectionBudget, capProjectId)
-    if (connGate) return c.json(connGate, 402)
     const overCap = await overProjectCap(config.projectCaps, capProjectId)
     if (overCap && config.projectCaps) {
       return c.json({ type: 'error' as const, error: projectCapErrorBody(config.projectCaps, overCap) }, 402)
@@ -1185,6 +1201,16 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     const id = `msg_${randomBytes(12).toString('hex')}`
     const ctx: RequestContext = { id }
 
+    // Connection budget (dock_ keys): atomic reserve BEFORE serving. Refused → 402;
+    // store failure → 503 with nothing served or charged.
+    let connHold: ConnectionHold | undefined
+    try {
+      const r = await connectionReserve(config.connectionBudget, capProjectId, id)
+      if (r.refused) return c.json(r.refused, 402)
+      connHold = r.hold
+    } catch {
+      return c.json({ error: { message: 'Connection ledger unavailable; request not served.', type: 'service_unavailable', code: 'connection_ledger_unavailable', param: null } }, 503)
+    }
     if (body.stream) {
       return streamSSE(c, async (stream) => {
         const encoder = createAnthropicSSEEncoder(body.model, id)
@@ -1215,7 +1241,9 @@ export function createGatewayApp(config: GatewayConfig): Hono {
             }
           })
           await finish(ctx)
-          if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd); void connectionSpend(config.connectionBudget, capProjectId, ctx.costUsd, ctx.billed)
+          // Awaited settle: spend + one ledger row before the stream terminates. Failure throws into the stream catch.
+          await connectionSettle(config.connectionBudget, connHold, id, ctx.costUsd, ctx.billed, { model: ctx.model, provider: ctx.provider })
+          if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
           if (config.guardrails && guardText) {
             evaluateGuardrails(config, id, params, guardText, ctx.model)
           }
@@ -1231,6 +1259,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
           }
           await recordAnchor(config.conversationAnchor, auth.account, ctx)
         } catch (err) {
+          await connectionRelease(config.connectionBudget, connHold)
           await stream.writeSSE({ event: 'error', data: JSON.stringify(toAnthropicError(err).body) })
         }
       })
@@ -1262,10 +1291,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       if (config.guardrails && res.content) {
         evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
-      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd); void connectionSpend(config.connectionBudget, capProjectId, ctx.costUsd, ctx.billed)
+      // Awaited settle: spend + one ledger row before the response. Failure → 503, no response.
+      try {
+        await connectionSettle(config.connectionBudget, connHold, id, ctx.costUsd, ctx.billed, { model: ctx.model, provider: ctx.provider })
+      } catch {
+        return c.json({ error: { message: 'Connection ledger write failed; response withheld.', type: 'service_unavailable', code: 'connection_ledger_unavailable', param: null } }, 503)
+      }
+      if (ctx.billed !== false) recordProjectSpend(config.projectCaps, capProjectId, ctx.costUsd)
       await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToAnthropicMessage(res, body.model, id))
     } catch (err) {
+      await connectionRelease(config.connectionBudget, connHold)
       const { status, body: errBody } = toAnthropicError(err)
       return c.json(errBody, status as 400)
     }

@@ -80,3 +80,15 @@ export type {
 } from './anchor.js'
 export { MemoryChannelStore, NoOpChannelStore } from './channels.js'
 export type { ChannelStore, OpenChannel } from './channels.js'
+
+export {
+  connectionReserve,
+  connectionSettle,
+  connectionRelease,
+  connectionDrift,
+  connectionIdempotencyKey,
+  MemoryConnectionLedgerStore,
+  SupabaseConnectionLedgerStore,
+  DEFAULT_CONNECTION_HOLD_USD,
+} from './connection-budget.js'
+export type { ConnectionBudget, ConnectionHold, ConnectionLedgerStore, ConnectionDrift } from './connection-budget.js'
