@@ -41,9 +41,12 @@ export interface RoutingStrategy {
   select(ctx: RoutingContext): RoutingDecision[]
 }
 
-function estimateCostUsd(meta: ModelMetadata, params: LLMChatParams): number {
+/** Output tokens assumed when a request sets no `maxTokens`. Shared by selection and route preview. */
+export const DEFAULT_OUTPUT_CAP_TOKENS = 4096
+
+export function estimateCostUsd(meta: ModelMetadata, params: LLMChatParams): number {
   const inputTok = estimateInputTokens(params)
-  const outputTok = params.maxTokens ?? 4096
+  const outputTok = params.maxTokens ?? DEFAULT_OUTPUT_CAP_TOKENS
   return (
     (inputTok / 1_000_000) * meta.inputCostPerMTok +
     (outputTok / 1_000_000) * meta.outputCostPerMTok

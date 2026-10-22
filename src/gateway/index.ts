@@ -1,4 +1,5 @@
 export { createGatewayApp } from './server.js'
+export { RoutePreviewLimiter, DEFAULT_ROUTE_PREVIEW_PER_MINUTE } from './route-preview.js'
 export { startGateway } from './serve.js'
 export type { RunningGateway } from './serve.js'
 export { resolveModelList } from './config.js'

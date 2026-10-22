@@ -9,6 +9,7 @@ export function scopeForEndpoint(method: string, path: string): string | undefin
   return ({
     'GET /v1/models': 'models:read',
     'POST /v1/chat/completions': 'chat:write',
+    'POST /v1/route': 'chat:write',
     'POST /v1/messages': 'messages:write',
     'POST /v1/messages/count_tokens': 'tokens:count',
   } as Record<string, string>)[`${method} ${path}`]

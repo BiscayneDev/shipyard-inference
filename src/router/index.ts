@@ -1,5 +1,5 @@
 export { Router, withFailover } from './router.js'
-export type { RouterOptions, RouterEvent } from './router.js'
+export type { RouterOptions, RouterEvent, RoutePreview, TierDecidedEvent } from './router.js'
 export { VideoRouter } from './video.js'
 export type { VideoRouterOptions, VideoRouterEvent } from './video.js'
 export {
@@ -46,6 +46,7 @@ export type {
 export { SupabaseDecisionFeedback, SUPABASE_DECISION_FEEDBACK_SCHEMA } from './supabase-decision-feedback.js'
 export type { SupabaseDecisionFeedbackOptions } from './supabase-decision-feedback.js'
 export { estimateInputTokens } from './estimate.js'
+export { estimateCostUsd, DEFAULT_OUTPUT_CAP_TOKENS } from './strategy.js'
 export { NoCapableModelError, isRetryable } from './errors.js'
 export { ProviderHealthTracker } from './health.js'
 export type { ProviderHealthOptions } from './health.js'

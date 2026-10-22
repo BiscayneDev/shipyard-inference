@@ -19,13 +19,19 @@ import { ProviderHealthTracker } from './health.js'
 import { computeActualCostUsd, computeBaselineCostUsd, resolveModelMetadata } from './pricing.js'
 import type { UsageRecorder } from './usage.js'
 import { type RetryPolicy, nextRetryDelayMs, sleep } from './retry.js'
-import {
-  type RoutingDecision,
-  type RoutingStrategy,
-  costOptimized,
-  failover,
-} from './strategy.js'
+import { type RoutingDecision, type RoutingStrategy, costOptimized, failover } from './strategy.js'
 import { VideoRouter, type VideoRouterEvent } from './video.js'
+
+export type TierDecidedEvent = Extract<RouterEvent, { type: 'tier_decided' }>
+
+/** Result of {@link Router.preview}: the first planned choice and its tier judgment. */
+export interface RoutePreview {
+  decision: RoutingDecision
+  /** Params after compression — the exact params selection ran on. */
+  params: LLMChatParams
+  /** Present when auto-tier produced a judgment (absent with no tier policy). */
+  tier?: TierDecidedEvent
+}
 
 export type RouterEvent =
   | { type: 'cache_hit'; key: string }
@@ -446,7 +452,29 @@ export class Router implements LLMProvider {
     }
   }
 
+  /**
+   * Route preview: the SAME compression + `resolvePlan` the chat path runs, with
+   * no cache lookup, no model call, no usage/spend recording, and no events
+   * emitted. Returns the first planned decision (what chat tries first) and the
+   * tier judgment that produced it.
+   */
+  async preview(params: LLMChatParams): Promise<RoutePreview> {
+    const compressed = this.opts.compress ? await this.opts.compress(params) : params
+    const { decisions, tierEvent } = await this.resolvePlan(compressed)
+    if (decisions.length === 0) {
+      throw new NoCapableModelError('[shipyard-inference] No candidate model satisfies the routing hints')
+    }
+    return { decision: decisions[0]!, params: compressed, ...(tierEvent ? { tier: tierEvent } : {}) }
+  }
+
+  /** Selection for chat: resolves the plan, then emits the tier judgment it was based on. */
   private async plan(params: LLMChatParams): Promise<RoutingDecision[]> {
+    const { decisions, tierEvent } = await this.resolvePlan(params)
+    if (tierEvent) this.emit(tierEvent)
+    return decisions
+  }
+
+  private async resolvePlan(params: LLMChatParams): Promise<{ decisions: RoutingDecision[]; tierEvent?: TierDecidedEvent }> {
     // Hard pin short-circuits selection entirely.
     const pin = params.routingHints?.pin
     if (pin) {
@@ -470,7 +498,7 @@ export class Router implements LLMProvider {
         declared && requested
           ? resolveModelMetadata(requested, declared, this.opts.pricingOverrides)
           : { meta: undefined }
-      return [{ candidate, model: meta?.model ?? requested, ...(meta ? { meta } : {}) }]
+      return { decisions: [{ candidate, model: meta?.model ?? requested, ...(meta ? { meta } : {}) }] }
     }
 
     /**
@@ -490,7 +518,7 @@ export class Router implements LLMProvider {
       : this.opts.candidates
     const pool = filterByProviders(basePool, params.routingHints?.providers)
 
-    const tuned = await this.applyAutoTier(params)
+    const { params: tuned, event: tierEvent } = await this.applyAutoTier(params)
     const selected = this.applyCeiling(this.strategy.select({
       params: tuned,
       candidates: this.opts.health
@@ -500,7 +528,10 @@ export class Router implements LLMProvider {
       previousErrors: [],
       pricingOverrides: this.opts.pricingOverrides,
     }), tuned.routingHints?.maxTier)
-    return byokLive.size ? this.promoteByok(selected, byokLive) : selected
+    return {
+      decisions: byokLive.size ? this.promoteByok(selected, byokLive) : selected,
+      ...(tierEvent ? { tierEvent } : {}),
+    }
   }
 
   /**
@@ -539,8 +570,10 @@ export class Router implements LLMProvider {
    * hasn't pinned a tier. Returns params unchanged otherwise. Async so the
    * inferrer may consult an external decision model (with its own fallback).
    */
-  private async applyAutoTier(params: LLMChatParams): Promise<LLMChatParams> {
-    if (params.routingHints?.tier) return params // explicit tier wins
+  private async applyAutoTier(
+    params: LLMChatParams,
+  ): Promise<{ params: LLMChatParams; event?: TierDecidedEvent }> {
+    if (params.routingHints?.tier) return { params } // explicit tier wins
     const hints0 = params.routingHints
     let tier: ModelTier | undefined
     let d: TierDecision | undefined
@@ -562,31 +595,34 @@ export class Router implements LLMProvider {
     // models above it behind every model at or below it, so they run only as
     // fallback after a failure or timeout, never as the first attempt.
     const ceiling = hints0?.maxTier ?? taskClassMaxTier(hints0?.taskClass, d?.confidence)
-    if (tier === undefined && !hints0?.minTier && !ceiling) return params
+    if (tier === undefined && !hints0?.minTier && !ceiling) return { params }
     // The emitted tier is the one routing actually uses; `decidedTier` keeps
     // the pre-clamp call.
     const finalTier = clampTier(tier, hints0?.minTier, ceiling)
-    if (d) {
-      this.emit({
-        type: 'tier_decided',
-        tier: finalTier ?? d.tier,
-        source: d.source,
-        ...(finalTier !== undefined && finalTier !== d.tier ? { decidedTier: d.tier, clamped: true } : {}),
-        ...(d.jevTier !== undefined ? { jevTier: d.jevTier } : {}),
-        ...(d.structuralTier !== undefined ? { structuralTier: d.structuralTier } : {}),
-        ...(d.confidence !== undefined ? { confidence: d.confidence } : {}),
-        ...(d.needsReasoning !== undefined ? { needsReasoning: d.needsReasoning } : {}),
-        ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
-        ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
-        ...(d.usage ? { usage: d.usage } : {}),
-        ...(d.cached !== undefined ? { cached: d.cached } : {}),
-        ...(d.escalated ? { escalated: true } : {}),
-      })
-    }
-    if (finalTier === undefined && !ceiling) return params
+    const event: TierDecidedEvent | undefined = d
+      ? {
+          type: 'tier_decided',
+          tier: finalTier ?? d.tier,
+          source: d.source,
+          ...(finalTier !== undefined && finalTier !== d.tier ? { decidedTier: d.tier, clamped: true } : {}),
+          ...(d.jevTier !== undefined ? { jevTier: d.jevTier } : {}),
+          ...(d.structuralTier !== undefined ? { structuralTier: d.structuralTier } : {}),
+          ...(d.confidence !== undefined ? { confidence: d.confidence } : {}),
+          ...(d.needsReasoning !== undefined ? { needsReasoning: d.needsReasoning } : {}),
+          ...(d.latencyMs !== undefined ? { latencyMs: d.latencyMs } : {}),
+          ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
+          ...(d.usage ? { usage: d.usage } : {}),
+          ...(d.cached !== undefined ? { cached: d.cached } : {}),
+          ...(d.escalated ? { escalated: true } : {}),
+        }
+      : undefined
+    if (finalTier === undefined && !ceiling) return { params, ...(event ? { event } : {}) }
     return {
-      ...params,
-      routingHints: { ...hints0, ...(finalTier !== undefined ? { tier: finalTier } : {}), ...(ceiling ? { maxTier: ceiling } : {}) },
+      params: {
+        ...params,
+        routingHints: { ...hints0, ...(finalTier !== undefined ? { tier: finalTier } : {}), ...(ceiling ? { maxTier: ceiling } : {}) },
+      },
+      ...(event ? { event } : {}),
     }
   }
 

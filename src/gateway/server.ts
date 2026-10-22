@@ -6,6 +6,15 @@ import type { Context } from 'hono'
 import { cors } from 'hono/cors'
 import { streamSSE } from 'hono/streaming'
 import { Router } from '../router/router.js'
+import { NoCapableModelError } from '../router/errors.js'
+import {
+  RoutePreviewLimiter,
+  DEFAULT_ROUTE_PREVIEW_PER_MINUTE,
+  estimateRoute,
+  newRouteId,
+  routeHeaders,
+} from './route-preview.js'
+import type { Account } from './keys.js'
 import type { RouterEvent } from '../router/router.js'
 import {
   openAIRequestToChatParams,
@@ -161,6 +170,51 @@ async function recordAnchor(
     tier: ctx.routing?.tier as 'economy' | 'standard' | 'frontier' | undefined,
   })
   if (anchor) await store.set(account.userId, anchor).catch(() => {})
+}
+
+/**
+ * Routing params for a chat-shaped body — the ONE place a request becomes
+ * routing hints + account metadata. `/v1/chat/completions` and `/v1/route`
+ * both call this, so the route preview cannot drift from what chat selects.
+ */
+export async function buildRoutingParams(
+  config: GatewayConfig,
+  body: OpenAIChatRequest,
+  header: (name: string) => string | undefined,
+  account: Account | undefined,
+): Promise<LLMChatParams> {
+  const params = openAIRequestToChatParams(body)
+  // An explicitly named catalog model is honored exactly; `auto` (or unset)
+  // routes by strategy with the auto-tier quality floor.
+  const explicitHints = explicitModelHints(config, body.model, params)
+  if (explicitHints) params.routingHints = explicitHints
+  else {
+    const prefs = clientRoutingHints(body.shipyard)
+    const task = taskHeaderHints(header)
+    // Body prefs win over header hints (explicit beats inferred).
+    if (prefs || task) params.routingHints = { ...params.routingHints, ...task, ...prefs }
+    // Conversation anchor: prefer the candidate that served this account's
+    // last request (auto only — an explicit model is a hard statement).
+    const anchor = await anchorPreference(
+      config.conversationAnchor,
+      account,
+      config.candidates.map((cd) => cd.id),
+    )
+    if (anchor) params.routingHints = { ...params.routingHints, ...anchor }
+  }
+  // A tenant/project-scoped key attributes the request to its account — so
+  // the caller's traffic ties to the right tenant, project, and wallet.
+  if (account) {
+    params.metadata = {
+      ...(params.metadata ?? {}),
+      userId: account.projectId ?? account.userId,
+      tenantId: account.tenantId,
+      projectId: account.projectId,
+      apiKeyId: account.userId,
+      apiKeyLabel: account.label,
+    }
+  }
+  return params
 }
 
 /** Auth outcome extended with a pending `upto` settlement (metered billing). */
@@ -537,6 +591,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   const exposeCost = config.exposeCostHeaders !== false
+  const routeLimiter = new RoutePreviewLimiter(config.routePreviewPerMinute ?? DEFAULT_ROUTE_PREVIEW_PER_MINUTE)
   const app = new Hono()
 
   // Tender — monetize the wait state of a streaming request. Wraps the model
@@ -851,37 +906,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       }
     }
 
-    const params = openAIRequestToChatParams(body)
-    // An explicitly named catalog model is honored exactly; `auto` (or unset)
-    // routes by strategy with the auto-tier quality floor.
-    const explicitHints = explicitModelHints(config, body.model, params)
-    if (explicitHints) params.routingHints = explicitHints
-    else {
-      const prefs = clientRoutingHints(body.shipyard)
-      const task = taskHeaderHints((n) => c.req.header(n))
-      // Body prefs win over header hints (explicit beats inferred).
-      if (prefs || task) params.routingHints = { ...params.routingHints, ...task, ...prefs }
-      // Conversation anchor: prefer the candidate that served this account's
-      // last request (auto only — an explicit model is a hard statement).
-      const anchor = await anchorPreference(
-        config.conversationAnchor,
-        auth.account,
-        config.candidates.map((cd) => cd.id),
-      )
-      if (anchor) params.routingHints = { ...params.routingHints, ...anchor }
-    }
-    // A tenant/project-scoped key attributes the request to its account — so
-    // the caller's traffic ties to the right tenant, project, and wallet.
-    if (auth.account) {
-      params.metadata = {
-        ...(params.metadata ?? {}),
-        userId: auth.account.projectId ?? auth.account.userId,
-        tenantId: auth.account.tenantId,
-        projectId: auth.account.projectId,
-        apiKeyId: auth.account.userId,
-        apiKeyLabel: auth.account.label,
-      }
-    }
+    const params = await buildRoutingParams(config, body, (n) => c.req.header(n), auth.account)
     const id = requestId()
     const ctx: RequestContext = { id }
 
@@ -1035,6 +1060,57 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       const { status, body: errBody } = toOpenAIError(err)
       return c.json(errBody, status as 400)
     }
+  })
+
+  // Route preview: the model, tier, and dollar estimate Jev + the router would
+  // choose for this body, WITHOUT calling a model, charging, or recording spend.
+  // Same params builder and selection function as /v1/chat/completions
+  // (buildRoutingParams + Router.preview). Key-authenticated only: no x402
+  // challenge, so anonymous callers cannot probe prices. Rate-limited per key.
+  app.post('/v1/route', async (c) => {
+    const authHeader = c.req.header('authorization')
+    const auth = await resolveAuth(config, authHeader)
+    if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
+    const retryAfter = routeLimiter.take(auth.account?.userId ?? bearerToken(authHeader))
+    if (retryAfter !== undefined) {
+      c.header('retry-after', String(retryAfter))
+      return errorJson(c, 429, 'Route preview rate limit exceeded for this key', 'rate_limit_error')
+    }
+    let body: OpenAIChatRequest
+    try {
+      body = (await c.req.json()) as OpenAIChatRequest
+    } catch {
+      return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) {
+      return errorJson(c, 400, '`messages` is required', 'invalid_request_error')
+    }
+    if (body.model !== undefined && typeof body.model !== 'string') {
+      return errorJson(c, 400, '`model` must be a string', 'invalid_request_error')
+    }
+    const params = await buildRoutingParams(config, body, (n) => c.req.header(n), auth.account)
+    let preview: Awaited<ReturnType<Router['preview']>>
+    try {
+      preview = await router.preview(params)
+    } catch (err) {
+      if (err instanceof NoCapableModelError) return errorJson(c, 422, err.message, 'no_capable_model')
+      const { status, body: errBody } = toOpenAIError(err)
+      return c.json(errBody, status as 400)
+    }
+    const { estimatedCostUsd, basis } = estimateRoute(preview, body)
+    if (exposeCost) for (const [k, v] of Object.entries(routeHeaders(preview))) c.header(k, v)
+    return c.json({
+      model: preview.decision.model ?? null,
+      provider: preview.decision.candidate.id,
+      tier: preview.tier?.tier ?? null,
+      tier_source: preview.tier?.source ?? null,
+      tier_decided: preview.tier ? (preview.tier.decidedTier ?? preview.tier.tier) : null,
+      clamped: preview.tier?.clamped === true,
+      jev_confidence: preview.tier?.confidence ?? null,
+      estimated_cost_usd: estimatedCostUsd,
+      estimate_basis: basis,
+      route_id: newRouteId(),
+    })
   })
 
   // ── Anthropic Messages API — for Claude Code / Anthropic-SDK agents ────────

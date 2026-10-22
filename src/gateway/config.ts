@@ -180,6 +180,8 @@ export interface GatewayConfig {
   creditStore?: CreditStore
   /** Emit `x-shipyard-*` cost headers / trailer. Default true. */
   exposeCostHeaders?: boolean
+  /** Per-key requests per minute for `POST /v1/route` (route preview). Default 60. */
+  routePreviewPerMinute?: number
   /**
    * Typed-decision route (`POST /v1/decisions`) served by a System One model
    * (e.g. TypeSafe Jev). Off when omitted — the route 404s.
