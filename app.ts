@@ -1421,7 +1421,9 @@ app.route('/', createOwnerKeyApp({ operatorTokens: OPERATOR_TOKENS, keyStore, ca
 // (/oauth/handoff); the consent cookie it sets is the only session /oauth/authorize accepts.
 if (process.env.SHIPYARD_OAUTH_CSRF_SECRET && process.env.SHIPYARD_LOGIN_URL) {
   const csrfSecret = process.env.SHIPYARD_OAUTH_CSRF_SECRET
-  const durable = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  // Durable OAuth state needs shipyard_oauth_codes + shipyard_oauth_once in the gateway's Supabase project.
+  // Until those exist, SHIPYARD_OAUTH_STORE=memory keeps the flow working on warm instances (see report).
+  const durable = process.env.SHIPYARD_OAUTH_STORE !== 'memory' && !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
   const budgetEnv = Number(process.env.SHIPYARD_CONNECTION_BUDGET_USD)
   app.route('/', createOAuthApp({
     keyStore,
