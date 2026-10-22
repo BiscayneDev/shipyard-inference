@@ -58,11 +58,11 @@ test('payboxSettle builds + submits a USDC transfer and returns the signature', 
 test('payboxSettle rejects a non-positive amount before touching the chain', async () => {
   const conn = fakeConnection()
   await assert.rejects(
-    payboxSettle({ signer: mockSigner(), treasury: TREASURY, amount: '0', connection: conn }),
+    payboxSettle({ signer: mockSigner(), treasury: TREASURY, amount: '0', network: 'devnet', connection: conn }),
     PaymentError,
   )
   await assert.rejects(
-    payboxSettle({ signer: mockSigner(), treasury: TREASURY, amount: 'abc', connection: conn }),
+    payboxSettle({ signer: mockSigner(), treasury: TREASURY, amount: 'abc', network: 'devnet', connection: conn }),
     PaymentError,
   )
   assert.equal(conn.calls.sent, undefined, 'nothing submitted on invalid input')
@@ -79,4 +79,14 @@ test('payboxSettle throws when the transaction fails on-chain', async () => {
     }),
     /failed on-chain/,
   )
+})
+
+test('payboxSettle refuses to run without an explicit network', async () => {
+  const conn = fakeConnection()
+  await assert.rejects(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    payboxSettle({ signer: mockSigner(), treasury: TREASURY, amount: '1000000', connection: conn } as any),
+    /requires an explicit network/,
+  )
+  assert.equal(conn.calls.sent, undefined, 'nothing submitted without a network')
 })

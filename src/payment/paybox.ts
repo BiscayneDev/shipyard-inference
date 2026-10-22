@@ -148,7 +148,11 @@ export interface PayboxSignerOptions extends PollOptions {
   publicKey?: string
   /** CAIP-2 chain. Derived from `network` when omitted. */
   chain?: string
-  /** Solana cluster used to derive `chain`. Default `mainnet`. */
+  /**
+   * Solana cluster used to derive `chain`. Default `mainnet`. When the signer
+   * feeds `payboxSettle`, pass the SAME network to both — `payboxSettle`
+   * requires an explicit network for exactly this reason.
+   */
   network?: 'mainnet' | 'devnet'
 }
 
@@ -295,13 +299,25 @@ export async function payboxSigner(
         } as Parameters<PayboxClient['requestWalletSign']>[0]),
         options,
       )
-      const signature = response.output?.value
+      const out = response.output?.value
+      const signature =
+        typeof out === 'string'
+          ? out
+          : out &&
+              typeof out === 'object' &&
+              typeof (out as { signature?: unknown }).signature === 'string'
+            ? (out as { signature: string }).signature
+            : undefined
       if (typeof signature !== 'string') {
         throw new PaymentError(
           `Paybox message sign ${response.request_id} returned no signature`,
         )
       }
-      return new Uint8Array(Buffer.from(signature, 'base64'))
+      // solanaMessage returns hex on the transaction path; accept base64 too.
+      const hexMatch = /^(?:0x)?([0-9a-fA-F]{128})$/.exec(signature.trim())
+      return new Uint8Array(
+        hexMatch ? Buffer.from(hexMatch[1], 'hex') : Buffer.from(signature, 'base64'),
+      )
     },
   }
 }
