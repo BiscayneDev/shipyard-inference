@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sign in — Shipyard inference</title>
+<meta name="robots" content="noindex"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"/>
+<style>
+  /* Same night-blue tokens as the landing and manifesto pages. */
+  :root {
+    --night: #050a18;
+    --deep: #0a1226;
+    --line: rgba(143, 163, 189, .22);
+    --mist: #b9c9de;
+    --fade: #8fa3bd;
+    --ice: #cfe0f2;
+    --blue: #6b9ce0;
+    --danger: #e8836b;
+    --serif: "Playfair Display", Georgia, serif;
+    --sans: "Inter", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--night); color: #e8eef6; font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; flex-direction: column; }
+  body::after { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .05; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+  a { color: var(--ice); text-decoration: none; }
+  a:hover { color: #fff; }
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 22px 32px; border-bottom: 1px solid var(--line); font: 12px/1 var(--mono); letter-spacing: .08em; text-transform: lowercase; }
+  nav .links a { margin-left: 22px; color: var(--fade); }
+  nav .links a[aria-current] { color: var(--ice); }
+  main { flex: 1; display: grid; place-items: center; padding: 48px 20px; }
+  .card { width: 100%; max-width: 380px; background: var(--deep); border: 1px solid var(--line); border-radius: 18px; padding: 34px 30px; }
+  h1 { font: 400 30px/1.15 var(--serif); letter-spacing: -.01em; }
+  h1 em { color: var(--blue); }
+  .lede { color: var(--mist); font-size: 14px; margin-top: 10px; }
+  label { display: block; font: 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--fade); margin: 26px 0 8px; }
+  input { width: 100%; font: 15px var(--sans); color: var(--ink, #e8eef6); background: var(--night); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; outline: none; }
+  input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(107, 156, 224, .18); }
+  input.code { font: 500 24px var(--mono); letter-spacing: .4em; text-align: center; }
+  button { margin-top: 18px; width: 100%; border: 0; border-radius: 999px; padding: 13px 18px; background: var(--ice); color: var(--night); font: 500 15px var(--sans); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.quiet { background: transparent; color: var(--fade); border: 1px solid var(--line); }
+  .msg { min-height: 20px; margin-top: 14px; font-size: 13px; color: var(--fade); }
+  .msg.err { color: var(--danger); }
+  .msg.ok { color: #9fd3b4; }
+  .row { display: flex; gap: 10px; }
+  .row button { margin-top: 18px; }
+  [hidden] { display: none !important; }
+  footer { padding: 18px 32px; border-top: 1px solid var(--line); font: 11px/1 var(--mono); color: var(--fade); letter-spacing: .06em; }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" style="color:var(--ice)">shipyard · inference</a>
+  <div class="links">
+    <a href="/manifesto">manifesto</a><a href="/connect">connect</a><a href="/login" aria-current="page">sign in</a>
+  </div>
+</nav>
+
+<main>
+  <section class="card" aria-labelledby="signin-title">
+    <h1 id="signin-title">Sign in to <em>Shipyard</em></h1>
+    <p class="lede">We email a six-digit code. No password.</p>
+
+    <div id="notice" class="msg err" role="status" hidden>Sign-in is not set up on this deployment yet.</div>
+
+    <form id="step-email" novalidate>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="email" inputmode="email" required placeholder="you@example.com"/>
+      <button id="send" type="submit">Send code</button>
+    </form>
+
+    <form id="step-code" novalidate hidden>
+      <label for="code">Code</label>
+      <input id="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required/>
+      <div class="row">
+        <button id="verify" type="submit">Sign in</button>
+        <button id="back" type="button" class="quiet">Use another email</button>
+      </div>
+    </form>
+
+    <p id="msg" class="msg" role="status" aria-live="polite"></p>
+  </section>
+</main>
+
+<footer>shipyard · inference · sign-in is for accounts on the access list</footer>
+
+<script type="module">
+  const $ = (id) => document.getElementById(id)
+  const msg = (text, kind = "") => { $("msg").textContent = text; $("msg").className = "msg " + kind }
+  const CODE_RE = /^\d{6}$/
+  let email = ""
+
+  // Config comes from the server, so no keys or URLs are baked into the page.
+  let cfg
+  try {
+    cfg = await fetch("/api/auth/config", { cache: "no-store" }).then((r) => r.json())
+  } catch {
+    cfg = { configured: false }
+  }
+  if (!cfg.configured) {
+    $("notice").hidden = false
+    $("send").disabled = true
+  }
+
+  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2")
+  const sb = cfg.configured
+    ? createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } })
+    : null
+
+  // Already signed in and on the list: go straight in.
+  if (sb) {
+    const { data } = await sb.auth.getSession()
+    if (data.session) {
+      const check = await fetch("/api/auth/allowed", { method: "POST", headers: { authorization: "Bearer " + data.session.access_token } })
+      if (check.ok) msg("Signed in as " + (await check.json()).email, "ok")
+      else await sb.auth.signOut()
+    }
+  }
+
+  $("step-email").addEventListener("submit", async (e) => {
+    e.preventDefault()
+    if (!sb) return
+    email = $("email").value.trim().toLowerCase()
+    if (!email.includes("@")) return msg("Enter a valid email address.", "err")
+    $("send").disabled = true
+    msg("Sending code…")
+    // shouldCreateUser:false — only accounts that already exist can receive a code.
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+    $("send").disabled = false
+    if (error) return msg("Could not send a code to that address. Check it is on the access list.", "err")
+    $("step-email").hidden = true
+    $("step-code").hidden = false
+    $("code").focus()
+    msg("Code sent. It expires shortly.", "ok")
+  })
+
+  $("step-code").addEventListener("submit", async (e) => {
+    e.preventDefault()
+    if (!sb) return
+    const token = $("code").value.trim()
+    if (!CODE_RE.test(token)) return msg("Enter the six-digit code.", "err")
+    $("verify").disabled = true
+    msg("Checking…")
+    const { data, error } = await sb.auth.verifyOtp({ email, token, type: "email" })
+    if (error || !data.session) {
+      $("verify").disabled = false
+      return msg("That code did not work. Try again or request a new one.", "err")
+    }
+    // The server decides access: the session must belong to an address on the allowlist.
+    const check = await fetch("/api/auth/allowed", { method: "POST", headers: { authorization: "Bearer " + data.session.access_token } })
+    if (!check.ok) {
+      await sb.auth.signOut()
+      $("verify").disabled = false
+      return msg("This account is not on the access list.", "err")
+    }
+    msg("Signed in as " + (await check.json()).email, "ok")
+  })
+
+  $("back").addEventListener("click", () => {
+    $("step-code").hidden = true
+    $("step-email").hidden = false
+    $("code").value = ""
+    msg("")
+  })
+</script>
+</body>
+</html>

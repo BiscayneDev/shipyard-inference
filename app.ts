@@ -86,6 +86,9 @@ import {
 import { LANDING_HTML } from './landing.generated.js'
 // Manifesto page HTML, generated from public/manifesto.html by scripts/build-web.mjs.
 import { MANIFESTO_HTML } from './manifesto.generated.js'
+// Sign-in page HTML, generated from public/login.html by scripts/build-web.mjs.
+import { LOGIN_HTML } from './login.generated.js'
+import { siteAuth } from './src/site-auth/routes.js'
 
 // ---------------------------------------------------------------------------
 // Config from the environment (set in the Vercel project).
@@ -1362,6 +1365,9 @@ app.get('/healthz', (c) => c.json({ status: 'ok', source: SOURCE, candidates: ca
 app.get('/', (c) => c.html(LANDING_HTML))
 // Manifesto page at `/manifesto` — the Death to Tokenmaxxing thesis post.
 app.get('/manifesto', (c) => c.html(MANIFESTO_HTML))
+// Sign-in page at `/login`, and its two JSON endpoints (config, allowlist check).
+app.get('/login', (c) => c.html(LOGIN_HTML))
+app.route('/', siteAuth)
 
 // Consumer surface — the "connect your IDE" page + self-serve key issuance.
 // Registered before the operator's /api/* mount so it wins, and before the

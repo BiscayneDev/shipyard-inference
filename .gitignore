@@ -24,3 +24,4 @@ test-ledger-fresh/
 scripts/.localnet.json
 scripts/.upto-operator.json
 manifesto.generated.ts
+login.generated.ts
