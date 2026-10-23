@@ -70,3 +70,31 @@ test('chain: throws only when every member fails (no infallible tail)', async ()
 test('chain: requires at least one provider', () => {
   assert.throws(() => createChainedDecisionProvider({ providers: [] }))
 })
+
+test('chain: decideOnce preserves first provider and never falls back after failure', async () => {
+  const calls: string[] = []
+  const chain = createChainedDecisionProvider({
+    providers: [
+      { id: 'first', async decide() { throw new Error('not used') }, async decideOnce() { calls.push('first'); throw new Error('first failed') } },
+      { id: 'second', async decide() { calls.push('second'); throw new Error('not used') } },
+    ],
+    onFallback: () => calls.push('fallback'),
+  })
+  await assert.rejects(chain.decideOnce!({ state: 's', questions: {} }), /first failed/)
+  assert.deepEqual(calls, ['first'])
+})
+
+test('chain: decideOnce refuses unsupported first provider without invoking anything', async () => {
+  let calls = 0
+  const chain = createChainedDecisionProvider({ providers: [{ id: 'legacy', async decide() { calls++; throw new Error('not used') } }] })
+  await assert.rejects(chain.decideOnce!({ state: 's', questions: {} }), /does not support/)
+  assert.equal(calls, 0)
+})
+
+test('chain: decideOnce success preserves provider/model and tags actual provider', async () => {
+  const first = { ...fake('first'), async decideOnce(req: DecisionRequest) { return this.decide(req) } }
+  const chain = createChainedDecisionProvider({ providers: [first, fake('second')] })
+  const res = await chain.decideOnce!({ state: 's', questions: {} })
+  assert.equal(res.provider, 'first')
+  assert.equal(res.model, 'first-model')
+})

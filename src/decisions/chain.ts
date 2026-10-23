@@ -33,6 +33,14 @@ export function createChainedDecisionProvider(
   return {
     id: `chain(${providers.map((p) => p.id).join(' → ')})`,
     models: models.length > 0 ? models : undefined,
+    async decideOnce(req: DecisionRequest): Promise<DecisionResponse> {
+      // Preserve configured order. Never skip to another backend, even if the
+      // first cannot guarantee one attempt. No fallback hook fires here.
+      const first = providers[0]!
+      if (!first.decideOnce) throw new Error('First decision provider does not support noFallback')
+      const res = await first.decideOnce(req)
+      return { ...res, provider: first.id }
+    },
     async decide(req: DecisionRequest): Promise<DecisionResponse> {
       let lastError: unknown
       for (let i = 0; i < providers.length; i++) {
