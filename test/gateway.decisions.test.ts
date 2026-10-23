@@ -229,3 +229,49 @@ test('guardrail failure in streaming path is silent too', async () => {
   assert.match(text, /streamed fine/)
   assert.match(text, /\[DONE\]/)
 })
+
+test('noFallback validates boolean and refuses unsupported providers before inference', async () => {
+  const stub = createStubDecisionProvider()
+  const app = createGatewayApp(baseAppConfig({ decisions: { provider: stub } }))
+  for (const noFallback of ['true', 1, null, true]) {
+    const res = await postDecisions(app, { ...DECISION_BODY, noFallback })
+    assert.equal(res.status, 400)
+  }
+  assert.equal(stub.calls.length, 0)
+  const models = await app.request('/v1/models', { headers: { authorization: 'Bearer k' } })
+  assert.equal(models.headers.get('x-shipyard-decision-attempt-limit'), null)
+})
+
+test('noFallback routes to single-attempt method; defaults and response shape remain unchanged', async () => {
+  const calls: string[] = []
+  const answer = { model: 'unchanged', answers: {} }
+  const provider: DecisionProvider = {
+    id: 'single',
+    async decide() { calls.push('default'); return answer },
+    async decideOnce() { calls.push('once'); return answer },
+  }
+  const app = createGatewayApp(baseAppConfig({ decisions: { provider } }))
+  const models = await app.request('/v1/models', { headers: { authorization: 'Bearer k' } })
+  assert.equal(models.headers.get('x-shipyard-decision-attempt-limit'), '1')
+  const res = await postDecisions(app, { ...DECISION_BODY, noFallback: true })
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('x-shipyard-decision-attempt-limit'), '1')
+  assert.deepEqual(await res.json(), answer)
+  assert.equal((await postDecisions(app, DECISION_BODY)).status, 200)
+  assert.equal((await postDecisions(app, { ...DECISION_BODY, noFallback: false })).status, 200)
+  assert.deepEqual(calls, ['once', 'default', 'default'])
+})
+
+test('noFallback failure does not invoke regular decision method', async () => {
+  let regularCalls = 0
+  const provider: DecisionProvider = {
+    id: 'single',
+    async decide() { regularCalls++; throw new Error('must not run') },
+    async decideOnce() { throw new Error('single failed') },
+  }
+  const app = createGatewayApp(baseAppConfig({ decisions: { provider } }))
+  const res = await postDecisions(app, { ...DECISION_BODY, noFallback: true })
+  assert.equal(res.status, 502)
+  assert.equal(res.headers.get('x-shipyard-decision-attempt-limit'), '1')
+  assert.equal(regularCalls, 0)
+})

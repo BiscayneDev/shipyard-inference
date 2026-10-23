@@ -769,6 +769,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
+    // Read-only capability preflight: old deployments lack this header.
+    if (config.decisions?.provider.decideOnce) {
+      c.header('x-shipyard-decision-attempt-limit', '1')
+    }
     return c.json({
       object: 'list',
       data: resolveModelList(config).map((m) => ({
@@ -1343,11 +1347,17 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (!auth.ok) return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     const upto = auth.upto
 
-    let body: { state?: unknown; questions?: Record<string, DecisionQuestion>; model?: string }
+    let body: { state?: unknown; questions?: Record<string, DecisionQuestion>; model?: string; noFallback?: boolean }
     try {
       body = (await c.req.json()) as typeof body
     } catch {
       return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
+    }
+    if (body && body.noFallback !== undefined && typeof body.noFallback !== 'boolean') {
+      return errorJson(c, 400, '`noFallback` must be a boolean', 'invalid_request_error')
+    }
+    if (body?.noFallback === true && !config.decisions.provider.decideOnce) {
+      return errorJson(c, 400, 'This decision provider does not support noFallback', 'invalid_request_error')
     }
     if (!body || body.state === undefined) {
       return errorJson(c, 400, '`state` is required', 'invalid_request_error')
@@ -1375,7 +1385,12 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     try {
-      const res = await config.decisions!.provider.decide({
+      const provider = config.decisions!.provider
+      // Acknowledge enforcement so bounded clients can reject old deployments.
+      // This limits attempts, not cost; billing and settlement stay unchanged.
+      if (body.noFallback === true) c.header('x-shipyard-decision-attempt-limit', '1')
+      const decide = body.noFallback === true ? provider.decideOnce! : provider.decide
+      const res = await decide.call(provider, {
         state: body.state,
         questions: body.questions,
         model: body.model,

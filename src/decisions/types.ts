@@ -102,6 +102,9 @@ export interface DecisionProvider {
   id: string
   /** Evaluate every question against the state in one parallel call. */
   decide(req: DecisionRequest): Promise<DecisionResponse>
+  /** At most one upstream attempt, no retry or fallback. Absence means unsupported.
+   * Used only by explicitly bounded callers; this is not a dollar cap. */
+  decideOnce?(req: DecisionRequest): Promise<DecisionResponse>
   /** Models this provider can serve, for advertisement (e.g. `['jev-latest']`). */
   models?: string[]
 }

@@ -54,6 +54,11 @@ export function createOpenRouterDecisionProvider(
     id: 'openrouter-decisions',
     models: [model],
 
+    // decide below issues one fetch and never retries.
+    async decideOnce(req: DecisionRequest): Promise<DecisionResponse> {
+      return this.decide(req)
+    },
+
     async decide(req: DecisionRequest): Promise<DecisionResponse> {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)

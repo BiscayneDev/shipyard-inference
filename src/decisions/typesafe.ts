@@ -55,6 +55,11 @@ export function createTypeSafeProvider(opts: TypeSafeProviderOptions): DecisionP
     id: 'typesafe',
     models: [model],
 
+    // decide below issues one fetch and never retries.
+    async decideOnce(req: DecisionRequest): Promise<DecisionResponse> {
+      return this.decide(req)
+    },
+
     async decide(req: DecisionRequest): Promise<DecisionResponse> {
       const questions: Record<string, WireQuestion> = {}
       for (const [id, q] of Object.entries(req.questions ?? {})) {
