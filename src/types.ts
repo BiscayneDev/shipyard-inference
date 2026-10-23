@@ -47,6 +47,8 @@ export interface ToolDefinition {
  * providers (Anthropic/OpenAI/UsePod) — only `Router` reads them.
  */
 export interface RoutingHints {
+  /** Opt-in bounded chat: one tier, one coding, one guardrail attempt at most. */
+  noFallback?: boolean
   /** Auto-route per-model non-streaming timeout, preserving the capable fallback pool. */
   attemptTimeoutMs?: number
 
@@ -164,6 +166,8 @@ export interface LLMStreamOptions {
 }
 
 export interface LLMProvider {
+  /** One non-streaming upstream attempt without SDK retry; absent means unsupported. */
+  chatOnce?(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse>
   chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse>
   /**
    * Optional streaming variant. Yields incremental events ending in a single
