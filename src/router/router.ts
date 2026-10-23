@@ -227,7 +227,7 @@ export class Router implements LLMProvider {
       )
     }
 
-    const limit = Math.min(decisions.length, this.opts.maxRetries ?? decisions.length)
+    const limit = params.routingHints?.noFallback ? 1 : Math.min(decisions.length, this.opts.maxRetries ?? decisions.length)
     let lastError: unknown
 
     for (let attempt = 0; attempt < limit; attempt++) {
@@ -267,7 +267,7 @@ export class Router implements LLMProvider {
           lastError = error
           opts?.signal?.throwIfAborted()
           this.opts.health?.recordFailure(decision.candidate.id)
-          if (this.shouldRetry(retryAttempt, error)) {
+          if (!params.routingHints?.noFallback && this.shouldRetry(retryAttempt, error)) {
             await this.delayRetry(decision, attempt, retryAttempt, error)
             retryAttempt++
             continue
@@ -299,9 +299,13 @@ export class Router implements LLMProvider {
   }
 
   private async chatAttempt(decision: RoutingDecision, params: LLMChatParams, parent?: AbortSignal): Promise<LLMResponse> {
+    const provider = decision.candidate.provider
+    if (params.routingHints?.noFallback && !provider.chatOnce) throw new Error('Selected provider does not support bounded chat')
+    const chat = params.routingHints?.noFallback ? provider.chatOnce! : provider.chat
+    const invoke = (signal?: AbortSignal) => chat.call(provider, { ...params, model: decision.model ?? params.model }, { signal })
     const requestedMs = params.routingHints?.attemptTimeoutMs ?? this.opts.attemptTimeoutMs
     const ms = this.isPinned(params) || !Number.isFinite(requestedMs) || requestedMs! <= 0 ? undefined : requestedMs
-    if (!ms && !parent) return decision.candidate.provider.chat({ ...params, model: decision.model ?? params.model })
+    if (!ms && !parent) return invoke()
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let abort: (() => void) | undefined
@@ -318,7 +322,7 @@ export class Router implements LLMProvider {
     try {
       controller.signal.throwIfAborted()
       return await Promise.race([
-        decision.candidate.provider.chat({ ...params, model: decision.model ?? params.model }, { signal: controller.signal }),
+        invoke(controller.signal),
         stopped,
       ])
     } finally {
@@ -573,6 +577,7 @@ export class Router implements LLMProvider {
   private async applyAutoTier(
     params: LLMChatParams,
   ): Promise<{ params: LLMChatParams; event?: TierDecidedEvent }> {
+    if (params.routingHints?.noFallback && typeof this.opts.autoTier === 'function' && !(this.opts.autoTier as { supportsNoFallback?: boolean }).supportsNoFallback) throw new Error('Tier inferrer does not support bounded chat')
     if (params.routingHints?.tier) return { params } // explicit tier wins
     const hints0 = params.routingHints
     let tier: ModelTier | undefined

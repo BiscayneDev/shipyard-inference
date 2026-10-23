@@ -240,11 +240,11 @@ export function createJevTierInferrer(
     })
   }
 
-  return async (params: LLMChatParams): Promise<AutoTierResult> => {
+  const infer = async (params: LLMChatParams): Promise<AutoTierResult> => {
     const structuralTier = structural(params)
     const t0 = Date.now()
     const state = JSON.stringify(buildState(params))
-    const cacheKey = `${opts.model ?? ''}:${createHash('sha256').update(state).digest('hex')}`
+    const cacheKey = `${params.routingHints?.noFallback ? 'bounded:' : ''}${opts.model ?? ''}:${createHash('sha256').update(state).digest('hex')}`
     if (cache) {
       const hit = cache.get(cacheKey)
       if (hit && Date.now() - hit.at <= cacheTtlMs) {
@@ -267,20 +267,23 @@ export function createJevTierInferrer(
       if (cache.size >= cacheMaxEntries) cache.delete(cache.keys().next().value!)
     }
     try {
+      const decide = params.routingHints?.noFallback ? opts.provider.decideOnce : opts.provider.decide
+      if (!decide) throw new Error('Tier provider does not support bounded chat')
       const res = await withTimeout(
-        opts.provider.decide({
+        decide.call(opts.provider, {
           state: buildState(params),
           questions: TIER_QUESTIONS,
           model: opts.model,
         }),
       )
+      if (params.routingHints?.noFallback && /stub/i.test((res.provider ?? '') + res.model)) throw new Error('Bounded tier judgment is a stub')
       const latencyMs = Date.now() - t0
       const tierAnswer = res.answers['tier']
       const reasoningAnswer = res.answers['needs_reasoning']
       if (tierAnswer?.type !== 'choice' || !(tierAnswer.choice in TIER_QUESTIONS.tier.criteria)) {
         throw new Error(`jev tier answer malformed: ${JSON.stringify(tierAnswer)?.slice(0, 200)}`)
       }
-      if (tierAnswer.confidence < minConfidence && onLowConfidence === 'fallback') {
+      if (tierAnswer.confidence < minConfidence && (onLowConfidence === 'fallback' || params.routingHints?.noFallback)) {
         throw new Error(`jev tier confidence ${tierAnswer.confidence} below minimum ${minConfidence}`)
       }
       // Fail up: an unconfident judgment escalates one tier rather than
@@ -322,7 +325,9 @@ export function createJevTierInferrer(
     } catch (error) {
       const latencyMs = Date.now() - t0
       opts.onResult?.({ tier: structuralTier, structuralTier, fallback: true, error, latencyMs })
+      if (params.routingHints?.noFallback) throw error
       return { tier: structuralTier, source: 'structural', structuralTier, latencyMs } satisfies TierDecision
     }
   }
+  return Object.assign(infer, { supportsNoFallback: Boolean(opts.provider.decideOnce) })
 }

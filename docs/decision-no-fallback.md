@@ -28,3 +28,27 @@ acknowledgment, weak answers, or stub response. Keep Dinghy's UI flag OFF.
 A local harness must refuse to start if its saved attempt ledger already exists,
 so process restarts cannot silently rerun the test. This PR does not execute it,
 merge itself, deploy, or change production configuration.
+
+## Bounded non-streaming chat
+
+For a resumed generated-UI test, `shipyard: {no_fallback: true}` on a
+non-streaming chat request caps each existing inference stage at one attempt:
+Jev tier judgment, selected coding model, observe-only Jev guardrail. At most
+three upstream adapter invocations total; cache or absent guardrails can use
+fewer. It does not reuse a UI-choice judgment as a model-tier judgment.
+
+Configured model selection, provider order, settlement and telemetry are retained.
+No model pinning. Unsupported tier/guardrail configuration refuses before work;
+an unsupported selected coding adapter refuses before coding, after any tier
+judgment already consumed. Failed/weak tier judgments fail closed instead of
+structural fallback. Coding failures do not try a second candidate. SDK retries
+are explicitly disabled for supported built-in adapters. Streaming is refused.
+Custom fetch transports must not hide retries beneath an adapter.
+
+Before any billed POST, require authenticated GET /v1/models header
+`x-shipyard-chat-attempt-limit: 3` on the stable deployed revision. The POST also
+acknowledges that boundary. Old servers can ignore the field. Capability
+advertisement is conservative: every configured coding adapter must support
+single-attempt chat, and Jev tier/guardrail must support single-attempt decisions.
+This is not a dollar cap. Keep the existing output-token limit, use one local
+non-resumable dispatch ledger, and do not retry errors or malformed generated UI.

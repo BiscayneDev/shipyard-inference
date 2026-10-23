@@ -112,8 +112,9 @@ const TIERS = new Set(['economy', 'standard', 'frontier'])
  */
 export function clientRoutingHints(prefs: unknown): RoutingHints | undefined {
   if (!prefs || typeof prefs !== 'object') return undefined
-  const p = prefs as { providers?: unknown; min_tier?: unknown; max_tier?: unknown; attempt_timeout_ms?: unknown }
+  const p = prefs as { providers?: unknown; min_tier?: unknown; max_tier?: unknown; attempt_timeout_ms?: unknown; no_fallback?: unknown }
   const hints: RoutingHints = {}
+  if (p.no_fallback === true) hints.noFallback = true
   if (Array.isArray(p.providers)) {
     const providers = p.providers.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
     if (providers.length) hints.providers = providers
@@ -203,6 +204,7 @@ export async function buildRoutingParams(
     )
     if (anchor) params.routingHints = { ...params.routingHints, ...anchor }
   }
+  if (body.shipyard?.no_fallback === true) params.routingHints = { ...params.routingHints, noFallback: true }
   // A tenant/project-scoped key attributes the request to its account — so
   // the caller's traffic ties to the right tenant, project, and wallet.
   if (account) {
@@ -455,8 +457,9 @@ function evaluateGuardrails(
   if (!g) return
   const flagUnsafeAbove = g.flagUnsafeAbove ?? 0.8
   const flagQualityBelow = g.flagQualityBelow ?? 0.25
-  void g.provider
-    .decide({
+  const decide = params.routingHints?.noFallback ? g.provider.decideOnce : g.provider.decide
+  if (!decide) return
+  void decide.call(g.provider, {
       state: {
         request: {
           system: params.system,
@@ -773,6 +776,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (config.decisions?.provider.decideOnce) {
       c.header('x-shipyard-decision-attempt-limit', '1')
     }
+    if (typeof config.autoTier === 'function' && (config.autoTier as { supportsNoFallback?: boolean }).supportsNoFallback && (!config.guardrails || config.guardrails.provider.decideOnce) && config.candidates.every(c => Boolean(c.provider.chatOnce))) c.header('x-shipyard-chat-attempt-limit', '3')
     return c.json({
       object: 'list',
       data: resolveModelList(config).map((m) => ({
@@ -896,6 +900,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     } catch {
       return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
     }
+    const bounded = body?.shipyard?.no_fallback === true
+    if (body?.shipyard?.no_fallback !== undefined && typeof body.shipyard.no_fallback !== 'boolean') return errorJson(c, 400, 'no_fallback must be boolean', 'invalid_request_error')
+    if (bounded && (body.stream || (typeof config.autoTier !== 'function' || !(config.autoTier as { supportsNoFallback?: boolean }).supportsNoFallback) || (config.guardrails && !config.guardrails.provider.decideOnce))) return errorJson(c, 400, 'Bounded non-streaming chat is unsupported by this configuration', 'invalid_request_error')
+    if (bounded) c.header('x-shipyard-chat-attempt-limit', '3')
     if (!body || !Array.isArray(body.messages)) {
       return errorJson(c, 400, '`messages` is required', 'invalid_request_error')
     }

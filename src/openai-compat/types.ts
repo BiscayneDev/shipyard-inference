@@ -41,6 +41,8 @@ export interface OpenAIChatRequest {
 }
 
 export interface ShipyardRoutingPrefs {
+  /** Non-streaming only: at most one attempt per tier/coding/guardrail stage. */
+  no_fallback?: boolean
   providers?: string[]
   min_tier?: string
   max_tier?: string
