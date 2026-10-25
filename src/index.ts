@@ -28,6 +28,8 @@ export type {
 export * from './usepod/index.js'
 
 export { createNousProvider } from './providers/nous.js'
+export { createGreyRidgeProvider } from './providers/greyridge.js'
+export type { GreyRidgeProviderOptions } from './providers/greyridge.js'
 export {
   createHopscotchProvider,
   createHopscotchCandidate,
