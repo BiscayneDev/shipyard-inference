@@ -7,6 +7,12 @@ globalThis.fetch=async(url,opts)=>{
  if(String(url)==='https://example.invalid/auth/v1/user'){const token=opts.headers.authorization.slice(7);return new Response(JSON.stringify({id:token,email:token+'@example.invalid',email_confirmed_at:'2026-01-01'}),{status:200})}
  throw new Error('External network prohibited in fictional portal test')
 }
+globalThis.fetch=async(url,opts)=>{
+ if(String(url)==='https://example.invalid/auth/v1/user'){const token=opts.headers.authorization.slice(7);return new Response(JSON.stringify({id:token,email:token+'@example.invalid',email_confirmed_at:'2026-01-01'}),{status:200})}
+ if(String(url)==='https://api.paybox.sh/.well-known/oauth-authorization-server') return new Response(JSON.stringify({token_endpoint:'https://api.paybox.sh/fictional-token'}))
+ if(String(url)==='https://api.paybox.sh/fictional-token') return new Response(JSON.stringify({access_token:'fictional',refresh_token:'fictional',expires_in:300}))
+ throw new Error('External network prohibited in fictional portal test')
+}
 const {portalApp}=await import(new URL('../examples/chat-portal/server.mjs',import.meta.url))
 import assert from 'node:assert/strict'
 const request=async(path,owner,method='GET',body)=>portalApp.fetch(new Request('https://example.invalid'+path,{method,headers:{...(owner?{authorization:'Bearer '+owner}:{}),'content-type':'application/json'},body:body?JSON.stringify(body):undefined}))
@@ -28,5 +34,12 @@ try{
  assert.equal((await request('/api/chat','a','POST',{mode:'production',messages:[]})).status,503)
  assert.equal((await request('/api/tender/payout','a','POST',{sessionId:a.sessionId})).status,503)
  assert.deepEqual((await (await request('/api/threads','b')).json()).threads,[])
+ const callback=await portalApp.fetch(new Request('https://example.invalid/api/paybox/connect/callback?code=fictional&state=fixture-state',{headers:{cookie:'portal.oauth-auth=a; paybox_connect_state=fixture-state; paybox_connect_verifier=fixture-verifier; paybox_connect_client=fixture-client'}}))
+ assert.equal(callback.status,302);assert.ok(!callback.headers.get('location').includes('portalSession'))
+ const setCookie=callback.headers.get('set-cookie');const sid=setCookie.match(/portal\.session=([^;]+)/)[1]
+ assert.equal((await request('/api/wallet/'+sid,'a')).status,200)
+ assert.equal((await request('/api/wallet/'+sid,'b')).status,404)
+ const badCallback=await portalApp.fetch(new Request('https://example.invalid/api/paybox/connect/callback?code=fictional',{headers:{cookie:'portal.oauth-auth=a'}}))
+ assert.ok(!badCallback.headers.get('set-cookie')?.includes('portal.session='))
  console.log('Fictional full portal: auth/session ownership/private methods/payout pause PASS')
 }finally{fs.rmSync(process.env.SHIPYARD_PORTAL_DATA_DIR,{recursive:true,force:true})}
