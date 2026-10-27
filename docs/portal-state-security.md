@@ -16,3 +16,15 @@ client is revoked. Do not copy the old credentials into the new store. Keep any
 required incident evidence in a restricted location, not Git, reports or fixtures.
 Removing tracked files does not remove historical copies or invalidate tokens.
 Revocation of the exposed issuer-side client is still required independently.
+
+## Source credential tripwire
+
+CI runs scripts/check-credentials.mjs automatically through npm pretest. It scans
+tracked Git text blobs for runtime-state paths, JWT-like literals, long JSON
+OAuth token literals, private-key headers and known service-token prefixes.
+Findings contain only path and rule, never values or matched lines. Run
+npm run security:staged before committing to inspect the actual staged blobs.
+This is a narrow tripwire, not proof that code or history contains no secrets.
+It skips binary content and cannot recognize arbitrary secret formats.
+Historical exposures still need issuer-side revocation and a separate restricted
+history scan. Do not post scanner matches, source dumps or tokens in artifacts.

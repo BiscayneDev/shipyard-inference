@@ -40,7 +40,10 @@
     "build:web": "node scripts/build-web.mjs",
     "vercel-build": "npm run build && npm run build:web",
     "prepublishOnly": "npm run clean && npm run build",
-    "build:portal-wallet": "esbuild examples/chat-portal/public/src/wallet.js --bundle --format=iife --target=es2020 --minify --outfile=examples/chat-portal/public/wallet-bundle.js"
+    "build:portal-wallet": "esbuild examples/chat-portal/public/src/wallet.js --bundle --format=iife --target=es2020 --minify --outfile=examples/chat-portal/public/wallet-bundle.js",
+    "security:check": "node scripts/check-credentials.mjs",
+    "security:staged": "node scripts/check-credentials.mjs --staged",
+    "pretest": "node scripts/check-credentials.mjs"
   },
   "keywords": [
     "shipyard",
