@@ -288,8 +288,10 @@ const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
   creditStore: tenderCreditStore,
   settleCredit: async args => {
-    if (!tenderSettlementStore) throw new Error("Durable Tender accounting is required")
-    return tenderSettlementStore.routed(args.userId, args.placement.placementId, args.requestId)
+    if (!tenderSettlementStore) return 0
+    // Accounting failures refuse the reward, never inference or its spend settlement.
+    try { return await tenderSettlementStore.routed(args.userId, args.placement.placementId, args.requestId) }
+    catch { console.error('[tender] reward accounting unavailable; no reward credited'); return 0 }
   },
   // Inventory is loaded from the campaign store (below) — the single source of
   // truth — rather than hardcoded, so /advertise reflects exactly what serves.
@@ -1681,6 +1683,7 @@ app.get('/api/me', async (c) => {
 // New RPCs must be applied before deploying this route. Custom legacy table
 // overrides require an operator-reviewed migration, never an unsafe fallback.
 app.route('/', createTenderSettlementRoutes({
+  claimsEnabled: process.env.TENDER_CLAIMS_ENABLED === 'on',
   store: tenderSettlementStore,
   account: async header => {
     const auth = await resolveAuth({ keyStore }, header)

@@ -11,7 +11,7 @@ function setup(overrides: Partial<TenderSettlementStore> = {}, broadcast = async
     routed: async () => 0,
     impression: async () => ({ accrued: 0.0005 }), ...overrides,
   }
-  const app = createTenderSettlementRoutes({ store, account: async () => ({ userId: claim.account, wallet: claim.wallet }),
+  const app = createTenderSettlementRoutes({ claimsEnabled: true, store, account: async () => ({ userId: claim.account, wallet: claim.wallet }),
     prepare: async () => ({ signature: 'fictional-signature', network: 'devnet', broadcast: async () => {
       assert.equal(prepared, true, 'transaction identity must persist before broadcast'); transfers++; await broadcast()
     } }), minClaimUsd: 0.0005, minImpressionIntervalMs: 5000 })
@@ -48,13 +48,13 @@ test('impression RPC failure is not swallowed', async () => {
   assert.equal((await s.app.request('/api/tender/impression', { method: 'POST' })).status, 503)
 })
 test('missing durable store refuses claim and impression without work', async () => {
-  const app = createTenderSettlementRoutes({ account: async () => ({ userId: 'fictional', wallet: 'fictional' }),
+  const app = createTenderSettlementRoutes({ claimsEnabled: true, account: async () => ({ userId: 'fictional', wallet: 'fictional' }),
     prepare: async () => { throw Error('must not run') }, minClaimUsd: 1, minImpressionIntervalMs: 5000 })
   assert.equal((await post(app)).status, 503)
   assert.equal((await app.request('/api/tender/impression', { method: 'POST' })).status, 503)
 })
 test('unauthenticated calls cannot reserve or prepare', async () => {
-  const app = createTenderSettlementRoutes({ account: async () => undefined,
+  const app = createTenderSettlementRoutes({ claimsEnabled: true, account: async () => undefined,
     prepare: async () => { throw Error('must not run') }, minClaimUsd: 1, minImpressionIntervalMs: 5000 })
   assert.equal((await post(app)).status, 401)
 })
@@ -63,4 +63,9 @@ test('Supabase adapter rejects unsuccessful RPC responses and false transitions'
   await assert.rejects(make('', 503).reserve('a','w',1))
   await assert.rejects(make('false', 200).prepared('id','sig','devnet'))
   await assert.rejects(make('false', 200).confirmed('id','sig'))
+})
+
+test('claims stay paused by default even when a durable store is present', async () => {
+ const app=createTenderSettlementRoutes({ account: async()=>{throw Error('must not authenticate')}, prepare:async()=>{throw Error('must not prepare')}, minClaimUsd:1,minImpressionIntervalMs:5000 })
+ assert.equal((await post(app)).status,503)
 })

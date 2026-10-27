@@ -2,6 +2,8 @@
 
 ## Deployment order
 
+The claim-only pause stays active by default even after this change is deployed.
+Only a separately approved TENDER_CLAIMS_ENABLED=on activation restores claims.
 The claim-only pause stays active until this change is reviewed and activated.
 Do not deploy this change before applying the included SQL migration to the
 same Supabase project used by the inference service. Applying SQL alone does

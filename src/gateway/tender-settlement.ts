@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Claim, TenderSettlementStore } from '../tender/settlement-store.js'
 export interface PreparedPayout { signature: string; network: string; broadcast(): Promise<void> }
 export function createTenderSettlementRoutes(opts: {
+  claimsEnabled?: boolean
   store?: TenderSettlementStore
   account(header: string | undefined): Promise<{ userId: string; wallet?: string } | undefined>
   prepare(claim: Claim): Promise<PreparedPayout>
@@ -10,6 +11,7 @@ export function createTenderSettlementRoutes(opts: {
 }) {
   const app = new Hono()
   app.post('/api/tender/claim', async c => {
+    if (opts.claimsEnabled !== true) return c.json({ error: 'Tender payouts are temporarily paused for a security update' }, 503)
     const account = await opts.account(c.req.header('authorization'))
     if (!account) return c.json({ error: 'unauthorized' }, 401)
     if (!account.wallet) return c.json({ error: 'no payout wallet on this key' }, 400)
