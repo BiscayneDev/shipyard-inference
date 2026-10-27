@@ -16,6 +16,8 @@ export interface OperatorConsoleOptions {
   hub: TelemetryHub
   /** Bearer tokens reporters present to `POST /ingest`. Empty ⇒ open (dev only). */
   ingestTokens?: string[]
+  /** Hosted deployments fail closed instead of allowing anonymous telemetry. */
+  requireIngestAuth?: boolean
   /** Bearer tokens the operator presents to `GET /api/*`. Empty ⇒ open (dev only). */
   operatorTokens?: string[]
   cors?: { origins: string[] | '*' }
@@ -85,7 +87,7 @@ export function createOperatorConsole(opts: OperatorConsoleOptions): Hono {
 
   // --- ingest (write) ------------------------------------------------------
   app.post('/ingest', async (c) => {
-    if (!checkBearer(opts.ingestTokens, c.req.header('authorization'))) {
+    if ((opts.requireIngestAuth && !opts.ingestTokens?.length) || !checkBearer(opts.ingestTokens, c.req.header('authorization'))) {
       return c.json({ error: 'invalid ingest token' }, 401)
     }
     let body: IngestPayload
