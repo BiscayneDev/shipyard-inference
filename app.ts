@@ -1717,32 +1717,9 @@ import { Hono as _Hono } from 'hono'
 const portalMount = new _Hono()
 // /portal (no trailing slash) → /portal/, so the page's relative asset and
 // API paths resolve under the mount instead of the site root.
-portalMount.get('/', (c) => c.redirect('/portal/'))
-portalMount.all('*', async (c) => {
-  // Plain-JS portal app outside src/ — the bundler resolves and traces this
-  // fine at build time; only bare 'tsc app.ts' (framework preset's type
-  // check, script mode without a tsconfig) cannot, hence the ignore.
-  // @ts-ignore -- runtime .mjs import, bundled by Vercel's esbuild
-  // ('./examples' resolves from the repo root locally AND from the bundled
-  // function root on Vercel, where build-web copies the portal tree.)
-  const { portalApp } = await import('./examples/chat-portal/server.mjs')
-  // The portal sees clean paths: strip the /portal mount prefix from the
-  // request URL (Hono hands us the raw Request with the full path), and
-  // re-add it to any Location redirects so OAuth round-trips stay under /portal.
-  const url = new URL(c.req.url)
-  const path = url.pathname.replace(/^\/portal/, '') || '/'
-  const req = new Request(new URL(path + url.search, url.origin), c.req.raw)
-  // Tell the portal it's mounted (OAuth redirect URIs need the /portal prefix)
-  req.headers.set('x-portal-prefix', '/portal')
-  const res = await portalApp.fetch(req)
-  const location = res.headers.get('location')
-  if (location && location.startsWith('/')) {
-    const headers = new Headers(res.headers)
-    headers.set('location', '/portal' + location)
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-  }
-  return res
-})
+// Temporary portal-only hold. This runs before importing the shared-store
+// example application. Restore only after its owner boundaries are fixed.
+portalMount.all('*', c => c.json({ error: 'The chat portal is temporarily paused for a security update' }, 503))
 app.route('/portal', portalMount)
 
 app.route('/', operator)
