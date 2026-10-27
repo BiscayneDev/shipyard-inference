@@ -470,6 +470,11 @@ const gateway = createGatewayApp({
 const operator = createOperatorConsole({
   hub,
   operatorTokens: OPERATOR_TOKENS,
+  // Hosted reporting is in-process. External reporters must present this
+  // existing telemetry token, or the operator token when none is configured.
+  ingestTokens: process.env.SHIPYARD_TELEMETRY_TOKEN?.trim()
+    ? [process.env.SHIPYARD_TELEMETRY_TOKEN.trim()] : OPERATOR_TOKENS,
+  requireIngestAuth: true,
   keyStore,
   cors: { origins: '*' },
 })
