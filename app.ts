@@ -1703,30 +1703,8 @@ app.post('/api/tender/impression', async (c) => {
 
 const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
 app.post('/api/tender/claim', async (c) => {
-  const r6 = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
-  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
-  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
-  const wallet = auth.account.wallet
-  if (!wallet) return c.json({ error: 'no payout wallet on this key — reconnect with --wallet <addr>' }, 400)
-  const balanceUsd = await gatewayTender.balance(auth.account.userId)
-  if (!(balanceUsd >= MIN_CLAIM_USDC)) return c.json({ error: 'nothing to claim yet', balanceUsd: r6(balanceUsd) }, 400)
-
-  let result
-  try {
-    const payout = await import('./dist/tender/payout.js')
-    const cfg = payout.loadPayoutConfig(process.env)
-    if (!cfg) return c.json({ error: 'payouts not configured on this gateway' }, 503)
-    result = await payout.payoutUsdc(cfg, wallet, balanceUsd)
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502)
-  }
-
-  // Debit the swept amount (negative accrual) so balance() nets to ~0.
-  await tenderCreditStore
-    .accrue({ account: auth.account.userId, amountUsd: -balanceUsd, placementId: 'payout', line: `payout ${result.signature}`, requestId: result.signature, at: Date.now() })
-    .catch(() => {})
-
-  return c.json({ paid: true, amountUsdc: r6(balanceUsd), wallet, signature: result.signature })
+  // Temporary claim-only hold. Restore after durable accounting is deployed.
+  return c.json({ error: 'Tender payouts are temporarily paused for a security update' }, 503)
 })
 
 // ---------------------------------------------------------------------------
