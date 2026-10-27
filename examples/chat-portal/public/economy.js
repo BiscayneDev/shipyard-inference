@@ -1,3 +1,4 @@
+import './auth.js'
 // Economy primitives — Shipyard-specific, invented on top of the beautifului
 // design language. Theme: make the metered economy visible in real time.
 //

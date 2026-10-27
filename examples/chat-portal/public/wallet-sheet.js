@@ -1,3 +1,4 @@
+import './auth.js'
 // Wallet Sheet — the connect-wallet moment, designed to delight.
 // Two steps, one sheet:
 //   Step 1: Paybox, front and center (the recommended rail), plus a quiet

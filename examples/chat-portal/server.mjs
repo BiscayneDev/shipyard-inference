@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
+import { portalIdentityMiddleware, protectMap, bindOwner, owned } from './owner-boundary.mjs'
 import { streamSSE } from 'hono/streaming'
 import { serve } from '@hono/node-server'
 import {
@@ -528,6 +528,7 @@ const sessions = new Map()
  * concluding the session lacks a paybox binding, merge the newest entries
  * from the store (Supabase/file) into the local map and retry.
  */
+const sessionAccess = protectMap(sessions)
 async function getSession(sid, { wantPaybox = false } = {}) {
   if (!sid) return undefined
   let s = sessions.get(sid)
@@ -546,7 +547,7 @@ async function getSession(sid, { wantPaybox = false } = {}) {
           const localHasPaybox = Boolean(local?.paybox?.oauth)
           if (!local || (storeHasPaybox && !localHasPaybox)) {
             if (v?.paybox?.oauth) v.paybox.onRefresh = (t) => (v.paybox.oauth = t)
-            sessions.set(k, v)
+            sessionAccess.hydrate(k, v)
           }
         }
         s = sessions.get(sid)
@@ -579,6 +580,8 @@ threads.set = (k, v) => { _ts(k, v); persistThreads(); return threads }
 const _td = threads.delete.bind(threads)
 threads.delete = (k) => { const d = _td(k); persistThreads(); return d }
 
+protectMap(threads)
+
 /** Create a thread for a session (or return the existing current one). */
 function threadFor(sessionId) {
   if (!sessionId) return null
@@ -609,7 +612,7 @@ function threadAppend(sessionId, role, content) {
 // ---------------------------------------------------------------------------
 let activity = (await loadScope('activity')).all ?? []
 function logActivity(entry) {
-  activity.unshift({ at: Date.now(), ...entry })
+  activity.unshift(bindOwner({ at: Date.now(), ...entry }))
   if (activity.length > 500) activity = activity.slice(0, 500)
   clearTimeout(logActivity._t)
   logActivity._t = setTimeout(() => saveScope('activity', { all: activity }), 400)
@@ -621,7 +624,7 @@ function logActivity(entry) {
 // ---------------------------------------------------------------------------
 let guardrailResults = (await loadScope('guardrails')).all ?? []
 function logGuardrail(result) {
-  guardrailResults.unshift({ at: Date.now(), ...result })
+  guardrailResults.unshift(bindOwner({ at: Date.now(), ...result }))
   if (guardrailResults.length > 300) guardrailResults = guardrailResults.slice(0, 300)
   clearTimeout(logGuardrail._t)
   logGuardrail._t = setTimeout(() => saveScope('guardrails', { all: guardrailResults }), 400)
@@ -731,10 +734,24 @@ export function detectMount(c) {
 }
 
 const app = new Hono()
-app.use('/api/*', cors())
+app.use('/api/*', portalIdentityMiddleware())
+// Validate every supplied record identifier before any route can do work.
+app.use('/api/*',async(c,next)=>{
+  if (['POST','PUT','PATCH','DELETE'].includes(c.req.method)) {
+    const body = await c.req.json().catch(()=>null)
+    if (body?.sessionId && !await getSession(body.sessionId,{wantPaybox:true})) return c.json({error:'unknown session'},404)
+    if (body?.threadId && !threads.get(body.threadId)) return c.json({error:'unknown thread'},404)
+  }
+  await next()
+})
+// Hosted payout accounting remains separately paused until durable reconciliation.
+app.post('/api/tender/payout', c => c.json({error:'Tender payouts are temporarily paused for a security update'},503))
+// Campaign management is a separate advertiser surface, not a portal account capability.
+app.use('/api/campaigns', c => c.json({error:'Use the authenticated advertiser service'},503))
 
 // Browser payer debug beacon: the wallet's exact sent/received transaction
 // bytes, diffed so signature mismatches can be pinned down.
+app.post('/api/upto-debug', c => c.json({error:'Debug capture disabled'},404))
 app.post('/api/upto-debug', async (c) => {
   const { from, sent, received } = await c.req.json().catch(() => ({}))
   try {
@@ -792,6 +809,11 @@ app.get('/api/models', (c) => {
 // Nav pages — History (threads), Activity (metered events), Guardrails,
 // Settings (read-only facts about this deployment for now).
 // ---------------------------------------------------------------------------
+app.get('/api/session', async c => {
+  const sid = c.req.header('cookie')?.match(/(?:^|;\s*)portal\.session=([^;]+)/)?.[1]
+  const session = await getSession(sid)
+  return c.json({sessionId:session?.id ?? null})
+})
 app.get('/api/threads', (c) => {
   const list = [...threads.values()]
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
@@ -820,12 +842,12 @@ app.delete('/api/threads/:id', (c) => {
 
 app.get('/api/activity', (c) => {
   const limit = Math.min(200, Number(c.req.query('limit') ?? 100))
-  return c.json({ events: activity.slice(0, limit) })
+  return c.json({ events: activity.filter(owned).slice(0, limit) })
 })
 
 app.get('/api/guardrails', (c) => {
   const live = Boolean(process.env.TYPESAFE_API_KEY)
-  return c.json({ live, model: live ? 'jev-latest' : 'stub-latest', results: guardrailResults.slice(0, 100) })
+  return c.json({ live, model: live ? 'jev-latest' : 'stub-latest', results: guardrailResults.filter(owned).slice(0, 100) })
 })
 
 app.get('/api/settings', (c) => {
@@ -860,7 +882,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
   console.log(`[portal] Paybox callback: code=${code ? 'present' : 'MISSING'} state=${state ? 'present' : 'MISSING'} cookies=${['paybox_connect_state', 'paybox_connect_verifier', 'paybox_connect_client'].map((n) => (c.req.header('cookie')?.includes(n) ? '✓' : '✗')).join('')}`)
   try {
     if (!code) throw new Error('no authorization code in callback')
-    if (state !== cookie(CONNECT_STATE_COOKIE)) throw new Error('OAuth state mismatch')
+    if (!state || !cookie(CONNECT_STATE_COOKIE) || state !== cookie(CONNECT_STATE_COOKIE)) throw new Error('OAuth state mismatch')
     const oauth = await completeConnect(url.origin, code, cookie(CONNECT_VERIFIER_COOKIE), cookie(CONNECT_CLIENT_COOKIE), MOUNT_PREFIX)
     // Bind to (or create) this browser's session. NOTE: attach paybox BEFORE
     // sessions.set() — the write-through snapshots the object at set() time,
@@ -900,7 +922,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
     ]) {
       c.header('set-cookie', cookie, { append: true })
     }
-    return c.redirect(`/?portalSession=${session.id}`)
+    return c.redirect(`${MOUNT_PREFIX || ''}/?connected=1`)
   } catch (err) {
     console.error('[portal] Paybox callback FAILED:', err?.message ?? err, err?.stack?.split('\n')?.slice(0, 3).join(' | '))
     return c.redirect(`/?payboxError=${encodeURIComponent(String(err?.message ?? err).slice(0, 180))}`)
@@ -939,7 +961,7 @@ app.post('/api/paybox/signing-key', async (c) => {
 let insightEvents = (await loadScope('insights')).all ?? []
 if (!Array.isArray(insightEvents)) insightEvents = []
 function recordInsight(e) {
-  insightEvents.push({ ts: Date.now(), ...e })
+  insightEvents.push(bindOwner({ ts: Date.now(), ...e }))
   if (insightEvents.length > 5000) insightEvents = insightEvents.slice(-5000)
   clearTimeout(recordInsight._t)
   recordInsight._t = setTimeout(() => saveScope('insights', { all: insightEvents }), 400)
@@ -949,7 +971,7 @@ app.get('/api/insights', (c) => {
   const byDay = new Map()
   const byModel = new Map()
   let total = 0
-  for (const e of insightEvents) {
+  for (const e of insightEvents.filter(owned)) {
     const day = new Date(e.ts).toISOString().slice(0, 10)
     const cur = byDay.get(day) ?? { usd: 0, n: 0 }
     cur.usd += Number(e.chargedUsd ?? e.actualCostUsd ?? 0)
@@ -969,7 +991,7 @@ app.get('/api/insights', (c) => {
   }
   return c.json({
     total: Math.round(total * 1e6) / 1e6,
-    messages: insightEvents.length,
+    messages: insightEvents.filter(owned).length,
     days,
     models: [...byModel.entries()]
       .map(([model, v]) => ({ model, usd: Math.round(v.usd * 1e6) / 1e6, n: v.n }))
@@ -1076,6 +1098,7 @@ app.post('/api/wallet/connect', async (c) => {
     return c.json({ redirect: start.authorizeUrl })
   }
   let session = body.sessionId ? sessions.get(body.sessionId) : undefined
+  if (body.sessionId && !session) return c.json({error:'unknown session'},404)
   if (!session) {
     const id = randomBytes(12).toString('hex')
     const wallet = ['paybox', 'phantom', 'metamask'].includes(body.wallet) ? body.wallet : 'paybox'
@@ -1776,6 +1799,7 @@ app.post('/api/chat', async (c) => {
   // actual metered cost is settled + refunded after the reply streams.
   let uptoVerified
   const chatSession = await getSession(body.sessionId, { wantPaybox: true })
+  if (body.sessionId && !chatSession) return c.json({error:'unknown session'},404)
   // NOTE: a connected Paybox wallet pays INSIDE the stream (below), so the
   // client gets live payment status (instant MPC vs. waiting for a passkey
   // approval) instead of a silently blinking cursor while it parks.
@@ -2170,6 +2194,7 @@ function toChatParams(body, modelToCandidate) {
 // Static SPA — read straight off disk so the server runs from any cwd.
 // ---------------------------------------------------------------------------
 const STATIC = {
+  '/auth.js': ['auth.js', 'text/javascript; charset=utf-8'],
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
