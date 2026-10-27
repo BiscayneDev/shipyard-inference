@@ -25,3 +25,6 @@ scripts/.localnet.json
 scripts/.upto-operator.json
 manifesto.generated.ts
 login.generated.ts
+
+# Runtime portal sessions, OAuth credentials, chat history and telemetry.
+examples/chat-portal/.data/
