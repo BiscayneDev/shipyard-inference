@@ -117,7 +117,7 @@
     const { data } = await sb.auth.getSession()
     if (data.session) {
       const check = await fetch("/api/auth/allowed", { method: "POST", headers: { authorization: "Bearer " + data.session.access_token } })
-      if (check.ok) msg("Signed in as " + (await check.json()).email, "ok")
+      if (check.ok) { msg("Signed in as " + (await check.json()).email, "ok"); if (new URLSearchParams(location.search).get("next") === "portal") location.replace("/portal/") }
       else await sb.auth.signOut()
     }
   }
@@ -159,6 +159,7 @@
       return msg("This account is not on the access list.", "err")
     }
     msg("Signed in as " + (await check.json()).email, "ok")
+    if (new URLSearchParams(location.search).get("next") === "portal") location.replace("/portal/")
   })
 
   $("back").addEventListener("click", () => {

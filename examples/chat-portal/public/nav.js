@@ -1,3 +1,4 @@
+import './auth.js'
 // Nav rail — the portal's routing owner. Six destinations in three groups:
 //   Workspace: Chat, Decisions · Insight: History, Activity, Guardrails
 //   Portal: Settings

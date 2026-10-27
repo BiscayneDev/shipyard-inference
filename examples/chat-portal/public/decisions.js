@@ -1,3 +1,4 @@
+import './auth.js'
 // Decisions view — the System One surface (TypeSafe Jev) in the portal.
 // Builds typed questions (noul / choice / score), POSTs /api/decisions, and
 // renders the typed answers as confidence-metered cards. View switching

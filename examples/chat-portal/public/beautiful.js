@@ -1,3 +1,4 @@
+import './auth.js'
 // Beautiful primitives layered onto the chat thread:
 //   1. Thinking — expandable routing trace per reply (who was considered,
 //      what won, what it cost) fed by the meta SSE event's `trace`.

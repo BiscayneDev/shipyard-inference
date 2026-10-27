@@ -1,3 +1,4 @@
+import './auth.js'
 // Chat portal client — talks to the portal server's /api/* endpoints, streams
 // replies over SSE, renders markdown, and keeps the wallet + savings panels live.
 import { renderRoutingTrace, extendPaletteModels } from './beautiful.js'
@@ -35,13 +36,12 @@ async function init() {
   initWalletSheet()
   // The sheet hands the chosen wallet back via this event.
   document.addEventListener('portal:connect-wallet', (e) => connectWallet(e.detail))
-  // The Paybox OAuth callback appends ?portalSession=<id> — adopt it into
-  // localStorage so the UI picks up the connected session after the redirect.
-  const fromUrl = new URLSearchParams(location.search).get('portalSession')
-  if (fromUrl) {
-    state.sessionId = fromUrl
-    localStorage.setItem('portal.session', fromUrl)
-    history.replaceState(null, '', location.pathname)
+  // The callback returns no bearer session identifier in URLs.
+  if (new URLSearchParams(location.search).has('connected')) {
+    const current = await (await fetch('api/session')).json()
+    state.sessionId = current.sessionId
+    if (current.sessionId) localStorage.setItem('portal.session',current.sessionId)
+    history.replaceState(null,'',location.pathname)
   }
   await loadModels()
   if (state.sessionId) await refreshWallet()
