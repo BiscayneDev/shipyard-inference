@@ -42,6 +42,7 @@ export interface GatewayTenderOptions {
   /** Durable per-account kickback ledger. Defaults to in-memory (long-lived only). */
   creditStore?: CreditStore
   /** Time source (ms). Injectable for tests. Defaults to `Date.now`. */
+  settleCredit?: (args: SettleArgs) => Promise<number>
   now?: () => number
 }
 
@@ -52,6 +53,7 @@ export class GatewayTender {
   private readonly credits: CreditStore
   private readonly key: TenderAttestationKey
   private readonly requesterShare: number
+  private readonly settleCredit?: GatewayTenderOptions["settleCredit"]
   private readonly now: () => number
 
   constructor(opts: GatewayTenderOptions = {}) {
@@ -60,6 +62,7 @@ export class GatewayTender {
     this.minWaitMs = opts.minWaitMs ?? TENDER_DEFAULTS.MIN_WAIT_MS
     this.requesterShare = opts.requesterShare ?? TENDER_DEFAULTS.REQUESTER_SHARE
     this.credits = opts.creditStore ?? new MemoryCreditStore()
+    this.settleCredit = opts.settleCredit
     this.now = opts.now ?? Date.now
   }
 
@@ -102,6 +105,9 @@ export class GatewayTender {
       wasServed: (rid, pid) => this.log.wasServed(rid, pid),
     })
     if (!gate.ok) return { creditedUsd: 0, valid: false }
+    if (this.settleCredit) {
+      return { creditedUsd: await this.settleCredit(args), valid: true }
+    }
     const creditedUsd = args.placement.usdcPerImpression * this.requesterShare
     await this.credits.accrue({
       account: args.userId,

@@ -1,3 +1,4 @@
+import bs58 from 'bs58'
 import { Connection, PublicKey, Keypair, Transaction } from '@solana/web3.js'
 import {
   getAssociatedTokenAddress,
@@ -62,7 +63,7 @@ export interface PayoutResult {
  * Send `amountUsdc` USDC from the payout wallet to `toWallet` on-chain (creates
  * the recipient's USDC token account if needed). Returns the confirmed signature.
  */
-export async function payoutUsdc(cfg: PayoutConfig, toWallet: string, amountUsdc: number): Promise<PayoutResult> {
+export async function preparePayoutUsdc(cfg: PayoutConfig, toWallet: string, amountUsdc: number) {
   const conn = new Connection(cfg.rpcUrl ?? DEFAULT_RPC[cfg.network], 'confirmed')
   const mint = new PublicKey(cfg.usdcMint ?? USDC_MINT[cfg.network])
   const payer = cfg.signer.publicKey
@@ -77,7 +78,19 @@ export async function payoutUsdc(cfg: PayoutConfig, toWallet: string, amountUsdc
   tx.add(createTransferCheckedInstruction(payerAta, mint, destAta, payer, atomic, 6))
   tx.sign(cfg.signer)
 
-  const signature = await conn.sendRawTransaction(tx.serialize())
-  await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
-  return { signature, from: payer.toBase58(), to: toWallet, amountUsdc }
+  const bytes = tx.serialize()
+  const signature = bs58.encode(tx.signature!)
+  return { signature, network: cfg.network, async broadcast(): Promise<void> {
+    const sent = await conn.sendRawTransaction(bytes, { maxRetries: 0 })
+    if (sent !== signature) throw new Error('Unexpected payout signature')
+    const result = await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+    if (result.value.err) throw new Error('Payout was not confirmed successful')
+  } }
+}
+
+/** Legacy standalone caller. Hosted Tender routes use prepare/persist/broadcast. */
+export async function payoutUsdc(cfg: PayoutConfig, toWallet: string, amountUsdc: number): Promise<PayoutResult> {
+  const prepared = await preparePayoutUsdc(cfg, toWallet, amountUsdc)
+  await prepared.broadcast()
+  return { signature: prepared.signature, from: cfg.signer.publicKey.toBase58(), to: toWallet, amountUsdc }
 }

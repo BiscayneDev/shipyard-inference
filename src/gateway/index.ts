@@ -92,3 +92,5 @@ export {
   DEFAULT_CONNECTION_HOLD_USD,
 } from './connection-budget.js'
 export type { ConnectionBudget, ConnectionHold, ConnectionLedgerStore, ConnectionDrift } from './connection-budget.js'
+
+export { createTenderSettlementRoutes } from "./tender-settlement.js"
