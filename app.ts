@@ -30,6 +30,7 @@ import {
   costOptimized,
   GatewayTender,
   MemoryCreditStore,
+  SupabaseTenderSettlementStore,
   SupabaseCreditStore,
   MemoryCampaignStore,
   SupabaseCampaignStore,
@@ -51,6 +52,7 @@ import {
 } from './dist/index.js'
 import {
   createGatewayApp,
+  createTenderSettlementRoutes,
   createOwnerKeyApp,
   createOAuthApp,
   consentSessionResolver,
@@ -279,9 +281,18 @@ const tenderCreditStore =
         table: process.env.SUPABASE_TENDER_CREDITS_TABLE,
       })
     : new MemoryCreditStore()
+const tenderSettlementStore = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY &&
+  !process.env.SUPABASE_TENDER_CREDITS_TABLE && !process.env.SUPABASE_CAMPAIGNS_TABLE
+  ? new SupabaseTenderSettlementStore({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_KEY }) : undefined
 const gatewayTender = new GatewayTender({
   minWaitMs: Number(process.env.TENDER_MIN_WAIT_MS ?? 800),
   creditStore: tenderCreditStore,
+  settleCredit: async args => {
+    if (!tenderSettlementStore) return 0
+    // Accounting failures refuse the reward, never inference or its spend settlement.
+    try { return await tenderSettlementStore.routed(args.userId, args.placement.placementId, args.requestId) }
+    catch { console.error('[tender] reward accounting unavailable; no reward credited'); return 0 }
+  },
   // Inventory is loaded from the campaign store (below) — the single source of
   // truth — rather than hardcoded, so /advertise reflects exactly what serves.
 })
@@ -1674,43 +1685,24 @@ app.get('/api/me', async (c) => {
 // where inference runs. Anti-abuse: per-account rate limit + the advertiser
 // budget cap (payouts can never exceed funded inventory). Softer than the routed
 // attestation, which stays as a stronger signal when a user does route.
-const IMPRESSION_MIN_MS = Number(process.env.TENDER_IMPRESSION_MIN_MS ?? 5000)
-const REQUESTER_SHARE = 0.5
-const lastImpressionAt = new Map<string, number>()
-app.post('/api/tender/impression', async (c) => {
-  const auth = await resolveAuth({ keyStore }, c.req.header('authorization'))
-  if (!auth.ok || !auth.account) return c.json({ error: 'unauthorized' }, 401)
-  const acct = auth.account.userId
-  const now = Date.now()
-  if (now - (lastImpressionAt.get(acct) ?? 0) < IMPRESSION_MIN_MS) return c.json({ accrued: 0, throttled: true })
-  await ensureCampaigns()
-  const live = (await campaignStore.list().catch(() => []))
-    .filter(isCampaignActive)
-    .filter((x) => (x.remainingImpressions ?? 0) > 0)
-    .sort((a, b) => b.usdcPerImpression - a.usdcPerImpression) // first-price: highest bid serves
-  const camp = live[0]
-  if (!camp) return c.json({ accrued: 0, reason: 'no funded inventory' })
-  lastImpressionAt.set(acct, now)
-  const share = camp.usdcPerImpression * REQUESTER_SHARE
-  await tenderCreditStore
-    .accrue({ account: acct, amountUsd: share, placementId: camp.placementId, line: camp.line, requestId: `imp_${now}`, at: now })
-    .catch(() => {})
-  // Draw down the advertiser's funded budget (the hard cap on total payouts).
-  await campaignStore
-    .update(camp.campaignId, {
-      remainingImpressions: (camp.remainingImpressions ?? 1) - 1,
-      fundedUsdc: Math.max(0, (camp.fundedUsdc ?? 0) - camp.usdcPerImpression),
-    })
-    .catch(() => {})
-  const r6i = (n: number): number => Math.round((n + Number.EPSILON) * 1e6) / 1e6
-  return c.json({ accrued: r6i(share), line: camp.line, campaignId: camp.campaignId })
-})
-
-const MIN_CLAIM_USDC = Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005)
-app.post('/api/tender/claim', async (c) => {
-  // Temporary claim-only hold. Restore after durable accounting is deployed.
-  return c.json({ error: 'Tender payouts are temporarily paused for a security update' }, 503)
-})
+// New RPCs must be applied before deploying this route. Custom legacy table
+// overrides require an operator-reviewed migration, never an unsafe fallback.
+app.route('/', createTenderSettlementRoutes({
+  claimsEnabled: process.env.TENDER_CLAIMS_ENABLED === 'on',
+  store: tenderSettlementStore,
+  account: async header => {
+    const auth = await resolveAuth({ keyStore }, header)
+    return auth.ok ? auth.account : undefined
+  },
+  prepare: async claim => {
+    const payout = await import('./dist/tender/payout.js')
+    const cfg = payout.loadPayoutConfig(process.env)
+    if (!cfg) throw new Error('Payouts not configured')
+    return payout.preparePayoutUsdc(cfg, claim.wallet, claim.amountUsd)
+  },
+  minClaimUsd: Number(process.env.TENDER_MIN_CLAIM_USDC ?? 0.0005),
+  minImpressionIntervalMs: Number(process.env.TENDER_IMPRESSION_MIN_MS ?? 5000),
+}))
 
 // ---------------------------------------------------------------------------
 // Chat portal — the Paybox-wallet chat UI, mounted at /portal. It's a plain
