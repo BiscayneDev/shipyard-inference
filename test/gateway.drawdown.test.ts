@@ -226,7 +226,8 @@ test('drawdown: SHIPYARD_WALLET_KEY_CEILING_USD applies a per-key spend ceiling 
     const seed = new Uint8Array(Buffer.from(privateKey.export({ format: 'jwk' }).d!, 'base64url'))
     // The challenge is deterministic — rebuild the exact message and sign it.
     const { challengeForWallet, newWalletNonce } = await import('../src/gateway/keys-wallet.js')
-    const message = challengeForWallet(pubkey, 'ceiling-n1')
+    const nonce = newWalletNonce()
+    const message = challengeForWallet(pubkey, nonce)
     const pkcs8 = Buffer.concat([
       Buffer.from('302e020100300506032b657004220420', 'hex'),
       Buffer.from(seed),
