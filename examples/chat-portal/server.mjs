@@ -744,6 +744,17 @@ app.use('/api/*',async(c,next)=>{
   }
   await next()
 })
+// Login establishes record ownership, not authority over an operator-funded
+// wallet or an unproven client-supplied wallet address. Keep those paths gated.
+app.use('/api/*',async(c,next)=>{
+  const blocked = new Set(['/api/settle','/api/wallet/topup','/api/wallet/deposit/build','/api/wallet/deposit/submit','/api/tender/click','/api/decisions'])
+  if (blocked.has(c.req.path)) return c.json({error:'Wallet operations are paused pending account and accounting verification'},503)
+  if (c.req.path === '/api/chat' || c.req.path === '/api/route-preview') {
+    const body = await c.req.json().catch(()=>null)
+    if (body?.mode === 'production') return c.json({error:'Paid portal inference is temporarily paused'},503)
+  }
+  await next()
+})
 // Hosted payout accounting remains separately paused until durable reconciliation.
 app.post('/api/tender/payout', c => c.json({error:'Tender payouts are temporarily paused for a security update'},503))
 // Campaign management is a separate advertiser surface, not a portal account capability.
@@ -1121,24 +1132,9 @@ app.post('/api/wallet/connect', async (c) => {
     // Bring-your-own wallet (Phantom): provision THIS user a UsePod token they
     // fund from their own wallet. Inference for the session routes through it,
     // and the balance is the real remaining UsePod balance (0 until Top up).
-    if (wallet === 'phantom' && realAddress) {
-      try {
-        const account = await registerUsePod()
-        session.usepod = { token: account.token, depositCode: account.depositCode, router: buildSessionRouter(account.token) }
-        session.mode = 'usepod'
-        session.realInference = true
-        session.balanceUsd = (await usePodBalance(account.token).catch(() => ({ usdc: 0 }))).usdc
-      } catch (err) {
-        // UsePod unreachable — connect anyway (UI works), but inference stays mock.
-        console.warn('phantom connect: UsePod provisioning failed —', err?.message ?? err)
-      }
-    } else if (inference.funding) {
-      // Operator Paybox-funded UsePod: balance is the real remaining balance.
-      try {
-        session.balanceUsd = (await usePodBalance(inference.funding.token)).usdc
-        session.realInference = true
-      } catch { /* keep demo balance if the balance API is unreachable */ }
-    }
+    // Creating a portal session does not prove control of body.address.
+    // Provisioning and operator-funded wallet fallback stay disabled.
+    session.address = newAddress(wallet)
     sessions.set(id, session)
   }
   return c.json(walletSnapshot(session))

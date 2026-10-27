@@ -15,8 +15,12 @@ that owner. Legacy records with no owner stay inaccessible and are not guessed,
 auto-adopted or deleted. Existing local connections must reconnect after the
 exposed PayBox client has been revoked. No migration of old token material.
 
-Portal payouts, debug transaction capture and portal campaign management stay
-unavailable independently. Campaign management belongs to the separate advertiser
+Portal payouts, settlements, deposits/topups, reward clicks, paid inference,
+paid decisions, debug transaction capture and portal campaign management stay
+unavailable independently. Login is not proof of wallet ownership or permission
+to use a shared operator-funded wallet. Client-provided addresses are not adopted
+as proven wallet identities. Demo chat and account-owned history can be tested
+without reopening financial paths. Campaign management belongs to the separate advertiser
 service, not ordinary portal users. A safe payout needs durable accounting and
 funding review; authenticating a user does not fix accounting.
 
