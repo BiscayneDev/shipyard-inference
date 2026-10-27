@@ -29,7 +29,8 @@ This is an intentional activation dependency, not an inference outage.
 
 A transaction serializes claims by account, records a claim and debits credits
 atomically. Only one open claim per account is allowed. Before broadcast, the
-application persists the exact signed transaction signature and cluster. A
+application persists the exact signed transaction signature, cluster, signer public
+address, token mint, blockhash and last-valid block height. A
 confirmed successful transfer marks that claim paid. Any error leaves the
 claim held. The HTTP response says reconciliation is required; it never says
 paid merely because broadcasting was attempted.
@@ -68,3 +69,19 @@ chain outcomes, missing durable storage, and unauthenticated calls. SQL audit
 verification runs against PGlite separately and confirms reservation/debit,
 held unknown outcomes, budget exhaustion, replay prevention and role denial.
 The ordinary suite does not install a new database dependency.
+
+## Still blocked before payout activation
+
+The legacy ledger has no network/mint or verified funding provenance. This
+patch does not retroactively make those credits asset-backed. A minimal
+read-only activation review should compare aggregate claimable liabilities
+with verified campaign funding on the intended mint/network, identify the
+payout signer publicly, and verify explicitly allocated payout assets.
+Do not extract individual users' balances for this first aggregate check.
+House/demo campaigns must not be treated as paid deposits. Any needed
+legacy-credit quarantine, conversion, cancellation or refund requires a
+separate owner decision; this patch makes none.
+
+The SQL reservation protects an existing credit balance from double spending.
+It does NOT independently prove that balance has corresponding on-chain
+assets. Keep TENDER_CLAIMS_ENABLED unset until that separate check passes.

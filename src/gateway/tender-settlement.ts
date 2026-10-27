@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { Claim, TenderSettlementStore } from '../tender/settlement-store.js'
-export interface PreparedPayout { signature: string; network: string; broadcast(): Promise<void> }
+export interface PreparedPayout { signature: string; network: string; signer: string; mint: string; blockhash: string; lastValidBlockHeight: number; broadcast(): Promise<void> }
 export function createTenderSettlementRoutes(opts: {
   claimsEnabled?: boolean
   store?: TenderSettlementStore
@@ -24,7 +24,7 @@ export function createTenderSettlementRoutes(opts: {
       const tx = await opts.prepare(claim)
       // Persist the exact signed identity BEFORE any broadcast. If persistence fails,
       // nothing is sent. Unknown outcomes retain the debit and block another claim.
-      await opts.store.prepared(claim.id, tx.signature, tx.network)
+      await opts.store.prepared(claim.id, tx.signature, tx.network, { signer: tx.signer, mint: tx.mint, blockhash: tx.blockhash, lastValidBlockHeight: tx.lastValidBlockHeight })
       await tx.broadcast()
       await opts.store.confirmed(claim.id, tx.signature)
       return c.json({ paid: true, claimId: claim.id, amountUsdc: claim.amountUsd, wallet: claim.wallet, signature: tx.signature })

@@ -12,7 +12,7 @@ function setup(overrides: Partial<TenderSettlementStore> = {}, broadcast = async
     impression: async () => ({ accrued: 0.0005 }), ...overrides,
   }
   const app = createTenderSettlementRoutes({ claimsEnabled: true, store, account: async () => ({ userId: claim.account, wallet: claim.wallet }),
-    prepare: async () => ({ signature: 'fictional-signature', network: 'devnet', broadcast: async () => {
+    prepare: async () => ({ signature: 'fictional-signature', network: 'devnet', signer: 'fictional-signer', mint: 'fictional-mint', blockhash: 'fictional-blockhash', lastValidBlockHeight: 1, broadcast: async () => {
       assert.equal(prepared, true, 'transaction identity must persist before broadcast'); transfers++; await broadcast()
     } }), minClaimUsd: 0.0005, minImpressionIntervalMs: 5000 })
   return { app, state: () => ({ held, prepared, paid, transfers }) }
@@ -61,7 +61,7 @@ test('unauthenticated calls cannot reserve or prepare', async () => {
 test('Supabase adapter rejects unsuccessful RPC responses and false transitions', async () => {
   const make = (body: string, status: number) => new SupabaseTenderSettlementStore({ url: 'https://fictional.invalid', key: 'fictional', fetch: async () => new Response(body, { status }) })
   await assert.rejects(make('', 503).reserve('a','w',1))
-  await assert.rejects(make('false', 200).prepared('id','sig','devnet'))
+  await assert.rejects(make('false', 200).prepared('id','sig','devnet',{ signer:'s',mint:'m',blockhash:'b',lastValidBlockHeight:1 }))
   await assert.rejects(make('false', 200).confirmed('id','sig'))
 })
 

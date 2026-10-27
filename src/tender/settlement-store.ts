@@ -2,7 +2,7 @@
 export interface Claim { id: string; account: string; wallet: string; amountUsd: number }
 export interface TenderSettlementStore {
   reserve(account: string, wallet: string, minUsd: number): Promise<Claim | undefined>
-  prepared(id: string, signature: string, network: string): Promise<void>
+  prepared(id: string, signature: string, network: string, identity: { signer: string; mint: string; blockhash: string; lastValidBlockHeight: number }): Promise<void>
   confirmed(id: string, signature: string): Promise<void>
   routed(account: string, placementId: string, requestId: string): Promise<number>
   impression(account: string, minIntervalMs: number): Promise<{ accrued: number; line?: string; campaignId?: string }>
@@ -21,8 +21,8 @@ export class SupabaseTenderSettlementStore implements TenderSettlementStore {
     const r = rows[0]
     return r ? { id: r.id, account: r.account, wallet: r.wallet, amountUsd: Number(r.amount_usd) } : undefined
   }
-  async prepared(id: string, signature: string, network: string) {
-    if (await this.rpc<boolean>('shipyard_tender_prepare_claim', { p_id: id, p_signature: signature, p_network: network }) !== true) throw new Error('Claim preparation not persisted')
+  async prepared(id: string, signature: string, network: string, identity: { signer: string; mint: string; blockhash: string; lastValidBlockHeight: number }) {
+    if (await this.rpc<boolean>('shipyard_tender_prepare_claim', { p_id: id, p_signature: signature, p_network: network, p_identity: identity }) !== true) throw new Error('Claim preparation not persisted')
   }
   async confirmed(id: string, signature: string) {
     if (await this.rpc<boolean>('shipyard_tender_confirm_claim', { p_id: id, p_signature: signature }) !== true) throw new Error('Claim confirmation not persisted')

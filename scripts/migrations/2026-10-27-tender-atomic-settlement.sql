@@ -4,7 +4,7 @@ begin;
 create table if not exists public.shipyard_tender_claims (
  id uuid primary key default gen_random_uuid(), account text not null, wallet text not null,
  amount_usd numeric not null check(amount_usd>0), state text not null default 'reserved' check(state in ('reserved','prepared','paid')),
- signature text unique, network text, created_at timestamptz not null default now(), confirmed_at timestamptz
+ signature text unique, network text, transaction_identity jsonb, created_at timestamptz not null default now(), confirmed_at timestamptz
 );
 create unique index if not exists shipyard_tender_one_open_claim on public.shipyard_tender_claims(account) where state <> 'paid';
 create table if not exists public.shipyard_tender_routed_receipts(request_id text primary key,account text not null,placement_id text not null,amount_usd numeric not null);
@@ -31,11 +31,11 @@ begin
  values(p_account,-v_amount,'payout-reservation','claim reserved',v_id::text,floor(extract(epoch from clock_timestamp())*1000));
  return query select v_id,p_account,p_wallet,v_amount;
 end $$;
-create or replace function public.shipyard_tender_prepare_claim(p_id uuid,p_signature text,p_network text) returns boolean
+create or replace function public.shipyard_tender_prepare_claim(p_id uuid,p_signature text,p_network text,p_identity jsonb) returns boolean
 language plpgsql security invoker set search_path=public,pg_temp as $$
 begin
- if p_signature is null or length(p_signature)<1 or p_network is null or p_network not in ('mainnet','devnet') then raise exception 'Invalid preparation'; end if;
- update shipyard_tender_claims set state='prepared',signature=p_signature,network=p_network where id=p_id and state='reserved';
+ if p_signature is null or length(p_signature)<1 or p_network is null or p_network not in ('mainnet','devnet') or p_identity is null or not (p_identity ?& array['signer','mint','blockhash','lastValidBlockHeight']) then raise exception 'Invalid preparation'; end if;
+ update shipyard_tender_claims set state='prepared',signature=p_signature,network=p_network,transaction_identity=p_identity where id=p_id and state='reserved';
  return found;
 end $$;
 create or replace function public.shipyard_tender_confirm_claim(p_id uuid,p_signature text) returns boolean
@@ -80,6 +80,6 @@ begin
 end $$;
 revoke all on function public.shipyard_tender_routed_impression(text,text,text) from public,anon,authenticated;
 grant execute on function public.shipyard_tender_routed_impression(text,text,text) to service_role;
-revoke all on function public.shipyard_tender_reserve_claim(text,text,numeric),public.shipyard_tender_prepare_claim(uuid,text,text),public.shipyard_tender_confirm_claim(uuid,text),public.shipyard_tender_impression(text,numeric) from public,anon,authenticated;
-grant execute on function public.shipyard_tender_reserve_claim(text,text,numeric),public.shipyard_tender_prepare_claim(uuid,text,text),public.shipyard_tender_confirm_claim(uuid,text),public.shipyard_tender_impression(text,numeric) to service_role;
+revoke all on function public.shipyard_tender_reserve_claim(text,text,numeric),public.shipyard_tender_prepare_claim(uuid,text,text,jsonb),public.shipyard_tender_confirm_claim(uuid,text),public.shipyard_tender_impression(text,numeric) from public,anon,authenticated;
+grant execute on function public.shipyard_tender_reserve_claim(text,text,numeric),public.shipyard_tender_prepare_claim(uuid,text,text,jsonb),public.shipyard_tender_confirm_claim(uuid,text),public.shipyard_tender_impression(text,numeric) to service_role;
 commit;

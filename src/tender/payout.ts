@@ -70,6 +70,7 @@ export async function preparePayoutUsdc(cfg: PayoutConfig, toWallet: string, amo
   const dest = new PublicKey(toWallet)
   const payerAta = await getAssociatedTokenAddress(mint, payer)
   const destAta = await getAssociatedTokenAddress(mint, dest)
+  if (!Number.isFinite(amountUsdc) || amountUsdc <= 0 || !Number.isSafeInteger(Math.round(amountUsdc * 1_000_000))) throw new Error('Invalid payout amount')
   const atomic = BigInt(Math.round(amountUsdc * 1_000_000))
 
   const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
@@ -80,7 +81,7 @@ export async function preparePayoutUsdc(cfg: PayoutConfig, toWallet: string, amo
 
   const bytes = tx.serialize()
   const signature = bs58.encode(tx.signature!)
-  return { signature, network: cfg.network, async broadcast(): Promise<void> {
+  return { signature, network: cfg.network, signer: payer.toBase58(), mint: mint.toBase58(), blockhash, lastValidBlockHeight, async broadcast(): Promise<void> {
     const sent = await conn.sendRawTransaction(bytes, { maxRetries: 0 })
     if (sent !== signature) throw new Error('Unexpected payout signature')
     const result = await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
