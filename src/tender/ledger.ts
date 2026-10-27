@@ -24,6 +24,28 @@ export interface CreditEntry {
  */
 export class CreditLedger {
   private readonly ledger: CreditEntry[] = []
+  private readonly sweepHolds = new Map<string, { amountUsd: number; state: 'pending' | 'paid'; signature?: string }>()
+
+  /** Synchronous reservation, only for this explicitly process-local ledger.
+   * Unknown settlement outcomes stay held; never release/retry automatically.
+   * Hosted multi-instance payments need a durable store, not this class. */
+  reserveSweep(wallet: string, minUsd: number): number {
+    if (this.sweepHolds.get(wallet)?.state === 'pending') return 0
+    const amountUsd = this.balance(wallet)
+    if (!(amountUsd > 0) || amountUsd < minUsd) return 0
+    this.consume(wallet, amountUsd)
+    this.sweepHolds.set(wallet, { amountUsd, state: 'pending' })
+    return amountUsd
+  }
+  confirmSweep(wallet: string, signature: string): void {
+    const hold = this.sweepHolds.get(wallet)
+    if (!hold || hold.state !== 'pending' || !signature) throw new Error('Invalid sweep confirmation')
+    this.sweepHolds.set(wallet, { ...hold, state: 'paid', signature })
+  }
+  sweepState(wallet: string): Readonly<{ amountUsd: number; state: 'pending' | 'paid'; signature?: string }> | undefined {
+    const hold = this.sweepHolds.get(wallet)
+    return hold ? { ...hold } : undefined
+  }
 
   /** Accrue `amountUsd` to `wallet`, tied to the request/placement that earned it. */
   creditInference(

@@ -121,13 +121,15 @@ export async function sweepCredits(
   wallet: string,
   deps: SweepDeps,
 ): Promise<SweepResult | null> {
-  const amountUsd = ledger.balance(wallet)
-  if (amountUsd <= 0 || amountUsd < (deps.minSweepUsdc ?? 0)) return null
+  // Reserve before awaiting the settlement rail. Never mark newly accrued
+  // credits swept, and never retry a transfer whose outcome is unknown.
+  const amountUsd = ledger.reserveSweep(wallet, deps.minSweepUsdc ?? 0)
+  if (amountUsd <= 0) return null
   const { signature } = await deps.settle({
     amount: usdcToAtomic(amountUsd),
     treasury: deps.treasury,
     network: deps.network,
   })
-  ledger.markSwept(wallet)
+  ledger.confirmSweep(wallet, signature)
   return { wallet, amountUsd, signature }
 }
