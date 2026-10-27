@@ -38,7 +38,7 @@ import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
 import type { DecisionQuestion } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
-import { createWalletKeyIssuer, MemoryNonceRegistry, walletKeyCeilingFromEnv } from './keys-wallet.js'
+import { createWalletKeyIssuer, MemoryNonceRegistry, newWalletNonce, walletKeyCeilingFromEnv } from './keys-wallet.js'
 import { topupRoute } from './topup.js'
 import {
   ConsumedDrawdowns,
@@ -688,7 +688,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   const walletKeyIssuer =
     config.keyStore
       ? createWalletKeyIssuer(config.keyStore, {
-          nonces: new MemoryNonceRegistry(),
+          nonces: config.walletNonceRegistry ?? new MemoryNonceRegistry(),
           // Operator ceiling for wallet-issued keys (SHIPYARD_WALLET_KEY_
           // CEILING_USD): applied to the spend tracker at issuance so a
           // compromised key can't outspend its balance unchecked.
@@ -736,7 +736,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
     const pubkey = (c.req.query('pubkey') ?? '').trim()
     if (!pubkey) return errorJson(c, 400, '`pubkey` query param is required', 'invalid_request_error')
-    const nonce = randomBytes(24).toString('hex')
+    const nonce = newWalletNonce()
     const message = walletKeyIssuer.challenge(pubkey, nonce)
     return c.json({ pubkey, nonce, message })
   })

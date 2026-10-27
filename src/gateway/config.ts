@@ -159,6 +159,7 @@ export interface GatewayConfig {
    * (overriding the OpenAI `user` field) — so a developer's IDE traffic ties to
    * their wallet for routing rebates + Tender kickbacks. Composed with `apiKeys`.
    */
+  walletNonceRegistry?: import('./keys-wallet.js').NonceRegistry
   keyStore?: ApiKeyStore
   /** Local bootstrap mode: allow unauthenticated requests while still resolving any issued key. */
   bootstrapAuth?: boolean
