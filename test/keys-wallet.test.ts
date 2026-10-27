@@ -11,6 +11,9 @@ import {
   verifyWalletSignature,
   createWalletKeyIssuer,
   MemoryNonceRegistry,
+  newWalletNonce,
+  DurableWalletNonceRegistry,
+  WALLET_NONCE_TTL_MS,
 } from '../src/gateway/keys-wallet.js'
 import { MemoryApiKeyStore } from '../src/gateway/keys.js'
 
@@ -91,7 +94,7 @@ test('createWalletKeyIssuer: happy path issues a wallet-bound key once', async (
   const store = new MemoryApiKeyStore()
   const issuer = createWalletKeyIssuer(store)
   const { pubkey, seed } = generateWallet()
-  const req = signedRequest(seed, pubkey, 'nonce-abc')
+  const req = signedRequest(seed, pubkey, newWalletNonce())
   const issued = await issuer.issue(req)
   assert.ok(issued.key.startsWith('sk-shipyard-'))
   assert.equal(issued.account.wallet, pubkey)
@@ -145,7 +148,7 @@ test('POST /v1/keys/wallet issues a key; replays and bad signatures 401', async 
     keyStore: store,
   })
   const { pubkey, seed } = generateWallet()
-  const nonce = 'route-nonce-1'
+  const nonce = newWalletNonce()
   const signature = signWallet(seed, challengeForWallet(pubkey, nonce))
 
   const ok = await app.request('/v1/keys/wallet', {
@@ -229,4 +232,31 @@ test('GET /v1/keys/wallet/challenge hands a browser wallet a signable message', 
   })
   const unsupported = await bare.request('/v1/keys/wallet/challenge?pubkey=' + encodeURIComponent(pubkey))
   assert.equal(unsupported.status, 501)
+})
+
+test('expired signature cannot mint again after memory TTL or process restart',async()=>{
+ let now=Date.now();const wallet=generateWallet();const nonce=newWalletNonce(now)
+ const req=signedRequest(wallet.seed,wallet.pubkey,nonce)
+ const store=new MemoryApiKeyStore()
+ await createWalletKeyIssuer(store,{now:()=>now}).issue(req)
+ now+=WALLET_NONCE_TTL_MS+1
+ await assert.rejects(()=>createWalletKeyIssuer(store,{now:()=>now}).issue(req),/expired/)
+})
+test('shared once store refuses replay across issuer instances and signature failures do not burn nonce',async()=>{
+ const seen=new Set<string>();const shared={consumeOnce:async(k:string)=>{if(seen.has(k))return false;seen.add(k);return true}}
+ const wallet=generateWallet();const req=signedRequest(wallet.seed,wallet.pubkey,newWalletNonce())
+ const store=new MemoryApiKeyStore()
+ const a=createWalletKeyIssuer(store,{nonces:new DurableWalletNonceRegistry(shared)})
+ const b=createWalletKeyIssuer(store,{nonces:new DurableWalletNonceRegistry(shared)})
+ await assert.rejects(()=>a.issue({...req,signatureB58:'bad'}),/signature/)
+ const results=await Promise.allSettled([a.issue(req),b.issue(req)])
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1)
+ assert.equal((await store.listAccounts()).length,1)
+})
+test('future/arbitrary nonces and unavailable durable store refuse issuance',async()=>{
+ const wallet=generateWallet();const store=new MemoryApiKeyStore();const issuer=createWalletKeyIssuer(store)
+ for(const nonce of ['legacy',newWalletNonce(Date.now()+60_000)]) await assert.rejects(()=>issuer.issue(signedRequest(wallet.seed,wallet.pubkey,nonce)),/nonce/)
+ const unavailable=createWalletKeyIssuer(store,{nonces:new DurableWalletNonceRegistry({consumeOnce:async()=>{throw new Error('store unavailable')}})})
+ await assert.rejects(()=>unavailable.issue(signedRequest(wallet.seed,wallet.pubkey,newWalletNonce())),/unavailable/)
+ assert.equal((await store.listAccounts()).length,0)
 })

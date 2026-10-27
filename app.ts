@@ -1,3 +1,4 @@
+import { DurableWalletNonceRegistry } from './src/gateway/keys-wallet.js'
 // shipyard-inference — combined Vercel entrypoint.
 //
 // One Hono app, two surfaces, deployed as a single Vercel Function (Node
@@ -381,6 +382,12 @@ const decisionFeedback =
 // /api/me can surface the active channel alongside balance + kickbacks.
 const channelStore = new MemoryChannelStore()
 const gateway = createGatewayApp({
+  // Hosted nonce replay claims must share durable storage; missing store fails closed.
+  walletNonceRegistry: new DurableWalletNonceRegistry(
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+      ? new SupabaseOAuthStore({url:process.env.SUPABASE_URL,key:process.env.SUPABASE_SERVICE_KEY})
+      : {consumeOnce:async()=>{throw new Error('durable wallet nonce storage unavailable')}}
+  ),
   candidates,
   strategy: costOptimized(),
   // Requests that name a catalog model get exactly that model; `auto` (or an

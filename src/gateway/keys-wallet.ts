@@ -16,7 +16,7 @@
  *  - The key itself is still a regular `sk-shipyard-…` key — nothing about the
  *    downstream auth path changes.
  */
-import { createPublicKey, verify } from 'node:crypto'
+import { createPublicKey, verify, randomBytes } from 'node:crypto'
 import bs58 from 'bs58'
 import type { Account, ApiKeyIssueInput, ApiKeyStore, IssuedKey } from './keys.js'
 import { newKeyUserId } from './keys.js'
@@ -41,7 +41,7 @@ export function challengeForWallet(pubkey: string, nonce: string, domain: string
 
 export interface NonceRegistry {
   /** Atomically record `nonce` for `owner`. False when already claimed+fresh. */
-  claim(owner: string, nonce: string): boolean
+  claim(owner: string, nonce: string): boolean | Promise<boolean>
 }
 
 /** In-memory one-shot nonce registry with TTL prune (per process instance). */
@@ -62,6 +62,24 @@ export class MemoryNonceRegistry implements NonceRegistry {
     if (this.seen.has(key)) return false
     this.seen.set(key, now)
     return true
+  }
+}
+
+/** Nonces bind wallet signatures to a bounded five-minute request window. */
+export const WALLET_NONCE_TTL_MS = 5 * 60_000
+export function newWalletNonce(at = Date.now()): string { return `${at}.${randomBytes(24).toString('hex')}` }
+export function walletNonceExpiry(nonce: string, at: number): number {
+  if (typeof nonce !== 'string' || !/^[0-9]{13}\.[a-f0-9]{48}$/.test(nonce)) throw new Error('invalid wallet nonce; request a fresh challenge')
+  const issued = Number(nonce.split('.')[0])
+  if (!Number.isSafeInteger(issued) || issued > at || at >= issued + WALLET_NONCE_TTL_MS) throw new Error('wallet nonce expired or from future')
+  return issued + WALLET_NONCE_TTL_MS
+}
+/** Use a shared atomic once store on multi-instance hosts. Never fall back to memory on failure. */
+export class DurableWalletNonceRegistry implements NonceRegistry {
+  constructor(private readonly store: { consumeOnce(key: string, expiresAtMs: number): Promise<boolean> }, private readonly now = Date.now) {}
+  async claim(owner: string, nonce: string) {
+    const expiry = walletNonceExpiry(nonce, this.now())
+    return this.store.consumeOnce(`wallet-key:${owner}:${nonce}`, expiry)
   }
 }
 
@@ -159,12 +177,11 @@ export function createWalletKeyIssuer(
     } catch {
       throw new Error('invalid wallet challenge')
     }
-    if (!nonces.claim(pubkey, input.nonce)) {
-      throw new Error('nonce already used — request a fresh challenge nonce')
-    }
     if (!verifyWalletSignature(input, message)) {
       throw new Error('wallet signature verification failed')
     }
+    walletNonceExpiry(input.nonce, at)
+    if (!await nonces.claim(pubkey, input.nonce)) throw new Error('nonce already used; request a fresh challenge')
     const issueInput: ApiKeyIssueInput = {
       userId: newKeyUserId(),
       wallet: pubkey,
