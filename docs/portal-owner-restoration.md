@@ -29,3 +29,26 @@ verify exact production identity configuration, test actual record visibility an
 writes with fictional distinct accounts, and review remaining production payment
 and inference funding paths. Unit/in-process route tests alone are insufficient.
 No live financial test or private-record fetch is needed or authorized here.
+
+
+Qualification completed locally: actual Chrome rendering/token-injection wrapper
+with fictional Supabase SDK session; actual portalApp start/callback lifecycle
+with mocked issuer registration/token exchange, matching PKCE verifier hash and
+redirect URI, browser HttpOnly cookie return, owner A session recovery and owner B
+refusal using the same browser cookie. External server/browser network was blocked.
+No real PayBox wallet/token/customer data or financial transaction was used.
+Existing hosted email OTP login was independently verified with the allowed owner
+account; it has no OAuth callback and cannot stand in for the PayBox issuer.
+
+These tests do not establish actual PayBox issuer compatibility or revoke the
+exposed client. Reopening remains blocked until actual issuer revocation and
+normal connection succeed after a new external signal clears the known botwall,
+plus exact hosted configuration and accounting/funding qualification. Do not
+reopen merely to test. No timed botwall retries. Demo screenshot labels may still
+say PAYBOX LIVE for fictional callback tokens; that is UI state, not provider proof.
+
+Manual reproducible browser fixture: `python3 scripts/security/portal-callback-browser.py`
+requires local Chrome and Python websocket-client. It starts only a localhost
+fictional portal process, blocks external browser requests, mocks all server
+fetches, asserts browser session ownership/PKCE return, and writes a screenshot
+under /downloads/appsec. It is not a production or PayBox connectivity test.

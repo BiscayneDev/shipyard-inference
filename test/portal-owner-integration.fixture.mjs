@@ -36,7 +36,7 @@ try{
  assert.deepEqual((await (await request('/api/threads','b')).json()).threads,[])
  const callback=await portalApp.fetch(new Request('https://example.invalid/api/paybox/connect/callback?code=fictional&state=fixture-state',{headers:{cookie:'portal.oauth-auth=a; paybox_connect_state=fixture-state; paybox_connect_verifier=fixture-verifier; paybox_connect_client=fixture-client'}}))
  assert.equal(callback.status,302);assert.ok(!callback.headers.get('location').includes('portalSession'))
- const setCookie=callback.headers.get('set-cookie');const sid=setCookie.match(/portal\.session=([^;]+)/)[1]
+ const setCookie=callback.headers.get('set-cookie');assert.ok(setCookie.includes('HttpOnly; Secure; SameSite=Lax'));const sid=setCookie.match(/portal\.session=([^;]+)/)[1]
  assert.equal((await request('/api/wallet/'+sid,'a')).status,200)
  assert.equal((await request('/api/wallet/'+sid,'b')).status,404)
  const badCallback=await portalApp.fetch(new Request('https://example.invalid/api/paybox/connect/callback?code=fictional',{headers:{cookie:'portal.oauth-auth=a'}}))

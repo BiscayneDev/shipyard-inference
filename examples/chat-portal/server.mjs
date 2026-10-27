@@ -889,7 +889,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
   const url = new URL(c.req.url)
   const code = url.searchParams.get('code')
   const state = url.searchParams.get('state')
-  const cookie = (name) => c.req.header('cookie')?.match(new RegExp(`${name}=([^;]+)`))?.[1]
+  const cookie = (name) => c.req.header('cookie')?.split(/;\s*/).find(part=>part.startsWith(name+'='))?.slice(name.length+1)
   console.log(`[portal] Paybox callback: code=${code ? 'present' : 'MISSING'} state=${state ? 'present' : 'MISSING'} cookies=${['paybox_connect_state', 'paybox_connect_verifier', 'paybox_connect_client'].map((n) => (c.req.header('cookie')?.includes(n) ? '✓' : '✗')).join('')}`)
   try {
     if (!code) throw new Error('no authorization code in callback')
@@ -926,7 +926,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
     }
     console.log(`[portal] Paybox connected: session=${session.id} expires=${oauth.expiresAt ? new Date(oauth.expiresAt).toISOString() : 'unknown'}`)
     for (const cookie of [
-      `portal.session=${session.id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`,
+      `portal.session=${session.id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`,
       `${CONNECT_STATE_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
       `${CONNECT_VERIFIER_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
       `${CONNECT_CLIENT_COOKIE}=; HttpOnly; Path=/; Max-Age=0`,
@@ -936,7 +936,7 @@ app.get('/api/paybox/connect/callback', async (c) => {
     return c.redirect(`${MOUNT_PREFIX || ''}/?connected=1`)
   } catch (err) {
     console.error('[portal] Paybox callback FAILED:', err?.message ?? err, err?.stack?.split('\n')?.slice(0, 3).join(' | '))
-    return c.redirect(`/?payboxError=${encodeURIComponent(String(err?.message ?? err).slice(0, 180))}`)
+    return c.redirect(`${MOUNT_PREFIX || ''}/?payboxError=${encodeURIComponent(String(err?.message ?? err).slice(0, 180))}`)
   }
 })
 
