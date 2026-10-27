@@ -225,7 +225,7 @@ test('drawdown: SHIPYARD_WALLET_KEY_CEILING_USD applies a per-key spend ceiling 
     const pubkey = bs58.encode(Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url'))
     const seed = new Uint8Array(Buffer.from(privateKey.export({ format: 'jwk' }).d!, 'base64url'))
     // The challenge is deterministic — rebuild the exact message and sign it.
-    const { challengeForWallet } = await import('../src/gateway/keys-wallet.js')
+    const { challengeForWallet, newWalletNonce } = await import('../src/gateway/keys-wallet.js')
     const message = challengeForWallet(pubkey, 'ceiling-n1')
     const pkcs8 = Buffer.concat([
       Buffer.from('302e020100300506032b657004220420', 'hex'),
@@ -237,7 +237,7 @@ test('drawdown: SHIPYARD_WALLET_KEY_CEILING_USD applies a per-key spend ceiling 
     const issueRes = await h.app.request('/v1/keys/wallet', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pubkey, nonce: 'ceiling-n1', signature: sig }),
+      body: JSON.stringify({ pubkey, nonce, signature: sig }),
     })
     assert.equal(issueRes.status, 200)
     const issued = (await issueRes.json()) as { key: string }
