@@ -2,7 +2,7 @@
 //
 //  • Supabase (PostgREST) when SUPABASE_URL + SUPABASE_SERVICE_KEY are set —
 //    the Vercel tier: no writable disk, shared across invocations.
-//  • File-backed .data/ when the FS is writable — local dev, survives restarts.
+//  • File-backed user state directory outside source when the FS is writable — local dev, survives restarts.
 //  • In-memory as the last resort (read-only FS without Supabase env).
 //
 // Supabase table (one row per key):
@@ -12,6 +12,36 @@
 // arrays use a single row with key 'all'.
 
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
+
+// Runtime credentials must never share a directory with source. Ignore rules
+// alone do not protect against accidental staging or copied worktrees.
+const worktree = fs.realpathSync(fileURLToPath(new URL('../../', import.meta.url)))
+const requestedDir = path.resolve(process.env.SHIPYARD_PORTAL_DATA_DIR || path.join(os.homedir(), '.local', 'state', 'shipyard-chat-portal'))
+// Resolve existing ancestors too, so a symlink cannot redirect a new directory
+// into the worktree. Private state remains local; old in-repo files are NEVER read.
+function canonicalLocation(location) {
+  const missing = []
+  let cursor = location
+  while (!fs.existsSync(cursor)) {
+    missing.unshift(path.basename(cursor))
+    const parent = path.dirname(cursor)
+    if (parent === cursor) throw new Error('Invalid portal state directory')
+    cursor = parent
+  }
+  return path.join(fs.realpathSync(cursor), ...missing)
+}
+const stateDir = canonicalLocation(requestedDir)
+if (stateDir === worktree || stateDir.startsWith(worktree + path.sep)) {
+  throw new Error('SHIPYARD_PORTAL_DATA_DIR must be outside the source tree')
+}
+const stateFile = (scope) => {
+  if (!/^[a-z][a-z0-9-]*$/.test(scope)) throw new Error('Invalid portal storage scope')
+  return path.join(stateDir, `${scope}.json`)
+}
 
 const SB = (() => {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return null
@@ -40,7 +70,11 @@ async function readScope(scope) {
     return Object.fromEntries(rows.map((r) => [r.key, r.value]))
   }
   try {
-    return JSON.parse(fs.readFileSync(new URL(`./.data/${scope}.json`, import.meta.url), 'utf8')) ?? {}
+    const file = stateFile(scope)
+    const info = fs.lstatSync(file)
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid portal state file')
+    fs.chmodSync(file, 0o600)
+    return JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}
   } catch {
     return memory[scope] ?? {}
   }
@@ -60,8 +94,16 @@ async function writeScope(scope, map) {
     return
   }
   try {
-    fs.mkdirSync(new URL('./.data/', import.meta.url), { recursive: true })
-    fs.writeFileSync(new URL(`./.data/${scope}.json`, import.meta.url), JSON.stringify(map))
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+    fs.chmodSync(stateDir, 0o700)
+    const file = stateFile(scope)
+    const temporary = `${file}.${randomBytes(8).toString('hex')}.tmp`
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(map), { mode: 0o600, flag: 'wx' })
+      fs.renameSync(temporary, file)
+    } finally {
+      try { fs.unlinkSync(temporary) } catch {}
+    }
   } catch {
     memory[scope] = map // read-only FS: keep serving from memory
   }
