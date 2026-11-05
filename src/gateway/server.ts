@@ -551,7 +551,6 @@ function errorJson(
  * via AsyncLocalStorage and surfaced as `x-shipyard-*` headers / an SSE trailer.
  */
 export function createGatewayApp(config: GatewayConfig): Hono {
-  if(config.boundedPrice&&(config.x402||config.tender||config.creditStore||config.byok||config.connectionBudget))throw Error('Bounded price path requires one scoped ledger with no alternate payment side effects')
   if ((!config.apiKeys || config.apiKeys.length === 0) && !config.keyStore && !config.bootstrapAuth) {
     console.warn(
       '[shipyard-inference] gateway started with NO api keys and no key store — ' +
@@ -798,7 +797,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
 
   const pricedKeys = () => {
     const tier=config.autoTier as unknown as { supportsAttemptBoundary?:boolean; boundedProviderId?:string }
-    if(!config.boundedPrice||!tier?.supportsAttemptBoundary||!tier.boundedProviderId||config.byok||config.x402||config.tender||config.creditStore||config.bootstrapAuth||(!config.apiKeys?.length&&!config.keyStore)||config.candidates.some(x=>!x.provider.chatOnce))throw Error('Qualified complete billed-stage boundary unavailable')
+    if(!config.boundedPrice||!tier?.supportsAttemptBoundary||!tier.boundedProviderId||config.byok||config.bootstrapAuth||(!config.apiKeys?.length&&!config.keyStore)||config.candidates.some(x=>!x.provider.chatOnce))throw Error('Qualified complete billed-stage boundary unavailable')
     return ['tier:'+tier.boundedProviderId,...config.candidates.map(x=>'coding:'+x.id),...(config.guardrails?['guardrail:'+config.guardrails.provider.id]:[])]
   }
   const pricePrincipal=(header:string|undefined)=>createHash('sha256').update(bearerToken(header)).digest('hex')
@@ -810,7 +809,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   })
 
   app.post('/v1/chat/completions', async (c) => {
-    const auth = await authOrPayment(
+    const scopedPrice=config.boundedPrice?.principals.includes(pricePrincipal(c.req.header('authorization')))===true
+    // These operator-issued keys use the exact reservation ledger, never x402,
+    // Tender, connection fixed holds or wallet drawdown in addition to it.
+    const auth:AuthOutcome|Response = scopedPrice?await resolveAuth(config,c.req.header('authorization')):await authOrPayment(
       config,
       c.req.header('authorization'),
       paymentHeaderOf(c),
@@ -837,7 +839,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // Balance drawdown identity: wallet-bound keys debit the shared credit
     // ledger under the SAME account topup credited (account.userId).
     const drawdownAccount =
-      config.creditStore && auth.account?.wallet ? balanceAccountOf(auth.account) : undefined
+      !scopedPrice && config.creditStore && auth.account?.wallet ? balanceAccountOf(auth.account) : undefined
     if (config.spend && spendKey) {
       // Estimate from the requested model's declared pricing when available;
       // an unknown/unpriced request is checked at zero cost (free traffic
@@ -955,7 +957,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // store failure → 503 with nothing served or charged.
     let connHold: ConnectionHold | undefined
     try {
-      const r = await connectionReserve(config.connectionBudget, capProjectId, id)
+      const r = await connectionReserve(scopedPrice?undefined:config.connectionBudget, capProjectId, id)
       if (r.refused) return c.json(r.refused, 402)
       connHold = r.hold
     } catch {

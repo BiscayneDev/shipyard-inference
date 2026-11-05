@@ -30,9 +30,11 @@ cannot be served again using a new quote. This conservative rule may refuse an
 intentional repeated prompt; changing that requires explicit request identity
 semantics, not weakening replay protection.
 
-Alternate payment hooks, BYO keys, wallet drawdown, Tender and the old fixed-hold
-connection ledger are incompatible with this draft configuration and refused at
-startup. It does not redesign their billing, enable itself, grant budgets, or
+Scoped price principals use only their exact price ledger. Their chat auth never
+collects x402; their nonstream path skips wallet drawdown, Tender and old fixed
+connection holds. Other keys retain those existing paths unchanged. BYO routing
+remains unsupported because it can substitute a different provider. It does not
+redesign other billing, enable itself, grant budgets, or
 change existing production configuration. The draft SQL and service-role adapter
 must be independently reviewed/applied before activation; no memory store is the
 production default. Storage outages refuse service. No expiry automatically
@@ -73,7 +75,8 @@ variants. Missing cache counters remain unknown, not silently zero.
 
 A verified native adapter/config binding is required for either helper. No key,
 provider selection, candidate filtering, live configuration or approval is added.
-Current hosted app may configure proxy candidates and alternate payment hooks,
-which remain unsupported until their exact all-in terms are verified. Sonnet4.5
+Current hosted app may configure proxy candidates, which remain unsupported until
+their exact all-in terms are verified. Existing alternate payment hooks can remain
+for other keys, but are bypassed for scoped price principals. Sonnet4.5
 has a published retirement date of November30,2026; contract expiry must precede
 that. Do not turn these optional helpers into a silent routing change.
