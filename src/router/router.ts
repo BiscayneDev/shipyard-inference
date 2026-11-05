@@ -1,3 +1,4 @@
+import { invokeBoundedAttempt } from '../gateway/bounded-attempt.js'
 import type {
   LLMChatParams,
   LLMResponse,
@@ -302,7 +303,7 @@ export class Router implements LLMProvider {
     const provider = decision.candidate.provider
     if (params.routingHints?.noFallback && !provider.chatOnce) throw new Error('Selected provider does not support bounded chat')
     const chat = params.routingHints?.noFallback ? provider.chatOnce! : provider.chat
-    const invoke = (signal?: AbortSignal) => chat.call(provider, { ...params, model: decision.model ?? params.model }, { signal })
+    const invoke = (signal?: AbortSignal) => { const request={ ...params, model: decision.model ?? params.model }; return invokeBoundedAttempt({stage:'coding',provider:decision.candidate.id,request},()=>chat.call(provider,request,{signal})) }
     const requestedMs = params.routingHints?.attemptTimeoutMs ?? this.opts.attemptTimeoutMs
     const ms = this.isPinned(params) || !Number.isFinite(requestedMs) || requestedMs! <= 0 ? undefined : requestedMs
     if (!ms && !parent) return invoke()
