@@ -54,3 +54,26 @@ The full local inference suite currently reports 599 passing and one failure in
 `operator.server.test.ts` (hardware ladder probe expects `probed` but receives
 `fallback`). The same isolated test fails on pristine base c16fdf9 in this
 environment. The focused price/bounded-chat tests and typecheck/build pass.
+
+## Native contract candidates, not deployment configuration
+
+`nativeJevPriceContract` uses the current official $0.042/M input, free output,
+64k total request-context limit with long context disabled. It reserves 2,688
+microdollars per decision stage, then rounds actual valid input usage up. It
+rejects other providers/model versions and missing usage. Native TypeSafe parsing
+no longer converts missing usage counts to a false zero.
+
+`nativeClaude45PriceContract` reserves the full 200k-context worst 5-minute cache
+write price plus 2,048 output tokens: 780,720 microdollars ($0.780720) for Sonnet
+4.5, with actual Haiku/Sonnet native usage settled by exact model and disjoint
+input/output/cache counts. This is conservative held capacity, not expected cost.
+Official Sonnet and Haiku model pages and prompt-caching docs supply rates. The
+helper cannot be used for UsePod/OpenRouter/Hopscotch or premium/long-context
+variants. Missing cache counters remain unknown, not silently zero.
+
+A verified native adapter/config binding is required for either helper. No key,
+provider selection, candidate filtering, live configuration or approval is added.
+Current hosted app may configure proxy candidates and alternate payment hooks,
+which remain unsupported until their exact all-in terms are verified. Sonnet4.5
+has a published retirement date of November30,2026; contract expiry must precede
+that. Do not turn these optional helpers into a silent routing change.

@@ -241,7 +241,7 @@ export class AnthropicProvider implements LLMProvider {
 export function parseAnthropicUsage(
   usage: Anthropic.Usage | undefined | null,
 ): UsageInfo | undefined {
-  if (!usage) return undefined
+  if (!usage || !Number.isSafeInteger(usage.input_tokens) || usage.input_tokens<0 || !Number.isSafeInteger(usage.output_tokens) || usage.output_tokens<0) return undefined
   const info: UsageInfo = {
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,

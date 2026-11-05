@@ -11,7 +11,7 @@ export interface StagePriceContract {
   /** Validates exact complete input before dispatch (incl schemas/cache/reasoning). */
   accepts(input: AttemptInvocation): boolean
   /** Authoritative ALL-IN charge, including cached/reasoning tokens. Undefined = unknown. */
-  actualCostMicros(output: unknown): number | undefined
+  actualCostMicros(output: unknown, input?:AttemptInvocation): number | undefined
 }
 export interface BoundedQuote { id:string; principal:string; digest:string; revision:string; expiresAt:string; maxCostMicros:number }
 /** Production must supply durable atomic storage. No default/in-memory activation. */
@@ -37,7 +37,7 @@ export async function issueBoundedPrice(config:BoundedPriceConfig,principal:stri
 export async function consumeBoundedPrice(config:BoundedPriceConfig,q:BoundedQuote,principal:string,body:unknown,keys:string[]){
  const plan=boundedPricePlan(config,keys);if(!config.principals.includes(principal)||q.principal!==principal||q.digest!==requestDigest(body)||q.revision!==config.revision||Date.parse(q.expiresAt)<=Date.now()||q.maxCostMicros!==plan.maxCostMicros||!await config.store.consume(q))throw Error('Exact unused reserved quote required')
  const contracts=new Map(keys.map(key=>[key,{...config.contracts[key]!}]));
- let cost=0,unknown=false;const seen=new Set<string>();const boundary:AttemptBoundary={async invoke(input,run){const key=input.stage+':'+input.provider,c=contracts.get(key);try{if(!keys.includes(key)||!c||!valid(c,Date.now())||seen.has(input.stage)||Buffer.byteLength(JSON.stringify(input.request))>c.maxRequestBytes||!c.accepts(input))throw Error('Unqualified exact stage')}catch(e){unknown=true;throw e};seen.add(input.stage);try{const out=await run(),actual=c.actualCostMicros(out);if(typeof actual!=='number'||!Number.isSafeInteger(actual)||actual<0||actual>c.maxCostMicros){unknown=true;throw Error('Authoritative stage charge unavailable')};cost+=actual;return out}catch(e){unknown=true;throw e}}}
+ let cost=0,unknown=false;const seen=new Set<string>();const boundary:AttemptBoundary={async invoke(input,run){const key=input.stage+':'+input.provider,c=contracts.get(key);try{if(!keys.includes(key)||!c||!valid(c,Date.now())||seen.has(input.stage)||Buffer.byteLength(JSON.stringify(input.request))>c.maxRequestBytes||!c.accepts(input))throw Error('Unqualified exact stage')}catch(e){unknown=true;throw e};seen.add(input.stage);try{const out=await run(),actual=c.actualCostMicros(out,input);if(typeof actual!=='number'||!Number.isSafeInteger(actual)||actual<0||actual>c.maxCostMicros){unknown=true;throw Error('Authoritative stage charge unavailable')};cost+=actual;return out}catch(e){unknown=true;throw e}}}
  return{boundary,async settle(){if(unknown||cost>q.maxCostMicros)throw Error('Unknown stage charge');await config.store.settle(q,cost);return cost},async reconcile(){await config.store.reconcile(q)}}
 }
 /** Explicit private service-role adapter. Credentials stay server-side. */

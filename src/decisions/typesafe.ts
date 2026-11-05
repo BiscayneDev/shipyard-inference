@@ -126,11 +126,8 @@ export function createTypeSafeProvider(opts: TypeSafeProviderOptions): DecisionP
         model: typeof parsed.model === 'string' ? parsed.model : model,
         answers,
         usage:
-          usage && typeof usage === 'object'
-            ? {
-                inputTokens: Number(usage.input_tokens ?? 0),
-                outputTokens: Number(usage.output_tokens ?? 0),
-              }
+          usage && typeof usage === 'object' && Number.isSafeInteger(usage.input_tokens) && Number(usage.input_tokens)>=0 && Number.isSafeInteger(usage.output_tokens) && Number(usage.output_tokens)>=0
+            ? { inputTokens: Number(usage.input_tokens), outputTokens: Number(usage.output_tokens) }
             : undefined,
       }
     },
