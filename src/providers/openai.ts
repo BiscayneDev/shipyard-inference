@@ -25,12 +25,15 @@ export interface OpenAIProviderOptions {
   fetch?: typeof fetch
   /** Default headers sent on every request (e.g. UsePod's `X-Pod-Max-Price-*`). */
   defaultHeaders?: Record<string, string>
+  /** Server-only optional settlement check. Awaited before bounded output escapes. */
+  afterChatOnce?: (response: LLMResponse, headers: Headers, model: string) => Promise<void>
 }
 
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI
   private defaultModel: string
   private defaultMaxTokens: number
+  private afterChatOnce?: OpenAIProviderOptions['afterChatOnce']
 
   constructor(options: OpenAIProviderOptions = {}) {
     this.client = new OpenAI({
@@ -39,13 +42,17 @@ export class OpenAIProvider implements LLMProvider {
       fetch: options.fetch,
       defaultHeaders: options.defaultHeaders,
     })
+    this.afterChatOnce = options.afterChatOnce
     this.defaultModel = options.defaultModel ?? 'gpt-4o'
     this.defaultMaxTokens = options.defaultMaxTokens ?? 4096
   }
 
   async chatOnce(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse> {
-    const response = await this.client.chat.completions.create(this.buildRequest(params), { signal: opts?.signal, maxRetries: 0 })
-    return this.parseResponse(response)
+    const request = this.buildRequest(params)
+    const {data: response, response: transport} = await this.client.chat.completions.create(request, { signal: opts?.signal, maxRetries: 0 }).withResponse()
+    const parsed = this.parseResponse(response)
+    await this.afterChatOnce?.(parsed, transport.headers, request.model)
+    return parsed
   }
 
   async chat(params: LLMChatParams, opts?: LLMStreamOptions): Promise<LLMResponse> {

@@ -80,3 +80,27 @@ their exact all-in terms are verified. Existing alternate payment hooks can rema
 for other keys, but are bypassed for scoped price principals. Sonnet4.5
 has a published retirement date of November30,2026; contract expiry must precede
 that. Do not turn these optional helpers into a silent routing change.
+
+## Existing Hopscotch receipt path (optional, not activated)
+
+The current deployed source is c16fdf9; read-only account inspection found
+Hopscotch coding plus TypeSafe Jev, not native Anthropic or UsePod. The existing
+shared Hopscotch key has no credit limit. It must not be changed or repurposed
+for this work. No account or key change was made.
+
+The optional Hopscotch `receiptReader` is consumed by the actual `chatOnce`
+adapter. It awaits the provider's request-specific usage record before returning
+output; records are held by response identity, not model-supplied fields. Exact
+request ID/model/USD/shared-credit mode and safe integer micro-dollar charge plus
+rate revision are required. A late404 is retried once; other errors stay unknown.
+The bounded ledger can consume this all-in charge without guessing cache or
+reasoning prices. Tests exercise that actual adapter-to-ledger path and retain
+full reserve on unknown charge. Ordinary `chat` behavior is unchanged.
+
+Sources: https://docs.hopscotchlabs.ai/features/usage-lookup and
+https://docs.hopscotchlabs.ai/api-reference/headers.md . This is settlement
+coverage, NOT an upstream immutable pre-dispatch price maximum. No price contract
+is enabled by this adapter. A separate non-resetting task key credit limit is a
+possible provider-enforced task-total boundary, subject to authorization and
+qualification. It is not a per-request rate lock. Do not activate catalog-derived
+bounds or silently replace the existing six-model pool with a native model.

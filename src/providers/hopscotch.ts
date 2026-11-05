@@ -1,5 +1,11 @@
 import type { ModelMetadata, ProviderCandidate } from '../router/candidates.js'
 import { OpenAIProvider } from './openai.js'
+import type { LLMResponse } from '../types.js'
+import type { HopscotchReceipt } from './hopscotch-receipt.js'
+
+// Private response identity, not model-controlled output fields or serialized metadata.
+const receipts = new WeakMap<LLMResponse, HopscotchReceipt>()
+export function hopscotchReceipt(response: LLMResponse): HopscotchReceipt | undefined { return receipts.get(response) }
 
 /** Hopscotch's OpenAI-compatible API endpoint. */
 export const HOPSCOTCH_BASE_URL = 'https://api.hopscotchlabs.ai/v1'
@@ -74,10 +80,13 @@ export interface HopscotchProviderOptions {
   baseURL?: string
   defaultModel?: string
   fetch?: typeof fetch
+  /** Optional bounded-path exact receipt lookup. Not a price guarantee. */
+  receiptReader?: (expected: {requestId: string; model: string}) => Promise<HopscotchReceipt | undefined>
 }
 
 /** Construct Hopscotch through the existing OpenAI-compatible provider. */
 export function createHopscotchProvider(options: HopscotchProviderOptions = {}): OpenAIProvider {
+  if (options.receiptReader && options.baseURL && options.baseURL !== HOPSCOTCH_BASE_URL) throw new Error('Exact Hopscotch receipt requires canonical transport')
   const apiKey = options.apiKey ?? process.env.HOPSCOTCH_API_KEY
   if (!apiKey) {
     throw new Error(
@@ -89,6 +98,13 @@ export function createHopscotchProvider(options: HopscotchProviderOptions = {}):
     baseURL: options.baseURL ?? HOPSCOTCH_BASE_URL,
     defaultModel: options.defaultModel ?? HOPSCOTCH_MODELS[0].model,
     fetch: options.fetch,
+    afterChatOnce: options.receiptReader ? async (response, headers, model) => {
+      const requestId = headers.get('x-hopscotch-request-id')
+      if (!requestId) throw Error('Hopscotch charge unknown: missing request id')
+      const receipt = await options.receiptReader!({requestId, model})
+      if (!receipt || receipt.requestId !== requestId || receipt.model !== model) throw Error('Hopscotch authoritative charge unavailable')
+      receipts.set(response, receipt)
+    } : undefined,
   })
 }
 
