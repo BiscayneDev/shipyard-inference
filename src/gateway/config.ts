@@ -106,6 +106,9 @@ export interface GatewayTenderHook {
 }
 
 export interface GatewayConfig {
+  /** Default absent. Reviewed per-stage contract + durable scoped reservation. */
+  boundedPrice?: import('./bounded-price.js').BoundedPriceConfig
+
   /** Non-streaming auto-route per-model timeout. Omit for legacy behavior. */
   attemptTimeoutMs?: number
 

@@ -1,3 +1,6 @@
+import { withAttemptBoundary, invokeBoundedAttempt } from './bounded-attempt.js'
+import { issueBoundedPrice, consumeBoundedPrice } from './bounded-price.js'
+import { createHash } from 'node:crypto'
 import { scopeForEndpoint } from './owner-keys.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomBytes } from 'node:crypto'
@@ -36,7 +39,7 @@ import type { LLMChatParams, LLMStreamEvent, VideoQueueParams, VideoRetrievePara
 import { resolveAuth, bearerToken } from './auth.js'
 import type { AuthResult } from './auth.js'
 import { resolveModelList, type GatewayConfig, type GuardrailResult } from './config.js'
-import type { DecisionQuestion } from '../decisions/types.js'
+import type { DecisionQuestion, DecisionRequest } from '../decisions/types.js'
 import { buildChallenge, verifyX402Payment } from './x402.js'
 import { createWalletKeyIssuer, MemoryNonceRegistry, walletKeyCeilingFromEnv } from './keys-wallet.js'
 import { topupRoute } from './topup.js'
@@ -452,14 +455,14 @@ function evaluateGuardrails(
   params: LLMChatParams,
   output: string,
   model?: string,
-): void {
+): Promise<void> | undefined {
   const g = config.guardrails
   if (!g) return
   const flagUnsafeAbove = g.flagUnsafeAbove ?? 0.8
   const flagQualityBelow = g.flagQualityBelow ?? 0.25
   const decide = params.routingHints?.noFallback ? g.provider.decideOnce : g.provider.decide
   if (!decide) return
-  void decide.call(g.provider, {
+  const decisionRequest:DecisionRequest = {
       state: {
         request: {
           system: params.system,
@@ -485,7 +488,8 @@ function evaluateGuardrails(
         },
       },
       model: g.model,
-    })
+    }
+  return invokeBoundedAttempt({stage:'guardrail',provider:g.provider.id,request:decisionRequest},()=>decide.call(g.provider,decisionRequest))
     .then((res) => {
       const unsafeAnswer = res.answers['unsafe']
       const qualityAnswer = res.answers['quality']
@@ -667,6 +671,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
   app.use('/v1/*', async (c, next) => {
     const xkey = c.req.header('x-api-key')
     const header = c.req.header('authorization') ?? (c.req.path.startsWith('/v1/messages') && xkey ? `Bearer ${xkey}` : undefined)
+    const pricedPrincipal=createHash('sha256').update(bearerToken(header)).digest('hex')
+    if(config.boundedPrice?.principals.includes(pricedPrincipal)&&!['GET /v1/models','POST /v1/chat/quote','POST /v1/chat/completions'].includes(c.req.method+' '+c.req.path))return errorJson(c,403,'Scoped price key requires quoted chat','permission_error')
     const auth = await resolveAuth(config, header)
     if (auth.account?.scopes !== undefined) {
       const required = scopeForEndpoint(c.req.method, c.req.path)
@@ -772,6 +778,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     if (!(await resolveAuth(config, c.req.header('authorization'))).ok) {
       return errorJson(c, 401, 'Invalid API key', 'authentication_error')
     }
+    if(config.boundedPrice)c.header('x-shipyard-price-revision',config.boundedPrice.revision)
     // Read-only capability preflight: old deployments lack this header.
     if (config.decisions?.provider.decideOnce) {
       c.header('x-shipyard-decision-attempt-limit', '1')
@@ -788,8 +795,24 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     })
   })
 
+  const pricedKeys = () => {
+    const tier=config.autoTier as unknown as { supportsAttemptBoundary?:boolean; boundedProviderId?:string }
+    if(!config.boundedPrice||!tier?.supportsAttemptBoundary||!tier.boundedProviderId||config.byok||config.bootstrapAuth||(!config.apiKeys?.length&&!config.keyStore)||config.candidates.some(x=>!x.provider.chatOnce))throw Error('Qualified complete billed-stage boundary unavailable')
+    return ['tier:'+tier.boundedProviderId,...config.candidates.map(x=>'coding:'+x.id),...(config.guardrails?['guardrail:'+config.guardrails.provider.id]:[])]
+  }
+  const pricePrincipal=(header:string|undefined)=>createHash('sha256').update(bearerToken(header)).digest('hex')
+  const priceBody=(body:OpenAIChatRequest)=>({...body,shipyard:{...body.shipyard,price_quote_id:undefined}})
+  app.post('/v1/chat/quote',async c=>{
+    const auth=await resolveAuth(config,c.req.header('authorization'));if(!auth.ok)return errorJson(c,401,'Invalid API key','authentication_error')
+    const retryAfter=routeLimiter.take('price:'+pricePrincipal(c.req.header('authorization')));if(retryAfter!==undefined){c.header('retry-after',String(retryAfter));return errorJson(c,429,'Price quote rate limit exceeded','rate_limit_error')}
+    try{const body=await c.req.json() as OpenAIChatRequest;if(c.req.header('x-dinghy-task-class')||c.req.header('x-dinghy-latency-budget-ms')||body.max_completion_tokens!==undefined||body.stream||body.model!=='auto'||body.shipyard?.no_fallback!==true||!Array.isArray(body.messages)||!body.messages.length||JSON.stringify(body).length>170000||!Number.isInteger(body.max_tokens)||body.max_tokens!<1||body.max_tokens!>2048)throw Error('Bounded auto chat required');const q=await issueBoundedPrice(config.boundedPrice!,pricePrincipal(c.req.header('authorization')),priceBody(body),pricedKeys());c.header('Cache-Control','no-store');return c.json({quote_id:q.id,request_digest:q.digest,revision:q.revision,expires_at:q.expiresAt,max_cost_micros:q.maxCostMicros,attempt_limit:3})}catch{return errorJson(c,409,'Qualified request-bound price unavailable','price_contract_unavailable')}
+  })
+
   app.post('/v1/chat/completions', async (c) => {
-    const auth = await authOrPayment(
+    const scopedPrice=config.boundedPrice?.principals.includes(pricePrincipal(c.req.header('authorization')))===true
+    // These operator-issued keys use the exact reservation ledger, never x402,
+    // Tender, connection fixed holds or wallet drawdown in addition to it.
+    const auth:AuthOutcome|Response = scopedPrice?await resolveAuth(config,c.req.header('authorization')):await authOrPayment(
       config,
       c.req.header('authorization'),
       paymentHeaderOf(c),
@@ -816,7 +839,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // Balance drawdown identity: wallet-bound keys debit the shared credit
     // ledger under the SAME account topup credited (account.userId).
     const drawdownAccount =
-      config.creditStore && auth.account?.wallet ? balanceAccountOf(auth.account) : undefined
+      !scopedPrice && config.creditStore && auth.account?.wallet ? balanceAccountOf(auth.account) : undefined
     if (config.spend && spendKey) {
       // Estimate from the requested model's declared pricing when available;
       // an unknown/unpriced request is checked at zero cost (free traffic
@@ -900,6 +923,8 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     } catch {
       return errorJson(c, 400, 'Invalid JSON body', 'invalid_request_error')
     }
+    const priceRequired=config.boundedPrice?.principals.includes(pricePrincipal(c.req.header('authorization')))
+    if(priceRequired&&!body?.shipyard?.price_quote_id)return errorJson(c,409,'Scoped key requires an exact price quote','price_reservation_required')
     const bounded = body?.shipyard?.no_fallback === true
     if (body?.shipyard?.no_fallback !== undefined && typeof body.shipyard.no_fallback !== 'boolean') return errorJson(c, 400, 'no_fallback must be boolean', 'invalid_request_error')
     if (bounded && (body.stream || (typeof config.autoTier !== 'function' || !(config.autoTier as { supportsNoFallback?: boolean }).supportsNoFallback) || (config.guardrails && !config.guardrails.provider.decideOnce))) return errorJson(c, 400, 'Bounded non-streaming chat is unsupported by this configuration', 'invalid_request_error')
@@ -920,6 +945,11 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     const params = await buildRoutingParams(config, body, (n) => c.req.header(n), auth.account)
+    let priced: Awaited<ReturnType<typeof consumeBoundedPrice>> | undefined
+    if(body.shipyard?.price_quote_id!==undefined){
+      try{if(c.req.header('x-dinghy-task-class')||c.req.header('x-dinghy-latency-budget-ms')||!bounded||body.max_completion_tokens!==undefined||body.stream||body.model!=='auto'||typeof body.shipyard.price_quote_id!=='string')throw Error('Bounded auto quote required');const keys=pricedKeys();const q=await config.boundedPrice!.store.get(body.shipyard.price_quote_id);if(!q)throw Error('Quote unavailable');priced=await consumeBoundedPrice(config.boundedPrice!,q,pricePrincipal(c.req.header('authorization')),priceBody(body),keys)}catch{return errorJson(c,409,'Exact unused price reservation refused','price_reservation_refused')}
+    }
+
     const id = requestId()
     const ctx: RequestContext = { id }
 
@@ -927,7 +957,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     // store failure → 503 with nothing served or charged.
     let connHold: ConnectionHold | undefined
     try {
-      const r = await connectionReserve(config.connectionBudget, capProjectId, id)
+      const r = await connectionReserve(scopedPrice?undefined:config.connectionBudget, capProjectId, id)
       if (r.refused) return c.json(r.refused, 402)
       connHold = r.hold
     } catch {
@@ -1054,7 +1084,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
     }
 
     try {
-      const res = await als.run(ctx, () => router.chat(params, { signal: c.req.raw.signal }))
+      const serve=()=>als.run(ctx, () => router.chat(params, { signal: c.req.raw.signal }));const res = await (priced?withAttemptBoundary(priced.boundary,serve):serve())
       if (exposeCost) {
         if (ctx.model) c.header('x-shipyard-model', ctx.model)
         if (ctx.provider) c.header('x-shipyard-provider', ctx.provider)
@@ -1077,8 +1107,10 @@ export function createGatewayApp(config: GatewayConfig): Hono {
         }
       }
       if (config.guardrails && res.content) {
-        evaluateGuardrails(config, id, params, res.content, ctx.model)
+        if(priced)await withAttemptBoundary(priced.boundary,async()=>{await evaluateGuardrails(config,id,params,res.content!,ctx.model)})
+        else evaluateGuardrails(config, id, params, res.content, ctx.model)
       }
+      if(priced){const cost=await priced.settle();c.header('x-shipyard-priced-cost-micros',String(cost));c.header('x-shipyard-price-revision',config.boundedPrice!.revision);c.header('x-shipyard-price-quote',body.shipyard!.price_quote_id!)}
       // Awaited settle: spend + one ledger row before the response. Failure → 503, no response.
       try {
         await connectionSettle(config.connectionBudget, connHold, id, ctx.costUsd, ctx.billed, { model: ctx.model, provider: ctx.provider })
@@ -1089,6 +1121,7 @@ export function createGatewayApp(config: GatewayConfig): Hono {
       await recordAnchor(config.conversationAnchor, auth.account, ctx)
       return c.json(llmResponseToOpenAICompletion(res, body.model, id))
     } catch (err) {
+      if(priced)await priced.reconcile()
       await connectionRelease(config.connectionBudget, connHold)
       const { status, body: errBody } = toOpenAIError(err)
       return c.json(errBody, status as 400)

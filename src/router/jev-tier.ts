@@ -1,3 +1,4 @@
+import { invokeBoundedAttempt } from '../gateway/bounded-attempt.js'
 import type { LLMChatParams } from '../types.js'
 import { createHash } from 'node:crypto'
 import type { ModelTier } from './candidates.js'
@@ -270,11 +271,7 @@ export function createJevTierInferrer(
       const decide = params.routingHints?.noFallback ? opts.provider.decideOnce : opts.provider.decide
       if (!decide) throw new Error('Tier provider does not support bounded chat')
       const res = await withTimeout(
-        decide.call(opts.provider, {
-          state: buildState(params),
-          questions: TIER_QUESTIONS,
-          model: opts.model,
-        }),
+        invokeBoundedAttempt({stage:'tier',provider:opts.provider.id,request:{state:buildState(params),questions:TIER_QUESTIONS,model:opts.model}},()=>decide.call(opts.provider,{state:buildState(params),questions:TIER_QUESTIONS,model:opts.model})),
       )
       if (params.routingHints?.noFallback && /stub/i.test((res.provider ?? '') + res.model)) throw new Error('Bounded tier judgment is a stub')
       const latencyMs = Date.now() - t0
@@ -329,5 +326,5 @@ export function createJevTierInferrer(
       return { tier: structuralTier, source: 'structural', structuralTier, latencyMs } satisfies TierDecision
     }
   }
-  return Object.assign(infer, { supportsNoFallback: Boolean(opts.provider.decideOnce) })
+  return Object.assign(infer, { supportsNoFallback: Boolean(opts.provider.decideOnce), supportsAttemptBoundary: true, boundedProviderId: opts.provider.id })
 }

@@ -43,6 +43,8 @@ export interface OpenAIChatRequest {
 export interface ShipyardRoutingPrefs {
   /** Non-streaming only: at most one attempt per tier/coding/guardrail stage. */
   no_fallback?: boolean
+  /** Exact server-issued price quote, non-streaming only. */
+  price_quote_id?: string
   providers?: string[]
   min_tier?: string
   max_tier?: string
